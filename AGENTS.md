@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guide for anyone (AI agent or human) working on **Asterism** (`asterism`, formerly etea-bar): what it is, how it's built, the
+Guide for anyone (AI agent or human) working on **Asterism** (`asterism`): what it is, how it's built, the
 rules it follows, where it stands, and what comes next. Read this before changing code.
 
 ## What this project is
@@ -73,7 +73,8 @@ for the change to show. A restart briefly takes the bar away, so say so first.
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 39 tests, see below
+cargo test --release                            # 52 tests, see below
+cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
 cargo clippy --release                          # remaining warnings are style-only
 cargo run --example fixtures -- 60              # fake MPRIS player + fake tray app, 60 s
 RUST_LOG=asterism::app=trace asterism           # per-frame timings
@@ -92,6 +93,10 @@ asterism --snapshot out.png [--width 1920] [--scale 2] [--hover KEY] [--wait 3]
 asterism --snapshot out.png --menu NAME [--focus KEY] [--room PX --scroll PX]
 asterism --snapshot out.png --panel launcher|toasts|osd|control|auth|wallpaper [--query TEXT]
 asterism --snapshot out.png --panel wallpaper --menu NAME|control   # whole desktop, menu in place
+asterism --snapshot out.png --panel widgets [--hover widget.KIND]  # the desktop while arranging widgets
+asterism --snapshot out.png --panel deskmenu [--query KIND]        # the desktop's right-click menu
+asterism --snapshot out.png --panel song                           # the new-song card (needs a player)
+asterism --snapshot out.png --panel transition [--query KIND@0.3]  # a frame of the wallpaper changing
 asterism --snapshot out.png --demo      # made-up workspaces, windows, networks (use for anything shared)
 ```
 
@@ -104,7 +109,7 @@ keyboard, notifications, tray (first tray item). Piece keys for `--hover`/`--foc
 notifications when none exist. Run `examples/fixtures` first to get media and tray content.
 
 For behaviour that needs a compositor, prefer short scripted runs (`timeout 8 asterism`), the
-control socket (`asterism msg …`), and `niri msg layers` to see which surfaces mapped. To test
+control socket (`asterism msg …`), and `niri msg layers` (and `niri msg windows`, for the settings window) to see which surfaces mapped. To test
 the notification daemon without fighting the user's daemon, use a private bus:
 `dbus-run-session -- sh script.sh` with `notify-send` inside.
 
@@ -115,10 +120,13 @@ own clipboard. Run a throwaway shell in it with `WAYLAND_DISPLAY=wayland-2 aster
 test.toml` (polkit off, notification daemon off, `[lock] before_sleep = false`) and drive it with
 `WAYLAND_DISPLAY=wayland-2 asterism msg …` (the control socket is per display). Stop it by its
 config path (`pkill -f -- "-c …/test.toml"`), **never** `pkill -x asterism` while testing. To see
-it, screenshot that window from the real session (`niri msg action screenshot-window --id N`),
-**only after checking the id is the nested `niri` window**: an empty id screenshots whatever is
-focused (it happened once and caught one of the user's own windows; the file was deleted).
-Delete such screenshots from ~/Pictures/Screenshots afterwards.
+it, prefer asking the nested niri itself (`NIRI_SOCKET=<nested socket> niri msg action
+screenshot-screen --write-to-disk true`): it copies to the nested clipboard, not the user's. A
+screenshot from the real session (`niri msg action screenshot-window --id N`) also lands on the
+user's clipboard, and must come **only after checking the id is the nested `niri` window**: an
+empty id screenshots whatever is focused (it happened once and caught one of the user's own
+windows; the file was deleted). Move or delete such screenshots from ~/Pictures/Screenshots
+afterwards (they're named by the time; check the newest is yours).
 
 Things a script can't do (real clicks, key presses, grabs) must be listed for the user to try.
 
@@ -139,7 +147,9 @@ main.rs ── CLI: run | msg … | --snapshot …
    │     idle.rs    ext-idle-notify → lock; start_lock() spawns `asterism lock` detached
    │     timer.rs   timer actions and the once-a-second tick
    │     desk.rs    desktop widgets: a Layer::Bottom surface per output, input region = widgets,
-   │               drag to move (Grab cursor), drawn with shell::render_panel
+   │               drag to move (Grab cursor), drawn with shell::render_panel; the editor
+   │               (`edit_widgets`): same surfaces set_layer(Overlay), whole input, Esc; starts
+   │               and stops the visualizer's capture (`watch_spectrum`)
    │
    ├── services/ (own thread, tokio current_thread runtime; polkit agent, notification daemon…)
    │     send Update → calloop channel → App::update ; receive Command ← App
@@ -155,8 +165,15 @@ main.rs ── CLI: run | msg … | --snapshot …
    ├── shortcuts.rs niri/Hyprland bind parsing + the sheet; timers.rs, weather.rs, night.rs: pure logic
    ├── dashboard.rs graphs (Prim::Area), disks, process list; the machine service samples processes
    │               only while it's open (Command::WatchProcesses)
-   ├── widgets.rs   desktop widgets + saved places (~/.local/state/asterism/widgets.json) + lyrics parsing
-   ├── settings.rs  pages of rows → Action::SetSetting(keys, Value) → toml_edit write keeping comments
+   ├── widgets.rs   desktop widgets + saved places (~/.local/state/asterism/widgets.json) + lyrics parsing;
+   │               `arrange` (placing, shared with snapshots), `placeholder`, `editor` (frames, ×, add strip)
+   ├── spectrum.rs  the visualizer's analysis: radix-2 FFT, log bands, auto-gain, fall-off
+   ├── transition.rs wallpaper animations: kinds, `pick` (random, never twice), per-pixel reveal
+   │               maps, `compose` (a lookup table per frame), `ease`
+   ├── appcolors.rs the scheme for kitty/foot/alacritty/GTK: 16 ANSI colours harmonized to the
+   │               source, files beside the apps' configs, written only when changed
+   ├── settings.rs  pages of rows → Action::SetSetting(keys, Value) → toml_edit write keeping comments;
+   │               drawn as a window (sidebar, page title, rows on a card, stacked when narrow, scrolls)
    ├── world.rs     the wallpaper: an image, a quiet gradient in the scheme, or (opt-in) a planet's hills
    ├── theme.rs, config.rs, images.rs, ipc.rs, snapshot.rs
 ```
@@ -187,7 +204,12 @@ main.rs ── CLI: run | msg … | --snapshot …
 - Menus are xdg popups under the bar. Clicked open: pointer grab, bar layer keyboard
   `OnDemand` while open. Opened by `msg` (no serial): no grab, bar layer keyboard `Exclusive`
   (Esc or the same keybind closes). Back to `None` on close.
-- Panels (`app/shell.rs`, `PanelKind`): launcher = full-output Overlay layer, Exclusive
+- Panels (`app/shell.rs`, `PanelKind`) are layer surfaces (`Role::Layer`), except the settings
+  app, an xdg toplevel (`Role::Window`, `open_window`, app id `asterism-settings`, min 720×480,
+  decorations asked of the server: niri and Hyprland draw none, so it has its own title area
+  that calls `move_` and a ×). Keys reach it only while it has keyboard focus
+  (`App::keyboard_on`, from `KeyboardHandler::enter`). Its configure may leave the size to us
+  (then `Panel::want`). Launcher = full-output Overlay layer, Exclusive
   keyboard, dimmed backdrop drawn as the patch background, click on backdrop closes; toasts =
   Top layer anchored to the corner, resized via `set_size` + wait for configure; OSD = Overlay,
   empty input region, closed by a generation-checked timer; control centre = full-output Top
@@ -219,6 +241,8 @@ main.rs ── CLI: run | msg … | --snapshot …
 | `polkit.rs` | org.freedesktop.PolicyKit1 agent; password checked by `polkit-agent-helper-1` via `/run/polkit/agent-helper.socket` (polkit ≥ 126) or the setuid helper | registers for the session (XDG_SESSION_ID, else logind's display session); queue of requests; retries on failure |
 | `notifications.rs` | org.freedesktop.Notifications daemon, else swaync-client | yields if another daemon owns the name |
 | `xkb.rs` | evdev.lst | layout names ↔ codes |
+| (mod.rs) | `ListPhotos(dir)` → `Update::Photos`; `AppColors(palette, apps)` → `appcolors::write` on a blocking thread, then `pkill -USR1 -x kitty` if kitty's file changed | |
+| `spectrum.rs` | `parec --device=@DEFAULT_MONITOR@` (else `pw-record` capturing the sink), s16le mono 44.1 kHz | only on `WatchSpectrum(true)`: visualizer shown + a player playing; 30 `Update::Spectrum`/s, none while silent; `App::update` redraws only desks for it |
 | `dbus.rs` | helpers: get_all/get/set/call, value conversions, `watch()` match rules | |
 
 Long-running children are started with `services::child()`, which sets `PR_SET_PDEATHSIG` so
@@ -269,9 +293,14 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (39)
+### Tests (52)
 
-`overview` (window maps fit their card), `services::bluetooth` (the agent over a real session
+`theme` (icons and widgets follow the wallpaper: blue vs orange, plain, accent with a distinct
+"on", colourful groups), `transition` (every kind starts old and ends new, a wipe goes its way, random never repeats,
+maps fit; `frame_cost` is an ignored timing), `world` (the repaint key ignores interval and
+animation), `appcolors` (terminal colours keep their meaning and read on the background; every file format,
+alacritty's parses as TOML), `widgets` (places old `[x, y]` and new `[x, y, scale]`, scaling a
+piece), `spectrum` (FFT of a wave, a tone lands in its band, silence sinks to dots, band edges), `overview` (window maps fit their card), `services::bluetooth` (the agent over a real session
 bus: yes, Rejected, passkey; names vs addresses), `services::niri` window rects,
 `settings` (writes keep comments, incl. into config.example.toml), `widgets` (synced lyrics),
 `dashboard` (ranking, sizes, never ending session processes), `timers` (countdown/pause, focus rounds, stopwatch), `weather` (Open-Meteo parsing, codes),
@@ -283,6 +312,125 @@ ranking, desktop file parsing). Add tests for any new parsing or protocol logic.
 
 ## Current progress (as of 2026-11-21: the first and second rounds from ETEA / caelestia, then
 fingerprint, Wi-Fi passwords, Bluetooth pairing and the window overview; newest first)
+
+### Icons and widgets in the wallpaper's colours (2026-11-21, the user asked)
+
+The scheme already followed the wallpaper, but bar icons and widget text were drawn in
+`color_text` (a near-white), so it hardly showed. Now `Theme` has `icon_tints: [Rgba; 3]`
+(`icon_tint(Icons::{Status, Machine, Tools})`), `widget_strong`, `widget_soft`, `widget_card`,
+all derived in `Theme::with_palette` from `[colors] bar_icons` = tinted (default; text mixed
+72% toward primary) | accent (primary; then `lit` becomes tertiary so a tool that's on still
+stands out) | colourful (primary / text→secondary / text→tertiary per group) | plain, and
+`[colors] widgets` = tinted (default) | plain. The key is `bar_icons`, not `icons`: top-level
+`icons` is the icon set (a sed in testing once rewrote both). `Palette` gained `secondary`.
+`bar.rs` uses `icon_tint` for every icon (status, tools, resources' rings' icons and arrows,
+weather, music note, launcher, busy workspaces, tinted tray icons); values and the clock stay
+text. Widgets: big clock, headings, titles, row names, placeholder icons → strong; dates and
+weekday names → soft; cards → `widget_card` (surface toward primary_container). Fixed on the
+way: `repaint_everything` (a new palette) didn't repaint the desks, so widgets kept old colours
+until the next minute. Settings → Look has both. Verified: test, snapshots of the bar in all
+four modes and two wallpapers' desktops (amber → golden, city lights → peach). Not yet seen by
+the user.
+
+### Wallpaper animations (2026-11-21, the user asked for automatic changes "with different
+animation each time")
+
+Automatic changes already existed (`[wallpaper] interval`, `rotate_wallpaper` in
+`app/wallpaper.rs`; the user's own config has it at 0, i.e. off). New: every change of picture
+animates. `[wallpaper] transition` = random (default; never the same kind twice in a row,
+`App::last_transition`) | none | fade | wipe | circle | blinds | ink | pixels | slide, and
+`transition_ms` (1200; Settings → Wallpaper has both, the choices wrapping onto lines).
+
+How (`app/backdrop.rs`, `transition.rs`): `paint_backdrops` gives the painting thread the new
+job and, when a picture is already up at the same size, the old job (`Backdrop::job`) plus one
+kind picked for every output; the thread paints both at once (`thread::scope`) and makes the
+kind's map (u8 per pixel: when it turns over; wipe = ramp, circle = distance, blinds = strip
+delay + within, ink = two octaves of value noise stretched to 0..255, pixels = hashed squares;
+fade and slide need none). `painted` starts a `Change` (old, new, map, its own `SlotPool` so the
+memory goes after); `step_changes` (first thing in `flush`) composes the eased frame into
+`surf.last` and presents it whenever the frame callback has come, and when time is up shows the
+new picture the old one-shot way (`show_backdrop`) even with no callback (hidden desktop). The
+old picture isn't kept between changes: memory measured 47 MB idle, 88 MB during, 49 MB after.
+`world::key` now ignores interval, directory and the animation settings, so changing them no
+longer repaints (or animates).
+
+Verified: 51 tests; snapshots of six kinds at 45% (`--panel transition`); nested niri: four
+`msg wallpaper next` gave ink, pixels, wipe, fade, each ended on time and freed its memory;
+painting both pictures takes 250–450 ms at 1712×1148. A frame at 1920×1200 costs 2–6 ms
+(`frame_cost`). **Not verified**: the frame rate on screen. The nested niri window was off
+screen in the user's scrolling layout, so it got almost no frame callbacks (3–4 frames per
+change); on a visible desktop the callbacks come at refresh rate. The user should watch one.
+
+### Desktop, round two (2026-11-21): the user picked these from the ETEA/caelestia comparison
+
+How each works, where it lives, and how it was checked:
+
+- **The desktop's right-click menu** (`PanelKind::DeskMenu`, `desk::open_desk_menu`,
+  `popups::desktop`): a right click on the wallpaper (the backdrop surface now takes the whole
+  pointer: `set_input_region(None)` in `backdrop.rs`; before, it took none) or on a widget (the
+  desk handles it: `desk_pointer`) opens a full-output Overlay panel, the card at the click,
+  kept on screen; a click beside it or Esc closes it (`CloseMenu` closes it too). Items: for a
+  widget, Take it off / Write the note (`Action::EditNote` → Settings, Desktop page, note being
+  typed) / Next picture (`Action::NextPhoto` → `App::photo_step`); then Arrange widgets, Change
+  wallpaper, Another wallpaper, Settings. `open_panel_on` opens a panel on a given output.
+- **Widget sizes**: places are now `widgets::Place { x, y, scale }`, saved as `[x, y, scale]`
+  (old `[x, y]` files read as scale 1). `Piece::scale(k)` (ui.rs) multiplies every prim, text
+  included. In the editor the wheel on a widget changes it by 10% (`STEP`), 60–200%
+  (`SMALLEST`/`BIGGEST`), with a percentage badge on its frame while pointed at.
+- **Photo frame** (`"photos"`): `[widgets] photos` (empty → ~/Pictures), `photo_minutes`;
+  folder listed on the services thread (`Command::ListPhotos`), pictures through the existing
+  thumbnail cache (384×240); which one = (minutes / photo_minutes + photo_step) × a large prime
+  mod count.
+- **Sticky note** (`"note"`): `[widgets] note`, wrapped, paragraphs kept, primary_container
+  colours; empty says "Right-click to write a note". Edited in Settings (a Text row) or via the
+  menu; `settings::text_value` now gives any typed value's current text.
+- **Edge visualizer** (`"edge"`): built in `widgets::edge` (needs the desk's size), 80 bars over
+  the whole width, bass in the middle, rising from the foot (or from the bar when it's at the
+  bottom); not draggable, not resizable, not in the input region (no `blocks`).
+- **New-song card** (`PanelKind::Song`, `cards::song`, `show_song`/`notice_song`): Overlay,
+  anchored to the bar's edge with exclusive zone 0 (so it sits just off the bar), empty input
+  region, 4.5 s by a generation-checked timer. Shown when (bus, artist, title) of a playing
+  player changes, not within 5 s of start, not while the media menu or control centre is open;
+  `song_popup = false` turns it off. While it shows, the capture runs too (`watch_spectrum`).
+- **Colours for apps** (`appcolors.rs`, `[colors] apps`, four switches in Settings → Look): sent
+  at start, on reload and on every wallpaper palette (`send_app_colors`).
+
+Verified: 47 tests; snapshots of the desktop with note, photo frame and edge bars, the editor
+(frames, ×, size badge path), the menu (for a widget), the song card; nested niri: colour files
+written for foot/alacritty/gtk into a scratch XDG_CONFIG_HOME, the song card's layer maps when a
+player starts playing and is gone after its time, not again for the same song; the capture
+starts for it. **Not verified (needs the user)**: right-clicking the wallpaper and widgets,
+the menu's items by pointer, the wheel resizing, kitty's live reload (not exercised, to leave
+the user's kitty alone), GTK apps picking the file up. The user had already moved widgets by
+pointer with the first editor (widgets.json held their drags), so dragging works.
+
+How to test in nested niri without touching the real session: see "Verifying changes"; the
+fake player (`examples/fixtures`) is on the shared session bus, so the user's real shell sees
+it too (a second `parec` from the real shell is expected); stop it with `pkill -x fixtures`,
+never `pkill -f` with a pattern that's also in your own command line (it killed the command's
+own shell once).
+
+### Settings window, widget editor, visualizer (2026-11-21, after the user asked)
+
+- **Settings is an ordinary window** now (see Panels above), tiled by niri like any app; the
+  bar's gear and the control-centre tile only open it (`Action::ToggleSettings` →
+  `toggle_settings(Some(true))`), `msg settings` still toggles. Ctrl+W/Ctrl+Q close, Esc only
+  lets a typed value be, the wheel and Page Up/Down scroll the page.
+- **Widget editor**: right-click a widget, Settings → Desktop → Arrange, or `msg widgets
+  [edit|done]`. Add/remove write `[widgets] show` through `set_setting` (comments kept). Drags
+  snap to 8 px while editing. Widget pieces now `blocks` (before, `Surf::hit` skipped them, so
+  a press on a widget found nothing, and the old drag-to-move couldn't start).
+- **Visualizer** widget (`"visualizer"`): mirrored bars from `model.spectrum`, hidden unless a
+  player plays; a placeholder in the editor.
+- build.rs reads `CARGO_MANIFEST_DIR` at run time (the folder was moved from
+  ~/Projects/quickshell/asterism; the cached build script still looked there).
+
+Verified: snapshots of the window at 1200 and 760 wide, the desktop and the editor; in nested
+niri, the window maps (`niri msg windows`: "Settings", asterism-settings, tiled, focused),
+closes by `msg`, the desk moves Bottom ↔ Overlay with keyboard none ↔ exclusive, placeholders
+show, `parec` starts with a (fake) player and stops when it leaves (<1% CPU itself). Not
+verified (needs the user): clicking in the editor (add, ×, drag, Done), moving the window by its
+sidebar, the bars moving with real music.
 
 ### Window overview (2026-11-21)
 
@@ -457,6 +605,8 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 - Hyprland in general (only tested against fake sockets); Hyprland's Lua bind syntax is not
   confirmed, so README shows hyprlang binds.
 - Bluetooth live, pairing above all (bluetooth.service is off on the user's machine).
+- The widget editor by pointer (add chips, ×, dragging, Done) and Esc; the settings window's
+  move-by-sidebar; the visualizer with real sound.
 - Things by pointer and keys in the newer panels: the overview (click, drag, middle-click),
   settings (every control), the dashboard's End, dragging desktop widgets, the clipboard
   picker's Enter, the Wi-Fi card with a real password, the lock screen with the real password.
@@ -484,19 +634,25 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 1. **User test pass**, above all the lock screen with the real password (Mod+Alt+L), then the
    clipboard picker, timers, night light schedule; fix what breaks.
 2. Try Bluetooth pairing for real once the user starts bluetooth.service.
-3. Next from the ETEA/caelestia list: a phone link (KDE Connect), workspace window previews
-   on hover (could reuse `overview::layout` in a small popup).
+3. The user to watch a wallpaper change animate (Settings → Wallpaper: Change by itself, or
+   Mod+Shift+W) and say how it feels; then the desktop's round two (right-click menus, resizing, photo frame, note,
+   edge bars, song card) and the app colours (include the file in kitty.conf, gtk.css).
+4. Next from the ETEA/caelestia list (offered 2026-11-21, not chosen yet): a phone link (KDE
+   Connect), workspace window previews on hover (could reuse `overview::layout` in a small
+   popup), a left day panel (calendar, to-do, notes as files), OCR of a screen region
+   (tesseract), Bluetooth device battery, a VPN tile, settings search. Declined as off-theme
+   or out of reach: AI chat, Google Lens, stocks/GitHub widgets, a music library, SDDM theme,
+   ETEA's planet/orbit and lock scenes.
 
 Control centre follow-ups: keyboard navigation (only Esc today), a night light tile once night
 light exists, a hot corner on the left for a calendar/day panel like ETEA's.
 
-Wallpaper follow-ups (small, any time): per-output pictures, WebP, a right-click desktop menu.
+Wallpaper follow-ups (small, any time): per-output pictures, WebP.
 
 ## Future plan (later rounds, roughly in order)
 
-4. **Desktop widgets** (clock, weather, calendar, media, lyrics).
-5. **Settings UI** writing `config.toml`; **i18n** (French and English, like ETEA);
-    **packaging** (AUR PKGBUILD, desktop/session files).
+4. **i18n** (French and English, like ETEA); **packaging** (AUR PKGBUILD, desktop/session
+    files, a .desktop entry for the settings window).
 
 When starting any of these: write the plan in a short message to the user first, keep the
 pure-Rust constraint, add snapshot support for anything visual (`--panel`/`--menu`), add tests

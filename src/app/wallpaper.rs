@@ -90,6 +90,7 @@ impl App {
         }
         self.theme = Theme::with_palette(&self.config, palette);
         self.repaint_everything();
+        self.send_app_colors();
         self.sync_backdrops();
     }
 
@@ -105,6 +106,11 @@ impl App {
         }
         for edge in &mut self.edges {
             edge.surf.dirty = true;
+        }
+        // The widgets too: their colours aren't in what decides when they're drawn again
+        for desk in &mut self.desks {
+            desk.surf.dirty = true;
+            desk.surf.last = None;
         }
         if let Some(popup) = self.popup.as_mut() {
             popup.surf.dirty = true;

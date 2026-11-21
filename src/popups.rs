@@ -686,6 +686,41 @@ fn network(col: &mut Col) {
     }
 }
 
+/// How wide the desktop's menu is.
+pub const DESKTOP_WIDTH: f32 = 252.0;
+
+/// The desktop's own menu, from a right click on the wallpaper or on a widget (`widget`): what
+/// that widget can do, then the desktop's things. Each closes the menu once done.
+pub fn desktop(ctx: &mut Ctx<'_>, widget: Option<&str>) -> Built {
+    let w = DESKTOP_WIDTH;
+    let theme = ctx.theme;
+    let mut col = Col { ctx, pieces: Vec::new(), y: PAD - 6.0, w: w - PAD * 2.0 };
+    let then = |action: Action| Some(Action::Both(Box::new(action), Box::new(Action::CloseMenu)));
+    if let Some(kind) = widget {
+        col.label(crate::widgets::name(kind));
+        match kind {
+            "note" => col.row("desk.note", Some("lyrics"), "Write the note", "", Mark::None, true, then(Action::EditNote)),
+            "photos" => col.row("desk.photo", Some("skip-forward"), "Next picture", "", Mark::None, true, then(Action::NextPhoto)),
+            _ => {}
+        }
+        col.row("desk.remove", Some("close"), "Take it off the desktop", "", Mark::None, true, then(Action::WidgetRemove(kind.to_string())));
+        col.separator();
+        col.gap(4.0);
+    }
+    col.row("desk.arrange", Some("apps"), "Arrange widgets", "", Mark::None, true, then(Action::EditWidgets(Some(true))));
+    col.row("desk.wallpaper", Some("image"), "Change wallpaper", "", Mark::None, true, then(Action::ToggleWallpapers));
+    col.row("desk.random", Some("refresh"), "Another wallpaper", "", Mark::None, true, then(Action::RandomWallpaper));
+    col.row("desk.settings", Some("gear-six"), "Settings", "", Mark::None, true, then(Action::ToggleSettings));
+    let h = (col.y - 10.0 + PAD).round();
+    let mut card = Piece::new("card", w, h);
+    card.prims.push(Prim::Card { x: 0.0, y: 0.0, w, h, radius: theme.radius });
+    card.pad = 14.0;
+    card.blocks = true;
+    let mut pieces = vec![card];
+    pieces.extend(col.pieces);
+    Built { w, h, pieces }
+}
+
 fn close_after(command: Command) -> Action {
     Action::Both(Box::new(Action::Send(command)), Box::new(Action::CloseMenu))
 }

@@ -2,6 +2,7 @@
 //! load, the tray and the system's state, for Hyprland and niri.
 
 mod app;
+mod appcolors;
 mod bar;
 mod cards;
 mod clipboard;
@@ -20,7 +21,9 @@ mod services;
 mod settings;
 mod shortcuts;
 mod snapshot;
+mod spectrum;
 mod theme;
+mod transition;
 mod timers;
 mod palette;
 mod ui;

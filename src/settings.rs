@@ -22,6 +22,8 @@ pub enum Value {
 
 pub enum Control {
     Switch(bool),
+    /// A switch that writes this value when flipped (a list with or without something).
+    SwitchTo(bool, Value),
     /// Labels and the values they write; which one is current.
     Choice(Vec<(String, Value)>, Option<usize>),
     Stepper { value: i64, min: i64, max: i64, step: i64, unit: &'static str },
@@ -49,6 +51,29 @@ fn choice(options: &[(&str, &str)], current: &str) -> Control {
 }
 
 pub const PAGES: [&str; 9] = ["Look", "Bar", "Wallpaper", "Desktop", "Night light", "Lock", "Notifications", "Weather", "Timers"];
+const PAGE_ICONS: [&str; 9] = ["picker", "layout", "image", "apps", "nightlight", "lock", "bell", "cloud-sun", "timer"];
+
+/// What a typed value says now, to start editing from.
+pub fn text_value(c: &Config, keys: &[String]) -> String {
+    match keys.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["weather", "city"] => c.weather.city.clone(),
+        ["widgets", "note"] => c.widgets.note.clone(),
+        ["widgets", "photos"] => c.widgets.photos.clone(),
+        _ => String::new(),
+    }
+}
+
+/// A switch for one thing in a list setting: flipping it writes the list without it, or with it.
+fn in_list(keys: &[&str], list: &[String], item: &str, label: &str, about: &str) -> Row {
+    let on = list.iter().any(|k| k == item);
+    let mut next: Vec<String> = list.to_vec();
+    if on {
+        next.retain(|k| k != item);
+    } else {
+        next.push(item.to_string());
+    }
+    row(keys, label, about, Control::SwitchTo(on, Value::List(next)))
+}
 
 /// What a page holds, from the config as it is now.
 pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
@@ -59,7 +84,18 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
             row(&["size"], "Size", "", choice(&[("Compact", "compact"), ("Normal", "normal"), ("Large", "large")], &lower(&format!("{:?}", c.size)))),
             row(&["position"], "Where the bar sits", "", choice(&[("Top", "top"), ("Bottom", "bottom")], &lower(&format!("{:?}", c.position)))),
             row(&["icons"], "Icons", "Thin outlines, rounded, or filled", choice(&[("Outline", "outline"), ("Material", "material"), ("Phosphor", "phosphor")], &c.icons)),
-            row(&["page_style"], "Workspaces", "Joined dots, numbers, or kanji (一 二 三)", choice(&[("Dots", "dots"), ("Numbers", "numbers"), ("Kanji", "kanji")], &lower(&format!("{:?}", c.page_style)))),
+            row(&["page_style"], "Workspaces", "Dots (busy ones joined by a line), numbers, or kanji (一 二 三)", choice(&[("Dots", "dots"), ("Numbers", "numbers"), ("Kanji", "kanji")], &lower(&format!("{:?}", c.page_style)))),
+            row(
+                &["colors", "bar_icons"],
+                "Bar icons",
+                "In the wallpaper's colours, or plain",
+                choice(&[("Tinted", "tinted"), ("Accent", "accent"), ("Colourful", "colourful"), ("Plain", "plain")], if c.colors.bar_icons.trim().is_empty() { "tinted" } else { c.colors.bar_icons.trim() }),
+            ),
+            row(&["colors", "widgets"], "Widgets", "Clock, headings and cards in the wallpaper's colours, or plain", choice(&[("Tinted", "tinted"), ("Plain", "plain")], if c.colors.widgets.trim().is_empty() { "tinted" } else { c.colors.widgets.trim() })),
+            in_list(&["colors", "apps"], &c.colors.apps, "kitty", "Colours for kitty", "Add to kitty.conf: include asterism-colors.conf"),
+            in_list(&["colors", "apps"], &c.colors.apps, "foot", "Colours for foot", "Add to foot.ini: include=~/.config/foot/asterism-colors.ini"),
+            in_list(&["colors", "apps"], &c.colors.apps, "alacritty", "Colours for Alacritty", "Import ~/.config/alacritty/asterism-colors.toml"),
+            in_list(&["colors", "apps"], &c.colors.apps, "gtk", "Colours for GTK apps", "Add to gtk.css: @import url(\"asterism-colors.css\");"),
         ],
         1 => vec![
             row(&["percent"], "Numbers beside icons", "Volume, battery and the machine's load as percentages", Control::Switch(c.percent)),
@@ -68,35 +104,40 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
             row(&["clock", "seconds"], "Seconds", "", Control::Switch(c.clock.seconds)),
             row(&["clock", "date"], "Date beside the time", "", choice(&[("Saturday, November 21", "%A, %B %-d"), ("Sat 21 Nov", "%a %-d %b"), ("21/11/2026", "%d/%m/%Y"), ("None", "")], &c.clock.date)),
             row(&["hot_corner"], "Hot corner", "The top-right corner opens the control centre", Control::Switch(c.hot_corner)),
+            row(&["song_popup"], "New song card", "Its cover and name for a moment, when the song changes", Control::Switch(c.song_popup)),
         ],
         2 => vec![
             row(&[], "Choose a picture", "Your wallpapers as a grid; the colours follow the picture", Control::Button("Open", Action::ToggleWallpapers)),
-            row(&["wallpaper", "interval"], "Change by itself", "Minutes between pictures, 0 never", Control::Stepper { value: c.wallpaper.interval as i64, min: 0, max: 240, step: 5, unit: "min" }),
+            row(&["wallpaper", "interval"], "Change by itself", "Minutes between pictures from the folder, 0 never", Control::Stepper { value: c.wallpaper.interval as i64, min: 0, max: 240, step: 5, unit: "min" }),
+            row(
+                &["wallpaper", "transition"],
+                "Animation",
+                "How one picture gives way to the next; Random is a different one each time",
+                choice(&[("Random", "random"), ("Fade", "fade"), ("Wipe", "wipe"), ("Circle", "circle"), ("Blinds", "blinds"), ("Ink", "ink"), ("Pixels", "pixels"), ("Slide", "slide"), ("None", "none")], &c.wallpaper.transition),
+            ),
+            row(&["wallpaper", "transition_ms"], "Animation length", "", Control::Stepper { value: c.wallpaper.transition_ms as i64, min: 400, max: 3000, step: 200, unit: "ms" }),
             row(&["wallpaper", "fit"], "Fit", "", choice(&[("Cover", "cover"), ("Contain", "contain"), ("Stretch", "stretch")], &lower(&format!("{:?}", c.wallpaper.fit)))),
             row(&["wallpaper", "enabled"], "Draw the wallpaper", "Off leaves it to another program", Control::Switch(c.wallpaper.enabled)),
         ],
         3 => {
-            let mut list: Vec<Row> = crate::widgets::KINDS
-                .iter()
-                .map(|kind| {
-                    let on = c.widgets.show.iter().any(|k| k == kind);
-                    let mut show: Vec<String> = c.widgets.show.clone();
-                    if on {
-                        show.retain(|k| k != kind);
-                    } else {
-                        show.push(kind.to_string());
-                    }
-                    let label = match *kind {
-                        "clock" => "Clock",
-                        "weather" => "Weather",
-                        "media" => "What's playing",
-                        "calendar" => "Calendar",
-                        _ => "The machine",
-                    };
-                    Row { keys: vec!["widgets".into(), "show".into()], label: label.into(), about: String::new(), control: Control::Choice(vec![("Off".into(), Value::List(show.clone())), ("On".into(), Value::List(show))], Some(on as usize)) }
-                })
-                .collect();
+            let mut list = vec![
+                row(&[], "Arrange widgets", "Add, take off, move and resize them, on the desktop itself", Control::Button("Arrange", Action::EditWidgets(Some(true)))),
+                row(&["widgets", "note"], "Sticky note", "What the note on the desktop says", Control::Text(c.widgets.note.clone())),
+            ];
+            for kind in crate::widgets::KINDS {
+                let about = match kind {
+                    "media" => "The song, its cover and its progress",
+                    "visualizer" => "Bars that move with the music, while something plays",
+                    "edge" => "The same bars along the foot of the screen",
+                    "system" => "Processor, memory and disk",
+                    "photos" => "A picture from a folder, a new one every so often",
+                    _ => "",
+                };
+                list.push(in_list(&["widgets", "show"], &c.widgets.show, kind, crate::widgets::name(kind), about));
+            }
             list.push(row(&["widgets", "lyrics"], "Song words", "Under what's playing, line by line (asks LRCLIB with the song's name)", Control::Switch(c.widgets.lyrics)));
+            list.push(row(&["widgets", "photos"], "Photo folder", "Empty takes ~/Pictures", Control::Text(c.widgets.photos.clone())));
+            list.push(row(&["widgets", "photo_minutes"], "Each picture stays", "", Control::Stepper { value: c.widgets.photo_minutes as i64, min: 1, max: 120, step: 1, unit: "min" }));
             list
         }
         4 => vec![
@@ -197,73 +238,138 @@ pub struct Settings {
     pub page: usize,
     /// A text being typed: where it goes, and what's typed so far.
     pub editing: Option<(Vec<String>, String)>,
+    /// How far the page is scrolled, and how far it can be.
+    pub scroll: f32,
+    pub max_scroll: f32,
+}
+
+/// How wide a row's control is.
+fn control_width(control: &Control, text: &mut Text, font: Font) -> f32 {
+    let pill = |label: &str, text: &mut Text| text.measure(label, font).0 + 26.0;
+    match control {
+        Control::Switch(_) | Control::SwitchTo(..) => 44.0,
+        Control::Choice(options, _) => options.iter().map(|(label, _)| pill(label, text)).sum::<f32>() + 8.0 * options.len().saturating_sub(1) as f32,
+        Control::Stepper { .. } => pill("+", text) + 92.0 + pill("−", text),
+        Control::Text(_) => 240.0,
+        Control::Button(label, _) => pill(label, text),
+    }
 }
 
 impl Settings {
     pub fn new() -> Self {
-        Self { page: 0, editing: None }
+        Self { page: 0, editing: None, scroll: 0.0, max_scroll: 0.0 }
     }
 
-    pub fn build(&self, c: &Config, model: &Model, t: &Theme, text: &mut Text, w: f32, h: f32) -> Vec<Piece> {
+    /// The app's window: the pages down a sidebar, the page's rows on a card beside them.
+    /// The rows scroll under the page's title when they don't fit.
+    pub fn build(&mut self, c: &Config, model: &Model, t: &Theme, text: &mut Text, w: f32, h: f32) -> Vec<Piece> {
         let mut pieces = Vec::new();
-        let span = (w * 0.8).min(1100.0).round();
-        let left = ((w - span) / 2.0).round();
-        let top = (h * 0.08).round().max(28.0);
-        let title_font = Font::new(t.text + 9.0).weight(500);
-        let (tw, th) = text.measure("Settings", title_font);
-        let mut title = Piece::new("set.title", tw, th);
-        title.prims.push(Prim::Text { x: 0.0, y: 0.0, text: "Settings".into(), font: title_font, color: t.color_text });
-        title.x = left;
-        title.y = top;
-        title.blocks = true;
-        pieces.push(title);
 
-        // The pages, down the left
-        let nav_w = 210.0;
-        let mut y = top + th + 24.0;
+        // The sidebar: the app's name, the pages, and where changes go. Held anywhere empty,
+        // it moves the window
+        let side_w = if w < 820.0 { 196.0 } else { 236.0 };
+        let mut side = Piece::new("set.side", side_w, h);
+        side.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: side_w, h, radius: 0.0, color: t.card_deep });
+        side.prims.push(Prim::Rect { x: side_w - 1.0, y: 0.0, w: 1.0, h, radius: 0.0, color: t.hairline() });
+        let title_font = Font::new(t.text + 7.0).weight(500);
+        side.prims.push(Prim::Text { x: 24.0, y: 26.0, text: "Settings".into(), font: title_font, color: t.color_text });
+        let note_font = Font::new(t.text - 2.0);
+        let note = text.wrap("Saved to config.toml as you change things", note_font, side_w - 48.0, 2);
+        let (_, nh) = text.measure("Ag", note_font);
+        // Only where the pages leave room for it
+        let pages_end = 80.0 + 44.0 * PAGES.len() as f32;
+        let note = if h - 24.0 - nh * note.len() as f32 > pages_end + 16.0 { note } else { Vec::new() };
+        for (i, line) in note.iter().rev().enumerate() {
+            side.prims.push(Prim::Text { x: 24.0, y: h - 24.0 - nh * (i + 1) as f32, text: line.clone(), font: note_font, color: t.color_soft.alpha(0.75) });
+        }
+        side.actions.left = Some(Action::MoveWindow);
+        pieces.push(side);
         let nav_font = Font::new(t.text + 1.0);
+        let mut y = 80.0;
         for (i, name) in PAGES.iter().enumerate() {
-            let mut item = Piece::new(format!("set.page.{i}"), nav_w, 40.0);
+            let (iw, ih) = (side_w - 24.0, 40.0);
+            let mut item = Piece::new(format!("set.page.{i}"), iw, ih);
             let on = i == self.page;
             if on {
-                item.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: nav_w, h: 40.0, radius: 20.0, color: t.secondary_container });
+                item.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: iw, h: ih, radius: ih / 2.0, color: t.secondary_container });
             }
+            let color = if on { t.on_secondary_container } else { t.color_soft };
+            item.prims.push(Prim::Icon { x: 14.0, y: 11.0, size: 18.0, name: PAGE_ICONS[i].into(), color: if on { t.primary } else { color } });
             let (_, nh) = text.measure(name, nav_font);
-            item.prims.push(Prim::Text { x: 18.0, y: ((40.0 - nh) / 2.0).round(), text: name.to_string(), font: nav_font, color: if on { t.on_secondary_container } else { t.color_soft } });
+            item.prims.push(Prim::Text { x: 44.0, y: ((ih - nh) / 2.0).round(), text: name.to_string(), font: nav_font, color });
             item.highlight = !on;
             item.actions.left = Some(Action::SettingsPage(i));
-            item.x = left;
+            item.x = 12.0;
             item.y = y;
             pieces.push(item);
             y += 44.0;
         }
 
-        // The page itself
-        let cx = left + nav_w + 40.0;
-        let cw = span - nav_w - 40.0;
-        let mut y = top + th + 24.0;
+        // The page: its rows on a card, as wide as reads well
+        let room = w - side_w;
+        let pad = if room < 640.0 { 28.0 } else { 44.0 };
+        let cw = (room - pad * 2.0).clamp(240.0, 780.0);
+        let cx = side_w + pad;
+        let head_h = 92.0;
+        let (ix, iw) = (cx + 22.0, cw - 44.0);
         let label_font = Font::new(t.text + 1.0).weight(500);
         let about_font = Font::new(t.text - 2.0);
         let control_font = Font::new(t.text - 1.0).weight(500);
-        for (r, row) in rows(self.page, c, model).into_iter().enumerate() {
-            let row_h = 66.0;
-            let mut line = Piece::new(format!("set.row.{r}"), cw, row_h);
-            let (_, lh) = text.measure("Ag", label_font);
-            let (_, ah) = text.measure("Ag", about_font);
-            let top_y = if row.about.is_empty() { (row_h - lh) / 2.0 } else { (row_h - lh - ah) / 2.0 };
-            let label = crate::bar::Ctx::ellipsize_with(text, &row.label, label_font, cw * 0.45);
+        let (_, lh) = text.measure("Ag", label_font);
+        let (_, ah) = text.measure("Ag", about_font);
+        let card_index = pieces.len();
+        let top = head_h + 4.0 - self.scroll;
+        let mut y = top + 6.0;
+        let rows = rows(self.page, c, model);
+        let count = rows.len();
+        for (r, row) in rows.into_iter().enumerate() {
+            // The control beside its label; when there isn't room for both, under it
+            let ctrl_w = control_width(&row.control, text, control_font);
+            let stacked = iw - ctrl_w - 24.0 < (iw * 0.4).min(220.0);
+            // Choices wider than the row go on as many lines as they need, under the label
+            let lines: Vec<Vec<usize>> = match &row.control {
+                Control::Choice(options, _) if stacked && ctrl_w > iw => {
+                    let mut lines: Vec<Vec<usize>> = vec![Vec::new()];
+                    let mut used = 0.0;
+                    for (i, (label, _)) in options.iter().enumerate() {
+                        let pw = text.measure(label, control_font).0 + 26.0;
+                        if used + pw > iw && !lines.last().is_some_and(Vec::is_empty) {
+                            lines.push(Vec::new());
+                            used = 0.0;
+                        }
+                        used += pw + 8.0;
+                        if let Some(line) = lines.last_mut() {
+                            line.push(i);
+                        }
+                    }
+                    lines
+                }
+                _ => Vec::new(),
+            };
+            let row_h = if stacked { 104.0 + 40.0 * lines.len().saturating_sub(1) as f32 } else { 66.0 };
+            let label_w = if stacked { iw } else { iw - ctrl_w - 24.0 };
+            let mut line = Piece::new(format!("set.row.{r}"), iw, row_h);
+            let top_y = match (stacked, row.about.is_empty()) {
+                (true, _) => 14.0,
+                (false, true) => (row_h - lh) / 2.0,
+                (false, false) => (row_h - lh - ah) / 2.0,
+            };
+            let label = crate::bar::Ctx::ellipsize_with(text, &row.label, label_font, label_w);
             line.prims.push(Prim::Text { x: 0.0, y: top_y, text: label, font: label_font, color: t.color_text });
             if !row.about.is_empty() {
-                let about = crate::bar::Ctx::ellipsize_with(text, &row.about, about_font, cw * 0.45);
+                let about = crate::bar::Ctx::ellipsize_with(text, &row.about, about_font, label_w);
                 line.prims.push(Prim::Text { x: 0.0, y: top_y + lh, text: about, font: about_font, color: t.color_soft });
             }
-            line.prims.push(Prim::Line { points: vec![(0.0, row_h - 0.5), (cw, row_h - 0.5)], width: 1.0, color: t.outline_variant.alpha(0.5) });
-            line.x = cx;
+            if r + 1 < count {
+                line.prims.push(Prim::Line { points: vec![(0.0, row_h - 0.5), (iw, row_h - 0.5)], width: 1.0, color: t.outline_variant.alpha(0.5) });
+            }
+            line.x = ix;
             line.y = y;
             pieces.push(line);
 
-            // The control, at the right
-            let right = cx + cw;
+            // The control: at the right, or at the left under the label
+            let right = if stacked { ix + ctrl_w } else { ix + iw };
+            let at_y = |hc: f32| if stacked { y + 58.0 + (36.0 - hc) / 2.0 } else { y + (row_h - hc) / 2.0 };
             let pill = |pieces: &mut Vec<Piece>, key: String, label: &str, x: f32, filled: bool, action: Option<Action>, text: &mut Text| -> f32 {
                 let (lw, lh) = text.measure(label, control_font);
                 let (bw, bh) = (lw + 26.0, 32.0);
@@ -278,24 +384,40 @@ impl Settings {
                 p.highlight = true;
                 p.actions.left = action;
                 p.x = x - bw;
-                p.y = y + (row_h - bh) / 2.0;
+                p.y = at_y(bh);
                 pieces.push(p);
                 bw
             };
             let set = |value: Value| Some(Action::SetSetting(row.keys.clone(), value));
+            let switch = |pieces: &mut Vec<Piece>, on: bool, action: Option<Action>| {
+                let (sw, sh) = (44.0, 24.0);
+                let mut s = Piece::new(format!("set.switch.{r}"), sw, sh);
+                s.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: sw, h: sh, radius: sh / 2.0, color: if on { t.primary } else { t.outline_variant } });
+                let k = 16.0;
+                let kx = if on { sw - k - 4.0 } else { 4.0 };
+                s.prims.push(Prim::Rect { x: kx, y: (sh - k) / 2.0, w: k, h: k, radius: k / 2.0, color: if on { t.on_primary } else { t.color_soft } });
+                s.highlight = true;
+                s.actions.left = action;
+                s.x = right - sw;
+                s.y = at_y(sh);
+                pieces.push(s);
+            };
             match row.control {
-                Control::Switch(on) => {
-                    let (sw, sh) = (44.0, 24.0);
-                    let mut s = Piece::new(format!("set.switch.{r}"), sw, sh);
-                    s.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: sw, h: sh, radius: sh / 2.0, color: if on { t.primary } else { t.outline_variant } });
-                    let k = 16.0;
-                    let kx = if on { sw - k - 4.0 } else { 4.0 };
-                    s.prims.push(Prim::Rect { x: kx, y: (sh - k) / 2.0, w: k, h: k, radius: k / 2.0, color: if on { t.on_primary } else { t.color_soft } });
-                    s.highlight = true;
-                    s.actions.left = set(Value::Bool(!on));
-                    s.x = right - sw;
-                    s.y = y + (row_h - sh) / 2.0;
-                    pieces.push(s);
+                Control::Switch(on) => switch(&mut pieces, on, set(Value::Bool(!on))),
+                Control::SwitchTo(on, value) => switch(&mut pieces, on, set(value)),
+                Control::Choice(options, current) if !lines.is_empty() => {
+                    for (j, line) in lines.iter().enumerate() {
+                        let mut x = ix;
+                        for &i in line {
+                            let (label, value) = &options[i];
+                            let pw = text.measure(label, control_font).0 + 26.0;
+                            pill(&mut pieces, format!("set.choice.{r}.{i}"), label, x + pw, current == Some(i), set(value.clone()), text);
+                            if let Some(p) = pieces.last_mut() {
+                                p.y += 40.0 * j as f32;
+                            }
+                            x += pw + 8.0;
+                        }
+                    }
                 }
                 Control::Choice(options, current) => {
                     let mut x = right;
@@ -311,7 +433,7 @@ impl Settings {
                     let mut v = Piece::new(format!("set.value.{r}"), 92.0, 32.0);
                     v.prims.push(Prim::Text { x: ((92.0 - vw) / 2.0).round(), y: ((32.0 - vh) / 2.0).round(), text: shown, font: label_font, color: t.color_text });
                     v.x = right - plus - 92.0;
-                    v.y = y + (row_h - 32.0) / 2.0;
+                    v.y = at_y(32.0);
                     pieces.push(v);
                     pill(&mut pieces, format!("set.minus.{r}"), "−", right - plus - 92.0, false, (value > min).then(|| Action::SetSetting(row.keys.clone(), Value::Int((value - step).max(min)))), text);
                 }
@@ -320,7 +442,7 @@ impl Settings {
                     let (fw, fh) = (240.0, 34.0);
                     let mut f = Piece::new(format!("set.text.{r}"), fw, fh);
                     f.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: fw, h: fh, radius: fh / 2.0, color: if editing.is_some() { t.primary } else { t.hairline() } });
-                    f.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: fw - 2.0, h: fh - 2.0, radius: fh / 2.0 - 1.0, color: t.card_deep });
+                    f.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: fw - 2.0, h: fh - 2.0, radius: fh / 2.0 - 1.0, color: t.surface });
                     let shown = editing.clone().unwrap_or_else(|| if current.is_empty() { "Not set".into() } else { current.clone() });
                     let shown = crate::bar::Ctx::ellipsize_with(text, &shown, control_font, fw - 30.0);
                     let (sw, sh) = text.measure(&shown, control_font);
@@ -331,7 +453,7 @@ impl Settings {
                     f.highlight = true;
                     f.actions.left = Some(Action::SettingsEdit(row.keys.clone()));
                     f.x = right - fw;
-                    f.y = y + (row_h - fh) / 2.0;
+                    f.y = at_y(fh);
                     pieces.push(f);
                 }
                 Control::Button(label, action) => {
@@ -340,14 +462,48 @@ impl Settings {
             }
             y += row_h;
         }
-        let hint = if self.editing.is_some() { "Type, then Enter to keep it · Esc lets it be" } else { "Changes are saved to config.toml as you make them · Esc closes" };
-        let font = Font::new(t.text - 2.0);
-        let (hw, hh) = text.measure(hint, font);
-        let mut footer = Piece::new("set.footer", hw, hh);
-        footer.prims.push(Prim::Text { x: 0.0, y: 0.0, text: hint.into(), font, color: t.color_soft.alpha(0.7) });
-        footer.x = ((w - hw) / 2.0).round();
-        footer.y = (h - 22.0 - hh).round();
-        pieces.push(footer);
+        let card_h = y + 6.0 - top;
+        let mut card = Piece::new("set.card", cw, card_h);
+        card.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: cw, h: card_h, radius: t.radius, color: t.hairline() });
+        card.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: cw - 2.0, h: card_h - 2.0, radius: t.radius - 1.0, color: t.card_deep });
+        card.x = cx;
+        card.y = top;
+        pieces.insert(card_index, card);
+        // How far it can scroll: the card's foot 32 px off the window's
+        self.max_scroll = (card_h + head_h + 4.0 + 32.0 - h).max(0.0);
+        if self.scroll > self.max_scroll {
+            self.scroll = self.max_scroll;
+        }
+        if let Some(hint) = self.editing.as_ref().map(|_| "Type, then Enter to keep it · Esc lets it be") {
+            let (hw, hh) = text.measure(hint, about_font);
+            let mut under = Piece::new("set.hint", hw, hh);
+            under.prims.push(Prim::Text { x: 0.0, y: 0.0, text: hint.into(), font: about_font, color: t.color_soft });
+            under.x = cx + cw - hw;
+            under.y = top + card_h + 10.0;
+            pieces.push(under);
+        }
+
+        // The page's title, over rows scrolled under it; held, it moves the window
+        let mut head = Piece::new("set.head", room - 1.0, head_h);
+        head.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: room - 1.0, h: head_h, radius: 0.0, color: t.surface });
+        let head_font = Font::new(t.text + 11.0).weight(400);
+        let (_, hh) = text.measure("Ag", head_font);
+        head.prims.push(Prim::Text { x: pad, y: ((head_h - hh) / 2.0).round() + 4.0, text: PAGES[self.page].into(), font: head_font, color: t.color_text });
+        if self.scroll > 0.5 {
+            head.prims.push(Prim::Rect { x: 0.0, y: head_h - 1.0, w: room - 1.0, h: 1.0, radius: 0.0, color: t.hairline() });
+        }
+        head.actions.left = Some(Action::MoveWindow);
+        head.x = side_w + 1.0;
+        head.y = 0.0;
+        pieces.push(head);
+        let size = 36.0;
+        let mut close = Piece::new("set.close", size, size);
+        close.prims.push(Prim::Icon { x: 9.0, y: 9.0, size: 18.0, name: "close".into(), color: t.color_soft });
+        close.highlight = true;
+        close.actions.left = Some(Action::CloseSettings);
+        close.x = w - size - 18.0;
+        close.y = ((head_h - size) / 2.0).round() + 4.0;
+        pieces.push(close);
         pieces
     }
 }

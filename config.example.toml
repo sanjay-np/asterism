@@ -19,6 +19,7 @@ percent = true            # numbers beside volume, battery and resources
 media_title = "scroll"    # scroll, short or off
 tray_tint = false         # background apps drawn in the bar's colour
 hot_corner = true         # the bar's top-right corner opens the control centre
+song_popup = true         # a card with the cover and the title for a moment when the song changes
 polkit_agent = true       # ask for passwords when apps need an administrator's say
 font = "Google Sans Flex" # ships with the bar, as does Poppins; any installed family works
 icons = "outline"         # outline (thin Material), material (rounded) or phosphor (filled)
@@ -103,6 +104,9 @@ fit = "cover"             # cover, contain or stretch
 # chosen there is remembered without touching this file (edit `image` and yours wins again).
 directory = ""
 interval = 0              # minutes between changing to another picture at random; 0 never
+transition = "random"     # how pictures change: random (a different one each time), fade, wipe,
+                          # circle, blinds, ink, pixels, slide, or none
+transition_ms = 1200      # how long that takes
 grain = 1.0               # film grain against banding, 0 to 2
 # Without a picture you get a quiet gradient in the scheme's colours. Or, for a painted
 # landscape of the `planet` below instead:
@@ -126,6 +130,19 @@ search = "https://duckduckgo.com/?q={}"
 # text = "#e6e0e9"
 # text_soft = "#cac4d0"
 # warn = "#f2b8b5"
+# The bar's icons in the wallpaper's colours: "tinted" (leaning toward them, the default),
+# "accent" (its accent colour), "colourful" (status, machine and tools a colour each) or "plain".
+bar_icons = "tinted"
+# The widgets' clock, headings and cards in the wallpaper's colours ("tinted"), or "plain".
+widgets = "tinted"
+# The scheme for other apps too, as files of their own beside their configs (yours aren't
+# touched); include them once and they follow every wallpaper change:
+#   kitty      ~/.config/kitty/asterism-colors.conf      kitty.conf: include asterism-colors.conf
+#   foot       ~/.config/foot/asterism-colors.ini        foot.ini: include=~/.config/foot/asterism-colors.ini
+#   alacritty  ~/.config/alacritty/asterism-colors.toml  alacritty.toml: [general] import = ["…"]
+#   gtk        ~/.config/gtk-{3,4}.0/asterism-colors.css gtk.css: @import url("asterism-colors.css");
+# kitty reads it again at once; Alacritty follows the file; foot and GTK apps at their next start.
+apps = []                 # any of kitty, foot, alacritty, gtk
 
 [lock]
 idle = 10                 # minutes without input before the screen locks; 0 never
@@ -154,5 +171,13 @@ rounds = 4                # a long break after this many rounds
 
 [widgets]
 # On the desktop, under your windows; drag one to move it (it stays where you leave it).
-show = ["clock", "weather", "media"]   # any of clock, weather, media, calendar, system; [] for none
+# Right-click a widget or the wallpaper for the desktop's menu; "Arrange widgets" there (or
+# `asterism msg widgets edit`) adds, takes off, moves and resizes (the wheel) them all.
+# "visualizer": bars that move with the music while something plays, in a card; "edge": the
+# same along the foot of the screen (both listen to the speakers through parec or pw-record,
+# only then). "photos": a picture from a folder; "note": a sticky note.
+show = ["clock", "weather", "media"]   # any of clock, weather, media, visualizer, edge, calendar, system, photos, note; [] for none
 lyrics = true             # song words under what's playing, from LRCLIB (sends the song's name)
+photos = ""               # the photo frame's folder; empty takes ~/Pictures (PNG and JPEG)
+photo_minutes = 10        # how long each picture stays
+note = ""                 # what the sticky note says; use """…""" for several lines

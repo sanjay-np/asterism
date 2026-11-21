@@ -116,6 +116,15 @@ pub fn planet(id: &str) -> &'static Planet {
     PLANETS.iter().find(|p| p.id == id.to_lowercase()).unwrap_or(&PLANETS[3])
 }
 
+/// The bar's icons in groups, each its own colour when icons are colourful: the status end
+/// (and the launcher), the machine (resources, weather, music), and the tools.
+#[derive(Clone, Copy)]
+pub enum Icons {
+    Status = 0,
+    Machine = 1,
+    Tools = 2,
+}
+
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub style: BarStyle,
@@ -165,6 +174,12 @@ pub struct Theme {
     pub warn: Rgba,
     pub mic: Rgba,
     pub lit: Rgba,
+    /// The bar's icons, by group (`Icons`): all three alike unless they're colourful.
+    pub icon_tints: [Rgba; 3],
+    /// The widgets' big words and headings, their quieter lines, and their cards.
+    pub widget_strong: Rgba,
+    pub widget_soft: Rgba,
+    pub widget_card: Rgba,
 
     /// Durations, in milliseconds.
     pub fast: f32,
@@ -187,6 +202,20 @@ impl Theme {
         let pick = |own: &Option<String>, fallback: Rgba| own.as_deref().and_then(Rgba::hex).unwrap_or(fallback);
         let framed = config.style == BarStyle::Frame;
         let primary = p.primary;
+        let text = pick(&config.colors.text, p.on_surface);
+        let soft = pick(&config.colors.text_soft, p.on_surface_variant);
+        // Icons and widgets take the wallpaper's colour: a light text leaning toward the accent
+        // keeps them readable while it shows whose wallpaper it is
+        let tinted = text.mix(primary, 0.72);
+        let icons = config.colors.bar_icons.trim().to_lowercase();
+        let icon_tints = match icons.as_str() {
+            "plain" => [text; 3],
+            "accent" => [primary; 3],
+            "colourful" | "colorful" => [primary, text.mix(p.secondary, 0.75), text.mix(p.tertiary, 0.75)],
+            _ => [tinted; 3],
+        };
+        let widgets_tinted = config.colors.widgets.trim().to_lowercase() != "plain";
+        let surface = pick(&config.colors.surface, p.surface);
         Theme {
             style: config.style,
             on_top: config.position == Position::Top,
@@ -208,7 +237,7 @@ impl Theme {
             radius: 16.0,
 
             palette: p,
-            surface: pick(&config.colors.surface, p.surface),
+            surface,
             container_high: p.surface_container_high,
             container_highest: p.surface_container_highest,
             primary,
@@ -221,13 +250,18 @@ impl Theme {
             outline_variant: p.outline_variant,
             error_container: p.error_container,
 
-            color_text: pick(&config.colors.text, p.on_surface),
-            color_soft: pick(&config.colors.text_soft, p.on_surface_variant),
+            color_text: text,
+            color_soft: soft,
             glow: primary,
             card_deep: pick(&config.colors.card, p.surface_container),
+            icon_tints,
+            widget_strong: if widgets_tinted { text.mix(primary, 0.55) } else { text },
+            widget_soft: if widgets_tinted { text.mix(primary, 0.35).alpha(0.9) } else { text.alpha(0.85) },
+            widget_card: if widgets_tinted { surface.mix(p.primary_container, 0.3).alpha(0.62) } else { surface.alpha(0.62) },
             warn: pick(&config.colors.warn, p.error),
             mic: p.error,
-            lit: primary,
+            // With accent icons, a tool that's on needs another colour to stand out
+            lit: if icons == "accent" { p.tertiary } else { primary },
 
             fast: 160.0,
             normal: 260.0,
@@ -259,6 +293,11 @@ impl Theme {
         self.style == BarStyle::Frame
     }
 
+    /// A bar icon's colour, by its group (they differ only when icons are colourful).
+    pub fn icon_tint(&self, group: Icons) -> Rgba {
+        self.icon_tints[group as usize]
+    }
+
     /// The 1px line that edges the bar and outlines cards.
     pub fn hairline(&self) -> Rgba {
         self.outline_variant.alpha(0.75)
@@ -267,5 +306,37 @@ impl Theme {
     /// A hover's tonal layer.
     pub fn state_layer(&self, amount: f32) -> Rgba {
         self.color_text.alpha(0.08 * amount)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn theme(source: Rgba, bar_icons: &str) -> Theme {
+        let mut config = Config::default();
+        config.colors.bar_icons = bar_icons.into();
+        Theme::with_palette(&config, crate::palette::from_source(source))
+    }
+
+    #[test]
+    fn icons_and_widgets_follow_the_wallpaper() {
+        let (blue, orange) = (Rgba::rgb(0x4a, 0x6f, 0xd9), Rgba::rgb(0xe0, 0x8a, 0x3c));
+        // Tinted by default: a blue wallpaper gives bluer icons than an orange one, and both
+        // differ from plain text
+        let (b, o) = (theme(blue, ""), theme(orange, ""));
+        let icon_b = b.icon_tint(Icons::Status);
+        let icon_o = o.icon_tint(Icons::Status);
+        assert!(icon_b.b > icon_o.b && icon_o.r > icon_b.r, "{icon_b:?} {icon_o:?}");
+        assert_ne!(icon_b, b.color_text);
+        assert!(b.widget_strong.b > o.widget_strong.b);
+        // Plain is the text's colour; accent the accent, with tools that are on in another
+        assert_eq!(theme(blue, "plain").icon_tint(Icons::Tools), b.color_text);
+        let accent = theme(blue, "accent");
+        assert_eq!(accent.icon_tint(Icons::Machine), accent.primary);
+        assert_ne!(accent.lit, accent.primary);
+        // Colourful: the groups differ
+        let colourful = theme(blue, "colourful");
+        assert_ne!(colourful.icon_tint(Icons::Status), colourful.icon_tint(Icons::Tools));
     }
 }

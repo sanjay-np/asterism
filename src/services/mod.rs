@@ -16,6 +16,7 @@ mod niri;
 mod notifications;
 mod polkit;
 mod power;
+mod spectrum;
 mod tray;
 mod weather;
 pub mod xkb;
@@ -106,6 +107,7 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
     let capture = start(out.clone(), capture::run);
     let lyrics = start(out.clone(), lyrics::run);
     let audio = start(out.clone(), audio::run);
+    let spectrum = start(out.clone(), spectrum::run);
 
     let session = match zbus::Connection::session().await {
         Ok(connection) => Some(connection),
@@ -205,6 +207,29 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
             LockBeforeSleep(_) => forward(&login, command),
             FetchLyrics { .. } => {
                 let _ = lyrics.send(command);
+            }
+            ListPhotos(dir) => {
+                let out = out.clone();
+                tokio::task::spawn_blocking(move || {
+                    let list = crate::wallpapers::list(&dir);
+                    out.send(Update::Photos(dir, list));
+                });
+            }
+            AppColors(palette, apps) => {
+                tokio::task::spawn_blocking(move || {
+                    let changed = crate::appcolors::write(&apps, &palette);
+                    // kitty reads its config again on SIGUSR1; the others follow the file, or
+                    // take it at their next start
+                    if changed.iter().any(|a| a == "kitty") {
+                        let _ = std::process::Command::new("pkill").args(["-USR1", "-x", "kitty"]).status();
+                    }
+                    if !changed.is_empty() {
+                        log::info!("colours written for {}", changed.join(", "));
+                    }
+                });
+            }
+            WatchSpectrum(_) => {
+                let _ = spectrum.send(command);
             }
             WatchProcesses(_) | EndProcess(_) => {
                 let _ = machine.send(command);

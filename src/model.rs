@@ -515,6 +515,8 @@ pub enum Request {
     Dashboard(Option<bool>),
     Settings(Option<bool>),
     Overview(Option<bool>),
+    /// Arranging the desktop's widgets: start, finish, or (None) the other way.
+    Widgets(Option<bool>),
 }
 
 /// Something done to a timer, from its menu or from `asterism msg`.
@@ -592,6 +594,10 @@ pub struct Model {
     pub processes: Vec<Process>,
     /// Songs' words with their times, by `widgets::lyrics_key` (empty: none found).
     pub lyrics: HashMap<String, Vec<(f64, String)>>,
+    /// What the speakers play, as levels 0 to 1 from low to high (empty: not listening).
+    pub spectrum: Vec<f32>,
+    /// The photo frame's folder, and the pictures in it.
+    pub photos: Option<(std::path::PathBuf, Vec<std::path::PathBuf>)>,
 }
 
 /// What a screenshot takes.
@@ -643,6 +649,10 @@ pub enum Update {
     /// The colours grown from this wallpaper.
     WallpaperPalette(String, crate::palette::Palette),
     Awake(bool),
+    /// The visualizer's levels, about thirty times a second while it listens.
+    Spectrum(Vec<f32>),
+    /// The pictures in a folder, for the photo frame.
+    Photos(std::path::PathBuf, Vec<std::path::PathBuf>),
 }
 
 impl Model {
@@ -689,6 +699,8 @@ impl Model {
                 self.app_icons.insert(app, icon);
             }
             Update::Awake(on) => self.awake = on,
+            Update::Spectrum(levels) => self.spectrum = levels,
+            Update::Photos(dir, list) => self.photos = Some((dir, list)),
         }
     }
 }
@@ -733,6 +745,12 @@ pub enum Command {
     LockBeforeSleep(bool),
     /// Look at what's running (every couple of seconds), or stop looking.
     WatchProcesses(bool),
+    /// Listen to what the speakers play, for the visualizer, or stop.
+    WatchSpectrum(bool),
+    /// List a folder's pictures, for the photo frame.
+    ListPhotos(std::path::PathBuf),
+    /// Write the scheme's files for these apps (`appcolors`).
+    AppColors(Box<crate::palette::Palette>, Vec<String>),
     /// Asks a program to end (SIGTERM).
     EndProcess(u32),
     /// Joins a wifi network with its password (saved only if it works).

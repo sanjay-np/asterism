@@ -170,6 +170,36 @@ pub enum Level {
     Layout(String),
 }
 
+pub const SONG_WIDTH: f32 = 380.0;
+pub const SONG_HEIGHT: f32 = 92.0;
+
+/// The song that just started: its cover, its name and who sings it, and the music moving
+/// under them (while the visualizer hears it).
+pub fn song(t: &Theme, text: &mut Text, player: &crate::model::Player, art: Option<std::sync::Arc<crate::model::Image>>, levels: &[f32]) -> Vec<Piece> {
+    let (w, h) = (SONG_WIDTH, SONG_HEIGHT);
+    let mut card = Piece::new("song.card", w, h);
+    card.prims.push(Prim::Card { x: 0.0, y: 0.0, w, h, radius: t.radius });
+    card.pad = 14.0;
+    let side = h - 32.0;
+    match art {
+        Some(image) => card.prims.push(Prim::Image { x: 16.0, y: 16.0, w: side, h: side, image, tint: None, radius: 12.0 }),
+        None => {
+            card.prims.push(Prim::Rect { x: 16.0, y: 16.0, w: side, h: side, radius: 12.0, color: t.container_high });
+            card.prims.push(Prim::Icon { x: 16.0 + (side - 26.0) / 2.0, y: 16.0 + (side - 26.0) / 2.0, size: 26.0, name: "music".into(), color: t.color_soft });
+        }
+    }
+    let x = 16.0 + side + 14.0;
+    let room = w - x - 18.0;
+    let title_font = Font::new(t.text + 1.0).weight(500);
+    let small = Font::new(t.text - 1.0);
+    let title = crate::bar::Ctx::ellipsize_with(text, &player.title, title_font, room);
+    let artist = crate::bar::Ctx::ellipsize_with(text, &player.artist, small, room);
+    card.prims.push(Prim::Text { x, y: 16.0, text: title, font: title_font, color: t.color_text });
+    card.prims.push(Prim::Text { x, y: 38.0, text: artist, font: small, color: t.color_soft });
+    crate::widgets::bars(&mut card, t, levels, x - 2.0, room + 4.0, h - 22.0, 8.0);
+    vec![card]
+}
+
 pub const OSD_WIDTH: f32 = 300.0;
 pub const OSD_HEIGHT: f32 = 56.0;
 

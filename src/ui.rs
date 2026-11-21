@@ -169,9 +169,20 @@ pub enum Action {
     ToggleDashboard,
     /// The settings app: open or close it, show a page, start typing a value, write one.
     ToggleSettings,
+    CloseSettings,
     SettingsPage(usize),
     SettingsEdit(Vec<String>),
     SetSetting(Vec<String>, crate::settings::Value),
+    /// The window this piece is in follows the pointer (a window's title area).
+    MoveWindow,
+    /// Arranging the desktop's widgets: start or finish (None: the other way), put one on the
+    /// desktop, take one off.
+    EditWidgets(Option<bool>),
+    WidgetAdd(String),
+    WidgetRemove(String),
+    /// The sticky note, to be written (in Settings); the photo frame's next picture.
+    EditNote,
+    NextPhoto,
     LockNow,
     /// The wifi password prompt: ask for this network's password, send it, or let it be.
     WifiAsk(String),
@@ -296,6 +307,72 @@ impl Piece {
 
     pub fn contains(&self, x: f32, y: f32, margin: f32) -> bool {
         x >= self.x - margin && x < self.x + self.w + margin && y >= self.y - margin && y < self.y + self.h + margin
+    }
+
+    /// The same piece drawn `k` times as big, text and all (a widget made bigger or smaller).
+    pub fn scale(&mut self, k: f32) {
+        if (k - 1.0).abs() < 0.001 {
+            return;
+        }
+        self.w *= k;
+        self.h *= k;
+        self.pad *= k;
+        for prim in &mut self.prims {
+            match prim {
+                Prim::Text { x, y, font, .. } => {
+                    *x *= k;
+                    *y *= k;
+                    font.size *= k;
+                    font.spacing *= k;
+                }
+                Prim::Marquee { x, y, width, font, offset, gap, .. } => {
+                    for v in [x, y, width, offset, gap] {
+                        *v *= k;
+                    }
+                    font.size *= k;
+                    font.spacing *= k;
+                }
+                Prim::Icon { x, y, size, .. } | Prim::GlowIcon { x, y, size, .. } => {
+                    for v in [x, y, size] {
+                        *v *= k;
+                    }
+                }
+                Prim::Image { x, y, w, h, radius, .. } => {
+                    for v in [x, y, w, h, radius] {
+                        *v *= k;
+                    }
+                }
+                Prim::Ring { cx, cy, r, width, .. } => {
+                    for v in [cx, cy, r, width] {
+                        *v *= k;
+                    }
+                }
+                Prim::Line { points, width, .. } => {
+                    for (x, y) in points.iter_mut() {
+                        *x *= k;
+                        *y *= k;
+                    }
+                    *width *= k;
+                }
+                Prim::Area { points, base, .. } => {
+                    for (x, y) in points.iter_mut() {
+                        *x *= k;
+                        *y *= k;
+                    }
+                    *base *= k;
+                }
+                Prim::Rect { x, y, w, h, radius, .. } | Prim::Card { x, y, w, h, radius } | Prim::Drawer { x, y, w, h, radius, .. } => {
+                    for v in [x, y, w, h, radius] {
+                        *v *= k;
+                    }
+                }
+                Prim::Fillet { x, y, r, .. } => {
+                    for v in [x, y, r] {
+                        *v *= k;
+                    }
+                }
+            }
+        }
     }
 }
 

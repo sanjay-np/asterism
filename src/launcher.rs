@@ -415,10 +415,7 @@ fn closeness(text: &str, query: &str) -> i32 {
 
 impl Launcher {
     pub fn new() -> Self {
-        // Counts kept under the old name carry over
-        let old = counts_path().parent().and_then(|p| p.parent()).map(|state| state.join("etea-bar").join("launches.json"));
-        let text = std::fs::read_to_string(counts_path()).ok().or_else(|| old.and_then(|o| std::fs::read_to_string(o).ok()));
-        let counts = text.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        let counts = std::fs::read_to_string(counts_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
         Self { apps: Apps::default(), query: String::new(), selected: 0, hits: Vec::new(), counts, columns: 6, per_page: 24 }
     }
 

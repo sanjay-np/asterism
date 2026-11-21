@@ -22,14 +22,32 @@ pub(super) enum PanelKind {
     Wifi,
     Pair,
     Overview,
+    DeskMenu,
+    Song,
 }
 
 pub(super) struct Panel {
     pub surf: Surf,
-    pub layer: LayerSurface,
+    pub role: Role,
     pub kind: PanelKind,
     /// The size asked of the compositor, logical pixels (0 follows the output).
     pub want: (u32, u32),
+}
+
+/// What a panel is to the compositor: a layer of the shell, or a window like any app's.
+pub(super) enum Role {
+    Layer(LayerSurface),
+    Window(smithay_client_toolkit::shell::xdg::window::Window),
+}
+
+impl Panel {
+    pub fn is_layer(&self, layer: &LayerSurface) -> bool {
+        matches!(&self.role, Role::Layer(l) if l == layer)
+    }
+
+    pub fn is_window(&self, window: &smithay_client_toolkit::shell::xdg::window::Window) -> bool {
+        matches!(&self.role, Role::Window(w) if w == window)
+    }
 }
 
 /// A notification showing as a pop-up, until when.
@@ -42,12 +60,14 @@ pub(super) struct Toast {
 const SHADE: Rgba = Rgba { r: 0.02, g: 0.024, b: 0.055, a: 0.6 };
 /// How long the level stays after the last change.
 const OSD_FOR: Duration = Duration::from_millis(1400);
+/// How long a new song's card stays.
+const SONG_FOR: Duration = Duration::from_millis(4500);
 
 impl App {
     // ---------------------------------------------------------------- panels
 
     /// The output being worked on: the compositor says which, else the first bar's.
-    fn working_output(&self) -> Option<wl_output::WlOutput> {
+    pub(super) fn working_output(&self) -> Option<wl_output::WlOutput> {
         let focused = &self.model.compositor.focused_output;
         self.bars.iter().find(|b| &b.output_name == focused).or(self.bars.first()).map(|b| b.output.clone())
     }
@@ -58,7 +78,13 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     pub(super) fn open_panel(&mut self, kind: PanelKind, layer: Layer, anchor: Anchor, size: (u32, u32), margin: (i32, i32, i32, i32), keyboard: KeyboardInteractivity, exclusive: i32) {
-        let Some(output) = self.working_output() else { return };
+        self.open_panel_on(None, kind, layer, anchor, size, margin, keyboard, exclusive);
+    }
+
+    /// A panel on this output (None: the one being worked on).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn open_panel_on(&mut self, output: Option<wl_output::WlOutput>, kind: PanelKind, layer: Layer, anchor: Anchor, size: (u32, u32), margin: (i32, i32, i32, i32), keyboard: KeyboardInteractivity, exclusive: i32) {
+        let Some(output) = output.or_else(|| self.working_output()) else { return };
         let wl = self.compositor.create_surface(&self.qh);
         let mut surf = self.new_surf(wl.clone());
         if let Some(bar) = self.bars.iter().find(|b| b.output == output) {
@@ -79,6 +105,8 @@ impl App {
             PanelKind::Wifi => "asterism-wifi",
             PanelKind::Pair => "asterism-pairing",
             PanelKind::Overview => "asterism-overview",
+            PanelKind::DeskMenu => "asterism-desktop-menu",
+            PanelKind::Song => "asterism-song",
         };
         let surface = self.layer_shell.create_layer_surface(&self.qh, wl, layer, Some(namespace), Some(&output));
         surface.set_anchor(anchor);
@@ -87,7 +115,52 @@ impl App {
         surface.set_keyboard_interactivity(keyboard);
         surface.set_exclusive_zone(exclusive);
         surface.commit();
-        self.panels.push(Panel { surf, layer: surface, kind, want: size });
+        self.panels.push(Panel { surf, role: Role::Layer(surface), kind, want: size });
+    }
+
+    /// A panel as an ordinary window: the compositor places it, sizes it and decorates it (or
+    /// not) like any app's; `size` is what it starts at when the compositor leaves that to us.
+    pub(super) fn open_window(&mut self, kind: PanelKind, title: &str, app_id: &str, size: (u32, u32), min: (u32, u32)) {
+        use smithay_client_toolkit::shell::xdg::window::WindowDecorations;
+        let wl = self.compositor.create_surface(&self.qh);
+        let mut surf = self.new_surf(wl.clone());
+        // The scale of the screen it most likely opens on, until the compositor says
+        if let Some(output) = self.working_output()
+            && let Some(bar) = self.bars.iter().find(|b| b.output == output)
+        {
+            surf.scale120 = bar.surf.scale120;
+            surf.int_scale = bar.surf.int_scale;
+        }
+        let window = self.xdg.create_window(wl, WindowDecorations::RequestServer, &self.qh);
+        window.set_title(title);
+        window.set_app_id(app_id);
+        window.set_min_size(Some(min));
+        window.commit();
+        self.panels.push(Panel { surf, role: Role::Window(window), kind, want: size });
+    }
+
+    /// Lets the compositor move the window this press was on (its title area was held).
+    pub(super) fn move_window(&mut self, serial: u32) {
+        let Some(seat) = self.seat.clone() else { return };
+        for panel in &self.panels {
+            if let Role::Window(window) = &panel.role
+                && panel.surf.pointer.is_some()
+            {
+                window.move_(&seat, serial);
+            }
+        }
+    }
+
+    /// The settings page follows the wheel.
+    pub(super) fn scroll_settings(&mut self, pixels: f32) {
+        let Some(settings) = self.settings.as_mut() else { return };
+        let to = (settings.scroll + pixels).clamp(0.0, settings.max_scroll);
+        if (to - settings.scroll).abs() > 0.1 {
+            settings.scroll = to;
+            if let Some(index) = self.panel_index(PanelKind::Settings) {
+                self.panels[index].surf.dirty = true;
+            }
+        }
     }
 
     pub(super) fn close_panel(&mut self, kind: PanelKind) {
@@ -116,6 +189,12 @@ impl App {
         }
         if kind == PanelKind::Overview {
             self.overview = None;
+        }
+        if kind == PanelKind::DeskMenu {
+            self.desk_menu = None;
+        }
+        if kind == PanelKind::Song {
+            self.watch_spectrum();
         }
         if kind == PanelKind::Dashboard && self.dashboard.take().is_some() {
             self.send(Command::WatchProcesses(false));
@@ -169,13 +248,31 @@ impl App {
                 let Some(pieces) = self.overview_pieces(w, h) else { return };
                 (pieces, Some(self.theme.surface.alpha(0.93)), -10.0)
             }
+            PanelKind::DeskMenu => {
+                let Some(pieces) = self.desk_menu_pieces(index, w, h) else { return };
+                (pieces, None, -6.0)
+            }
+            PanelKind::Song => {
+                let Some(player) = self.model.media.player() else { return };
+                let art = self.model.art.get(&player.art_url).cloned();
+                if art.is_none() && !player.art_url.is_empty() && self.requested.insert(player.art_url.clone()) {
+                    self.send(Command::FetchArt(player.art_url.clone()));
+                }
+                let player = player.clone();
+                let mut pieces = cards::song(&self.theme, &mut self.painter.text, &player, art, &self.model.spectrum);
+                for piece in &mut pieces {
+                    piece.x += m;
+                    piece.y += m;
+                }
+                (pieces, None, if self.theme.on_top { -10.0 } else { 10.0 })
+            }
             PanelKind::Pair => {
                 let Some((pairing, typed)) = self.pair.as_ref() else { return };
                 (cards::pair_card(&self.theme, &mut self.painter.text, pairing, typed, w, h), Some(SHADE), -10.0)
             }
             PanelKind::Settings => {
-                let Some(settings) = self.settings.as_ref() else { return };
-                (settings.build(&self.config, &self.model, &self.theme, &mut self.painter.text, w, h), Some(self.theme.surface.alpha(0.96)), -10.0)
+                let Some(settings) = self.settings.as_mut() else { return };
+                (settings.build(&self.config, &self.model, &self.theme, &mut self.painter.text, w, h), Some(self.theme.surface), 0.0)
             }
             PanelKind::Dashboard => {
                 let Some(dashboard) = self.dashboard.as_ref() else { return };
@@ -405,7 +502,8 @@ impl App {
                 self.close_menu();
                 self.close_panel(PanelKind::Control);
                 self.settings = Some(crate::settings::Settings::new());
-                self.open_panel(PanelKind::Settings, Layer::Overlay, Anchor::all(), (0, 0), (0, 0, 0, 0), KeyboardInteractivity::Exclusive, -1);
+                // A window like any app's: tiled, moved and closed the compositor's way
+                self.open_window(PanelKind::Settings, "Settings", "asterism-settings", (1000, 720), (720, 480));
             }
         }
     }
@@ -423,17 +521,33 @@ impl App {
             }
         }
         if let Some(index) = self.panel_index(PanelKind::Settings) {
+            // Colours may have changed with it, and they aren't in the pieces' hashes
             self.panels[index].surf.dirty = true;
+            self.panels[index].surf.last = None;
         }
     }
 
-    /// Esc closes (or lets a typed value be); typing goes to the value being edited.
+    /// Ctrl+W or Ctrl+Q closes; arrows go through the pages, Page Up and Down scroll one;
+    /// typing goes to the value being edited (Esc lets it be).
     fn settings_key(&mut self, event: &KeyEvent) {
+        if self.modifiers.ctrl && matches!(event.keysym, Keysym::w | Keysym::q) {
+            return self.close_panel(PanelKind::Settings);
+        }
+        match event.keysym {
+            Keysym::Page_Up => return self.scroll_settings(-240.0),
+            Keysym::Page_Down => return self.scroll_settings(240.0),
+            _ => {}
+        }
         let Some(settings) = self.settings.as_mut() else { return };
         match (&mut settings.editing, event.keysym) {
-            (None, Keysym::Escape) => return self.close_panel(PanelKind::Settings),
-            (None, Keysym::Up) => settings.page = settings.page.saturating_sub(1),
-            (None, Keysym::Down) => settings.page = (settings.page + 1).min(crate::settings::PAGES.len() - 1),
+            (None, Keysym::Up) => {
+                settings.page = settings.page.saturating_sub(1);
+                settings.scroll = 0.0;
+            }
+            (None, Keysym::Down) => {
+                settings.page = (settings.page + 1).min(crate::settings::PAGES.len() - 1);
+                settings.scroll = 0.0;
+            }
             (None, _) => return,
             (Some(_), Keysym::Escape) => settings.editing = None,
             (Some(_), Keysym::Return | Keysym::KP_Enter) => {
@@ -536,6 +650,17 @@ impl App {
             self.pair_key(event);
             return;
         }
+        // The settings window only hears keys while it has them, like any window
+        let on = self.keyboard_on.clone();
+        let on = |surf: &Surf| on.as_ref().is_some_and(|wl| surf.is(wl));
+        if self.panel_index(PanelKind::Settings).is_some_and(|i| on(&self.panels[i].surf)) {
+            self.settings_key(event);
+            return;
+        }
+        if self.desk_edit && self.desks.iter().any(|d| on(&d.surf)) {
+            self.desk_key(event);
+            return;
+        }
         if self.panel_index(PanelKind::Overview).is_some() {
             self.overview_key(event);
             return;
@@ -560,6 +685,12 @@ impl App {
             self.clipboard_key(event);
             return;
         }
+        if self.panel_index(PanelKind::DeskMenu).is_some() {
+            if event.keysym == Keysym::Escape {
+                self.close_panel(PanelKind::DeskMenu);
+            }
+            return;
+        }
         if self.panel_index(PanelKind::Control).is_some() {
             if event.keysym == Keysym::Escape {
                 self.close_panel(PanelKind::Control);
@@ -570,10 +701,6 @@ impl App {
             if event.keysym == Keysym::Escape {
                 self.close_panel(PanelKind::Dashboard);
             }
-            return;
-        }
-        if self.panel_index(PanelKind::Settings).is_some() {
-            self.settings_key(event);
             return;
         }
         if self.popup.is_none() {
@@ -687,8 +814,10 @@ impl App {
         let panel = &mut self.panels[index];
         if panel.want != size {
             panel.want = size;
-            panel.layer.set_size(size.0, size.1);
-            panel.layer.commit();
+            if let Role::Layer(layer) = &panel.role {
+                layer.set_size(size.0, size.1);
+                layer.commit();
+            }
         }
         panel.surf.dirty = true;
         self.panel_input(index, &[(m, m, w, h)]);
@@ -723,6 +852,51 @@ impl App {
             }
             TimeoutAction::Drop
         });
+    }
+
+    /// A new song: its card for a few seconds, under the bar in the middle; clicks go through.
+    pub(super) fn show_song(&mut self) {
+        self.song_generation += 1;
+        let generation = self.song_generation;
+        let m = POPUP_MARGIN;
+        let size = ((cards::SONG_WIDTH + m * 2.0) as u32, (cards::SONG_HEIGHT + m * 2.0) as u32);
+        let index = match self.panel_index(PanelKind::Song) {
+            Some(index) => index,
+            None => {
+                let anchor = if self.theme.on_top { Anchor::TOP } else { Anchor::BOTTOM };
+                // Exclusive zone 0: the compositor keeps it clear of the bar
+                self.open_panel(PanelKind::Song, Layer::Overlay, anchor, size, (0, 0, 0, 0), KeyboardInteractivity::None, 0);
+                match self.panel_index(PanelKind::Song) {
+                    Some(index) => index,
+                    None => return,
+                }
+            }
+        };
+        self.panel_input(index, &[]);
+        self.panels[index].surf.dirty = true;
+        self.watch_spectrum();
+        let _ = self.handle.insert_source(Timer::from_duration(SONG_FOR), move |_, _, app| {
+            if app.song_generation == generation {
+                app.close_panel(PanelKind::Song);
+            }
+            TimeoutAction::Drop
+        });
+    }
+
+    /// The song playing changed: its card shows, unless the music's own menu is open, the
+    /// shell just started, or it's turned off.
+    pub(super) fn notice_song(&mut self) {
+        let track = self.model.media.player().filter(|p| p.playing && !p.title.is_empty()).map(|p| format!("{}\u{1f}{}\u{1f}{}", p.bus, p.artist, p.title));
+        let Some(track) = track else { return };
+        if self.last_track.as_ref() == Some(&track) {
+            return;
+        }
+        let fresh = self.last_track.is_some() || self.started.elapsed() > Duration::from_secs(5);
+        self.last_track = Some(track);
+        let media_open = self.popup.as_ref().is_some_and(|p| p.kind == Kind::Media);
+        if fresh && self.config.song_popup && !media_open && self.panel_index(PanelKind::Control).is_none() {
+            self.show_song();
+        }
     }
 
     /// The model is about to change: changes made outside the shell show the level.
@@ -787,6 +961,7 @@ impl App {
             Request::Dashboard(open) => self.toggle_dashboard(open),
             Request::Settings(open) => self.toggle_settings(open),
             Request::Overview(open) => self.toggle_overview(open),
+            Request::Widgets(on) => self.edit_widgets(on),
             Request::Record { audio } => self.send(if self.model.recording.is_some() { Command::RecordStop } else { Command::RecordStart { audio } }),
             Request::Control(open) => self.toggle_control(open),
             Request::Menu(name) => self.menu_from_keys(&name),
@@ -1034,7 +1209,7 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
             let mut settings = crate::settings::Settings::new();
             settings.page = query.parse().unwrap_or(0);
             let pieces = settings.build(config, model, theme, &mut painter.text, w, h);
-            (Surf::offscreen(w, h, scale), pieces, Some(theme.surface.alpha(0.96)))
+            (Surf::offscreen(w, h, scale), pieces, Some(theme.surface))
         }
         "dashboard" => {
             let dashboard = crate::dashboard::Dashboard::new();
@@ -1100,6 +1275,31 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
                 piece.y += m;
             }
             (Surf::offscreen(built.w + m * 2.0, built.h + m * 2.0, scale), pieces, None)
+        }
+        "deskmenu" => {
+            let state = popups::State::default();
+            let requested = HashSet::new();
+            let mut anim = Animator::new();
+            anim.begin();
+            let mut ctx = popups::Ctx { model, config, theme, text: &mut painter.text, anim: &mut anim, state: &state, now: chrono::Local::now(), requests: Vec::new(), requested: &requested };
+            let built = popups::desktop(&mut ctx, (!query.is_empty()).then_some(query));
+            let mut pieces = built.pieces;
+            for piece in &mut pieces {
+                piece.x += m;
+                piece.y += m;
+            }
+            (Surf::offscreen(built.w + m * 2.0, built.h + m * 2.0, scale), pieces, None)
+        }
+        "song" => {
+            let player = model.media.player()?.clone();
+            let art = model.art.get(&player.art_url).cloned();
+            let levels = if model.spectrum.is_empty() { crate::spectrum::sample_levels(crate::spectrum::BARS) } else { model.spectrum.clone() };
+            let mut pieces = cards::song(theme, &mut painter.text, &player, art, &levels);
+            for piece in &mut pieces {
+                piece.x += m;
+                piece.y += m;
+            }
+            (Surf::offscreen(cards::SONG_WIDTH + m * 2.0, cards::SONG_HEIGHT + m * 2.0, scale), pieces, None)
         }
         "osd" => {
             let mut pieces = cards::osd(theme, &mut painter.text, &Level::Volume { value: model.audio.volume.max(0.4), muted: false });

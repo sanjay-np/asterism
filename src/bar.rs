@@ -5,7 +5,7 @@ use crate::config::{Config, MediaTitle, Tool};
 use crate::model::{Command, CompositorKind, Model, Workspace, WorkspaceTarget};
 use crate::popups::Kind;
 use crate::render::text::{Font, Text};
-use crate::theme::{Rgba, Theme};
+use crate::theme::{Icons, Rgba, Theme};
 use crate::ui::{Action, Animator, Ease, Piece, Prim};
 use std::collections::HashMap;
 
@@ -138,7 +138,7 @@ impl Ctx<'_> {
                     // The one you're on takes the accent and a bōten (傍点), the emphasis dot set
                     // over a character in Japanese type; both fade across, nothing moves
                     let fade = self.anim.value(&format!("{key}.fill"), if active { 1.0 } else { 0.0 }, t.normal, Ease::OutCubic);
-                    let rest = if count > 0 { t.color_text } else { t.outline };
+                    let rest = if count > 0 { t.icon_tint(Icons::Status) } else { t.outline };
                     let color = rest.mix(t.color_text, light * 0.5 * (1.0 - fade)).mix(t.primary, fade);
                     let (x, y) = (((w - tw) / 2.0).round(), ((h - th) / 2.0).round());
                     piece.prims.push(Prim::Text { x, y, text: figure, font: figure_font, color });
@@ -158,7 +158,7 @@ impl Ctx<'_> {
                     let ph = size * (0.6 + 0.4 * fill);
                     piece.prims.push(Prim::Rect { x: (w - pw) / 2.0, y: (h - ph) / 2.0, w: pw, h: ph, radius: ph / 2.0, color: t.primary.fade(fill.clamp(0.0, 1.0)) });
                 }
-                let color = if active { t.on_primary } else if count > 0 { t.color_text } else { t.outline };
+                let color = if active { t.on_primary } else if count > 0 { t.icon_tint(Icons::Status) } else { t.outline };
                 piece.prims.push(Prim::Text { x: ((w - tw) / 2.0).round(), y: ((h - th) / 2.0).round(), text: figure, font: figure_font, color });
             } else {
                 // An asterism: a dot per workspace, the busy ones solid and joined by a thin
@@ -178,7 +178,7 @@ impl Ctx<'_> {
                 if from <= cell && cell < to {
                     piece.prims.push(Prim::Line { points: vec![((cx + gap).min(w), cy), (w + 0.5, cy)], width: 1.2, color: thread });
                 }
-                let rest = if busy { t.color_soft } else { t.outline };
+                let rest = if busy { t.icon_tint(Icons::Status).mix(t.color_soft, 0.3) } else { t.outline };
                 let color = rest.mix(t.color_text, light * 0.5 * (1.0 - settled)).mix(t.primary, settled);
                 if busy || grow > 0.5 {
                     piece.prims.push(Prim::Rect { x: cx - r, y: cy - r, w: r * 2.0, h: r * 2.0, radius: r, color });
@@ -204,7 +204,7 @@ impl Ctx<'_> {
             return Module { pieces: Vec::new(), spacing: 0.0 };
         }
         let icon = crate::weather::icon(w.code, w.is_day);
-        let mut piece = self.icon_text("weather", icon, &format!("{:.0}°", w.temperature), t.color_text, t.color_text);
+        let mut piece = self.icon_text("weather", icon, &format!("{:.0}°", w.temperature), t.icon_tint(Icons::Machine), t.color_text);
         let place = if w.place.is_empty() { String::new() } else { format!(" · {}", w.place) };
         piece.label = Some(format!("{}, feels like {:.0}°{place}", crate::weather::describe(w.code), w.feels_like));
         piece.actions.left = menu(Kind::Weather);
@@ -258,7 +258,8 @@ impl Ctx<'_> {
         // A sliding title brings its own glow, so the piece doesn't need painting again each frame
         piece.glow = !moving;
         piece.pad = if moving { crate::render::GLOW_ROOM } else { 0.0 };
-        let icon = if moving { Prim::GlowIcon { x: 0.0, y: (h - note) / 2.0, size: note, name: "music".into(), color: t.color_soft } } else { Prim::Icon { x: 0.0, y: (h - note) / 2.0, size: note, name: "music".into(), color: t.color_soft } };
+        let tint = t.icon_tint(Icons::Machine);
+        let icon = if moving { Prim::GlowIcon { x: 0.0, y: (h - note) / 2.0, size: note, name: "music".into(), color: tint } } else { Prim::Icon { x: 0.0, y: (h - note) / 2.0, size: note, name: "music".into(), color: tint } };
         piece.prims.push(icon);
         if view > 0.0 {
             let (x, y) = (note + 6.0, (h - th) / 2.0);
@@ -300,6 +301,7 @@ impl Ctx<'_> {
                 "cpu" | "memory" => {
                     let value = if name == "cpu" { machine.cpu } else { machine.memory };
                     let tint = if value > 0.85 { t.warn } else { t.color_text };
+                    let icon_tint = if value > 0.85 { t.warn } else { t.icon_tint(Icons::Machine) };
                     let accent = if value > 0.85 { t.warn } else { t.primary };
                     let ring = t.icon + 6.0;
                     let font = Font::new(t.text).tnum();
@@ -312,7 +314,7 @@ impl Ctx<'_> {
                     piece.prims.push(Prim::Ring { cx: c, cy: h / 2.0, r: c - 2.0, width: 3.0, value, color: accent });
                     let inner = t.icon - 7.0;
                     let icon = if name == "cpu" { "cpu" } else { "ram" };
-                    piece.prims.push(Prim::Icon { x: c - inner / 2.0, y: (h - inner) / 2.0, size: inner, name: icon.into(), color: tint });
+                    piece.prims.push(Prim::Icon { x: c - inner / 2.0, y: (h - inner) / 2.0, size: inner, name: icon.into(), color: icon_tint });
                     if self.config.percent {
                         piece.prims.push(Prim::Text { x: ring + 6.0, y: (h - th) / 2.0, text: label, font, color: tint });
                     }
@@ -327,8 +329,9 @@ impl Ctx<'_> {
                     pieces.push(piece);
                 }
                 "temperature" if machine.temperature > 0.0 => {
-                    let tint = if machine.temperature > 85.0 { t.warn } else { t.color_text };
-                    let mut piece = self.icon_text("res.temperature", "sun", &format!("{}°", machine.temperature.round()), tint, tint);
+                    let hot = machine.temperature > 85.0;
+                    let (tint, value) = if hot { (t.warn, t.warn) } else { (t.icon_tint(Icons::Machine), t.color_text) };
+                    let mut piece = self.icon_text("res.temperature", "sun", &format!("{}°", machine.temperature.round()), tint, value);
                     piece.actions.left = Some(Action::ToggleDashboard);
                     pieces.push(piece);
                 }
@@ -343,7 +346,7 @@ impl Ctx<'_> {
                     let mut piece = Piece::new("res.network", half * 2.0 + 6.0, h);
                     for (i, (icon, bytes)) in [("down", machine.download), ("up", machine.upload)].into_iter().enumerate() {
                         let x = i as f32 * (half + 6.0);
-                        piece.prims.push(Prim::Icon { x, y: (h - arrow) / 2.0, size: arrow, name: icon.into(), color: t.color_soft });
+                        piece.prims.push(Prim::Icon { x, y: (h - arrow) / 2.0, size: arrow, name: icon.into(), color: t.icon_tint(Icons::Machine) });
                         piece.prims.push(Prim::Text { x: x + arrow + 2.0, y: (h - th) / 2.0, text: rate(bytes), font, color: t.color_soft });
                     }
                     piece.glow = true;
@@ -367,7 +370,7 @@ impl Ctx<'_> {
             let mut piece = Piece::new(format!("tray.{}", item.id), size, size);
             match &item.icon {
                 Some(image) => {
-                    let tint = self.config.tray_tint.then_some(t.color_text);
+                    let tint = self.config.tray_tint.then_some(t.icon_tint(Icons::Tools));
                     piece.prims.push(Prim::Image { x: 0.0, y: 0.0, w: size, h: size, image: image.clone(), tint, radius: 0.0 });
                 }
                 None => {
@@ -400,7 +403,7 @@ impl Ctx<'_> {
                 _ => false,
             };
             let icon = if tool.kind == "microphone" && !on { "microphone-off".to_string() } else { tool.icon.clone() };
-            let mut piece = self.icon_text(&format!("tool.{i}"), &icon, "", if on { t.lit } else { t.color_text }, t.color_soft);
+            let mut piece = self.icon_text(&format!("tool.{i}"), &icon, "", if on { t.lit } else { t.icon_tint(Icons::Tools) }, t.color_soft);
             piece.label = (!tool.label.is_empty()).then(|| tool.label.clone());
             piece.actions.left = match tool.kind.as_str() {
                 "microphone" => send(Command::ToggleMicMute),
@@ -449,7 +452,7 @@ impl Ctx<'_> {
                 "notifications" if model.notifications.available || !self.config.commands.notifications.is_empty() => {
                     let n = &model.notifications;
                     let count = if n.count > 0 { n.count.to_string() } else { String::new() };
-                    let mut piece = self.icon_text(&key, if n.quiet { "bell-slash" } else { "bell" }, &count, t.color_text, t.color_soft);
+                    let mut piece = self.icon_text(&key, if n.quiet { "bell-slash" } else { "bell" }, &count, t.icon_tint(Icons::Status), t.color_soft);
                     piece.actions.left = if !self.config.commands.notifications.is_empty() {
                         send(Command::Run(self.config.commands.notifications.clone()))
                     } else if n.own {
@@ -464,7 +467,7 @@ impl Ctx<'_> {
                 "keyboard" if model.compositor.layouts.len() > 1 => {
                     let c = &model.compositor;
                     let code = c.layouts.get(c.layout).cloned().unwrap_or_default().to_uppercase();
-                    let mut piece = self.icon_text(&key, "keyboard", &code, t.color_text, t.color_soft);
+                    let mut piece = self.icon_text(&key, "keyboard", &code, t.icon_tint(Icons::Status), t.color_soft);
                     piece.actions.left = send(Command::NextLayout);
                     piece.actions.right = menu(Kind::Keyboard);
                     piece.label = c.layout_names.get(c.layout).cloned();
@@ -479,7 +482,7 @@ impl Ctx<'_> {
                         "" => "wifi-slash",
                         _ => "plugs-connected",
                     };
-                    let mut piece = self.icon_text(&key, icon, "", t.color_text, t.color_soft);
+                    let mut piece = self.icon_text(&key, icon, "", t.icon_tint(Icons::Status), t.color_soft);
                     piece.label = Some(if n.kind.is_empty() { "Offline".into() } else { n.name.clone() });
                     piece.actions.left = menu(Kind::Network);
                     Some(piece)
@@ -497,7 +500,7 @@ impl Ctx<'_> {
                     } else {
                         ("bluetooth", String::new())
                     };
-                    let mut piece = self.icon_text(&key, icon, &value, t.color_text, t.color_soft);
+                    let mut piece = self.icon_text(&key, icon, &value, t.icon_tint(Icons::Status), t.color_soft);
                     piece.label = Some(if connected.is_empty() { "Bluetooth".into() } else { connected.iter().map(|d| d.name.clone()).collect::<Vec<_>>().join(", ") });
                     piece.actions.left = menu(Kind::Bluetooth);
                     piece.actions.right = send(Command::SetBluetoothPower(!b.powered));
@@ -507,7 +510,7 @@ impl Ctx<'_> {
                     let a = &model.audio;
                     let icon = if a.muted { "speaker-x" } else if a.volume > 0.5 { "speaker-high" } else if a.volume > 0.0 { "speaker-low" } else { "speaker-none" };
                     let value = if percent { format!("{}%", (a.volume * 100.0).round()) } else { String::new() };
-                    let mut piece = self.icon_text(&key, icon, &value, t.color_text, t.color_soft);
+                    let mut piece = self.icon_text(&key, icon, &value, t.icon_tint(Icons::Status), t.color_soft);
                     piece.actions.left = menu(Kind::Sound);
                     piece.actions.right = send(Command::ToggleMute);
                     piece.actions.up = send(Command::StepVolume(0.05));
@@ -531,7 +534,7 @@ impl Ctx<'_> {
                         "battery-warning"
                     };
                     let low = b.on_battery && b.level < 0.15;
-                    let tint = if low { t.warn } else { t.color_text };
+                    let tint = if low { t.warn } else { t.icon_tint(Icons::Status) };
                     let value = if percent { format!("{}%", (b.level * 100.0).round()) } else { String::new() };
                     let mut piece = self.icon_text(&key, icon, &value, tint, if low { t.warn } else { t.color_soft });
                     piece.actions.left = menu(Kind::Power);
@@ -540,7 +543,7 @@ impl Ctx<'_> {
                 }
                 "settings" => {
                     // Its own command when there's one, else Asterism's settings
-                    let mut piece = self.icon_text(&key, "gear-six", "", t.color_text, t.color_soft);
+                    let mut piece = self.icon_text(&key, "gear-six", "", t.icon_tint(Icons::Status), t.color_soft);
                     piece.actions.left = if self.config.commands.settings.is_empty() { Some(Action::ToggleSettings) } else { send(Command::Run(self.config.commands.settings.clone())) };
                     piece.label = Some("Settings".into());
                     Some(piece)
@@ -565,7 +568,7 @@ impl Ctx<'_> {
                             let value = left.as_secs_f32() / total.as_secs_f32().max(1.0);
                             piece.prims.push(Prim::Ring { cx: c, cy: h / 2.0, r: c - 2.0, width: 3.0, value, color });
                             let inner = t.icon - 7.0;
-                            piece.prims.push(Prim::Icon { x: c - inner / 2.0, y: (h - inner) / 2.0, size: inner, name: "timer".into(), color: t.color_text });
+                            piece.prims.push(Prim::Icon { x: c - inner / 2.0, y: (h - inner) / 2.0, size: inner, name: "timer".into(), color: t.icon_tint(Icons::Status) });
                             piece.prims.push(Prim::Text { x: ring + 5.0, y: (h - th) / 2.0, text, font, color: t.color_text });
                             piece.lift = true;
                             piece.label = Some(format!("{what}: {} left", crate::timers::length_text(left + std::time::Duration::from_secs(59))));
@@ -578,7 +581,7 @@ impl Ctx<'_> {
                             piece
                         }
                         None => {
-                            let mut piece = self.icon_text(&key, "timer", "", t.color_text, t.color_soft);
+                            let mut piece = self.icon_text(&key, "timer", "", t.icon_tint(Icons::Status), t.color_soft);
                             piece.label = Some("Timers".into());
                             piece
                         }
@@ -587,13 +590,13 @@ impl Ctx<'_> {
                     Some(piece)
                 }
                 "control" => {
-                    let mut piece = self.icon_text(&key, "sliders", "", t.color_text, t.color_soft);
+                    let mut piece = self.icon_text(&key, "sliders", "", t.icon_tint(Icons::Status), t.color_soft);
                     piece.actions.left = Some(Action::ToggleControl);
                     piece.label = Some("Control centre".into());
                     Some(piece)
                 }
                 "session" => {
-                    let mut piece = self.icon_text(&key, "power", "", t.color_text, t.color_soft);
+                    let mut piece = self.icon_text(&key, "power", "", t.icon_tint(Icons::Status), t.color_soft);
                     piece.actions.left = menu(Kind::Session);
                     piece.label = Some("Session".into());
                     Some(piece)
@@ -616,7 +619,7 @@ impl Ctx<'_> {
             "tools" => self.tools(),
             "status" => self.status(),
             "launcher" => {
-                let mut piece = self.icon_text("launcher", "apps", "", self.theme.color_text, self.theme.color_soft);
+                let mut piece = self.icon_text("launcher", "apps", "", self.theme.icon_tint(Icons::Status), self.theme.color_soft);
                 piece.actions.left = Some(Action::ToggleLauncher);
                 piece.label = Some("Apps".into());
                 Module { pieces: vec![piece], spacing: 0.0 }

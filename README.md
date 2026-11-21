@@ -35,16 +35,24 @@ cosmic-text and resvg.
 
 - **Colour from your wallpaper.** The whole scheme (a dark Material 3 one) grows from the colour
   that stands out most in your wallpaper, and grows again when you change it. Or pick the colour
-  yourself with `[colors] accent`.
+  yourself with `[colors] accent`. The bar's icons and the desktop's widgets take it on too, and
+  change with every new wallpaper: tinted toward it (the default), in its accent, a colour per
+  group of icons, or plain (`[colors] bar_icons` and `widgets`, or Settings → Look). Your
+  terminal and GTK apps can follow it as well (below).
 - **Flat surfaces with a hairline.** The bar is a solid strip; menus, panels and pop-ups are
   cards with a 1 px outline and a soft shadow. Pointing at something in the bar draws a short
   accent underline under it.
 - **Workspaces, three ways.** An *asterism* is a small pattern of stars, and that's the default:
   a dot per workspace, the busy ones joined by a thin line, the one you're on ringed in the
   accent. Or plain numbers. Or kanji — 一 二 三 … — with the one you're on in the accent and a
-  *bōten* (傍点), the emphasis dot Japanese type sets over a character.
+  *bōten* (傍点), the emphasis dot Japanese type sets over a character. Choose in Settings → Look
+  → Workspaces, or with `page_style` in the config.
 
   ![Workspaces as joined dots, and as kanji](screenshots/readme/bar.png)
+
+  The picture shows six workspaces, several with windows. niri keeps only the workspaces you use
+  plus one empty one after them, so with windows on one workspace the dots are just a ringed dot
+  and a hollow one; the line joining them appears once two or more workspaces have windows.
 
 - **Five styles.** `line` (the default), `frame` (a thin frame round the screen with rounded
   inner corners, menus hanging from the bar like drawers), `floating`, `islands` and
@@ -125,14 +133,45 @@ binds (niri's `binds { }`, Hyprland's `bind =` lines), grouped, with keycaps. Ty
 true`). The changer — Mod+W, the control centre's Wallpaper tile, or `asterism msg wallpaper` —
 shows your wallpaper folder as a full-screen grid of thumbnails, the one up now ringed. Click one
 (or the arrows and Enter) and it's up at once, colours and all; Shuffle (or R, or Mod+Shift+W)
-picks one at random, and `interval` changes it on its own every so many minutes. Your choice is
-remembered without rewriting your config. `enabled = false` leaves the wallpaper to another
-program.
+picks one at random, and `interval` (Settings → Wallpaper → Change by itself) changes it on its
+own every so many minutes. Your choice is remembered without rewriting your config.
+`enabled = false` leaves the wallpaper to another program.
+
+Pictures change with an animation, a different one each time: a fade, a wipe from any side or
+corner, a circle growing from the middle, a corner or somewhere at random, blinds, ink spreading
+in soft blots, pixels turning over, or the new picture sliding in. Pick one, or none, with
+`[wallpaper] transition` (Settings → Wallpaper → Animation), and its length with
+`transition_ms`. Both pictures are painted afresh for the change and let go of after it, so the
+animation costs no memory the rest of the time.
 
 **Widgets on the desktop.** On the wallpaper, under your windows: a big clock, the weather, what's
-playing (cover, progress, and the song's words line by line, from LRCLIB), a month calendar, and
-the machine's load. Drag one to move it; it stays where you leave it, on any screen size. Choose
-them in `[widgets] show` or in Settings.
+playing (cover, progress, and the song's words line by line, from LRCLIB), a visualizer whose bars
+move with the music while something plays (in a card, or along the foot of the screen), a month
+calendar, the machine's load, a photo frame (a picture from a folder, a new one every few
+minutes) and a sticky note. Drag one to move it; it stays where you leave it, on any screen size.
+
+**The desktop's menu.** Right-click the wallpaper for: arrange widgets, change the wallpaper (or
+take another at random), settings. Right-click a widget and the menu starts with that widget:
+take it off, write the note, show the next picture.
+
+To arrange them, choose Arrange widgets there, press Arrange in Settings → Desktop, or run
+`asterism msg widgets edit`. The screen dims and the widgets come up above your windows, each in
+a frame with a × to take it off; a strip at the top puts the others on. Drag to move (they snap
+to an 8 px grid), and turn the wheel on one to make it bigger or smaller (60% to 200%). Widgets
+with nothing to show yet (what's playing, the visualizers) stand in as placeholders so you can
+place them anyway. Esc, Enter or Done finishes. The list is `[widgets] show` in the config.
+
+The visualizers listen to what your speakers play (`parec` on the default output's monitor, or
+`pw-record`), only while one is on the desktop (or the new-song card shows) and a player is
+playing; the sound never leaves the shell, and it isn't counted as a microphone in use.
+
+**Colours for your apps.** With `[colors] apps` (or the switches in Settings → Look), the
+scheme is written for kitty, foot, Alacritty and GTK as files of their own, next to their
+configs: `asterism-colors.conf`, `.ini`, `.toml` or `.css`. Your own config files are never
+touched; include the file once (Settings shows the line for each) and the app follows every
+wallpaper change. The sixteen terminal colours keep their meaning, red still red, leaning a
+little toward the wallpaper's colour. kitty takes the change at once, Alacritty when the file
+changes, foot and GTK apps at their next start.
 
 **Night light.** Warmer colours in the evening, through the compositor's gamma control (no extra
 program). A tile in the control centre turns it on or off until the schedule next turns over;
@@ -147,6 +186,10 @@ microphone, power profile, night light, wallpaper, settings); volume and brightn
 playing; notifications grouped by app; and lock, sleep, log out, restart, shut down (the last
 three ask twice). Esc or a click beside it closes it.
 
+**A new song** shows a small card under the bar for a few seconds: its cover, its name and its
+singer, the music moving under them. Not while the music's menu or the control centre is open;
+`song_popup = false` turns it off.
+
 **Notifications.** Asterism is the notification daemon when no other one runs: pop-ups with
 pictures and action buttons, a centre on the bell (Mod+N) with do not disturb and clear all,
 critical ones that stay until you answer; point at a pop-up and it waits. Noisy apps can be told
@@ -157,8 +200,19 @@ another daemon already runs (mako, swaync, another shell), Asterism leaves it be
 **Settings** — the control centre's Settings tile, the gear in the bar, or `asterism msg
 settings`: the look, the bar, wallpaper, desktop widgets, night light, lock, notifications
 (with a rule for each app that has notified), weather and timers, as switches, choices and
-steppers. Each change is written to `config.toml` at once, keeping your comments and order. Every
-option is also in [config.example.toml](config.example.toml) for editing by hand.
+steppers. It's a window like any app's: the compositor tiles it, moves it and closes it (hold
+the sidebar or the page's title to move it; Ctrl+W, Ctrl+Q or the × close it). Its app id is
+`asterism-settings`, for window rules — say, to open it floating on niri:
+
+```kdl
+window-rule {
+    match app-id="^asterism-settings$"
+    open-floating true
+}
+```
+
+Each change is written to `config.toml` at once, keeping your comments and order. Every option is
+also in [config.example.toml](config.example.toml) for editing by hand.
 
 **The dashboard** — the CPU and memory rings, or `asterism msg dashboard`. Graphs of the
 processor, memory, graphics card and network over the last two minutes, how full each disk is,
@@ -242,6 +296,7 @@ Nothing looks you up by your IP address, and nothing else is sent anywhere.
   - `unix_chkpwd` (part of Linux-PAM, on every desktop system) for the lock screen; fprintd for
     fingerprint unlock
   - `curl` for the weather, lyrics and album covers; `wl-copy` to copy from the launcher
+  - `parec` (PulseAudio's or pipewire-pulse's tools) or `pw-record` for the music visualizer
   - a CJK font such as Noto Sans CJK for kanji workspaces; Noto Color Emoji (or another colour
     emoji font) for emoji in the launcher
   - `wf-recorder` to record the screen; on Hyprland, `grim` and `slurp` for screenshots
@@ -385,14 +440,11 @@ show = ["clock", "weather", "media"]
 # accent = "#4a6fd9"      # grow the scheme from this instead of the wallpaper
 ```
 
-An old `~/.config/etea-bar/config.toml` (from when Asterism was called etea-bar) is still read
-when there's no Asterism config.
-
 ## Hacking
 
 ```sh
 cargo run --release                     # run it (refuses to start twice)
-cargo test                              # 39 tests: compositor IPC, the Bluetooth agent, settings writes, the overview…
+cargo test                              # 51 tests: compositor IPC, the Bluetooth agent, settings writes, the visualizer's FFT…
 cargo run --example fixtures -- 60      # a fake player and a fake tray app for a minute
 asterism --snapshot bar.png             # draw the bar with live data into a PNG
 asterism --snapshot m.png --menu sound  # or one of its menus
@@ -400,6 +452,10 @@ asterism --snapshot p.png --panel overview      # or a panel: launcher, control,
                                                 # settings, wallpapers, clipboard, shortcuts, toasts,
                                                 # osd, auth, wifi, pair ([--query TEXT])
 asterism --snapshot d.png --panel wallpaper [--menu control]   # the whole desktop, widgets, a menu open
+asterism --snapshot e.png --panel widgets [--hover widget.media] # the desktop while arranging its widgets
+asterism --snapshot m.png --panel deskmenu [--query note]         # the desktop's menu (for a widget)
+asterism --snapshot s.png --panel song                           # the new-song card
+asterism --snapshot t.png --panel transition [--query ink@0.3]   # a frame of the wallpaper changing
 asterism --snapshot s.png --demo        # made-up workspaces, windows and networks, for sharing
 RUST_LOG=asterism::app=trace asterism   # frame timings
 ```

@@ -261,7 +261,9 @@ pub fn render(w: u32, h: u32, scale: f32, planet: &Planet, settings: &WallpaperS
 pub fn key(w: u32, h: u32, scale: f32, planet: &Planet, settings: &WallpaperSettings, palette: &crate::palette::Palette) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (w, h, (scale * 120.0) as u32, planet.id, format!("{settings:?}"), palette.source.key()).hash(&mut hasher);
+    // Only what the picture is drawn from: how often it changes, and how, don't touch it
+    let drawn = WallpaperSettings { interval: 0, directory: String::new(), configured: String::new(), transition: String::new(), transition_ms: 0, ..settings.clone() };
+    (w, h, (scale * 120.0) as u32, planet.id, format!("{drawn:?}"), palette.source.key()).hash(&mut hasher);
     if let Ok(meta) = std::fs::metadata(crate::config::expand_home(settings.image.trim())) {
         meta.modified().ok().hash(&mut hasher);
     }
@@ -299,5 +301,8 @@ mod tests {
         assert_ne!(key(1920, 1200, 1.0, vesper, &settings, &p), key(1920, 1200, 1.25, vesper, &settings, &p));
         let flat = WallpaperSettings { relief: 0.0, ..WallpaperSettings::default() };
         assert_ne!(key(1920, 1200, 1.0, vesper, &settings, &p), key(1920, 1200, 1.0, vesper, &flat, &p));
+        // How often and how it changes doesn't make it a different picture
+        let animated = WallpaperSettings { interval: 15, transition: "ink".into(), transition_ms: 900, ..settings.clone() };
+        assert_eq!(key(1920, 1200, 1.0, vesper, &settings, &p), key(1920, 1200, 1.0, vesper, &animated, &p));
     }
 }

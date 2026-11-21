@@ -20,7 +20,9 @@ fn pack(name: &str, dir: &Path, out: &mut String) {
 }
 
 fn main() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icons");
+    // Read at run time, not baked in with env!(), so a moved checkout doesn't send a cached
+    // build script looking in the old folder
+    let root = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("assets/icons");
     println!("cargo:rerun-if-changed={}", root.display());
     let mut out = String::new();
     pack("PHOSPHOR", &root.join("phosphor-fill"), &mut out);

@@ -217,11 +217,15 @@ pub struct WallpaperSettings {
     pub stars: f32,
     /// The film grain that keeps gradients from banding, 0 to 2.
     pub grain: f32,
+    /// How one picture gives way to the next: random (a different one each time), none, or one
+    /// of `transition::NAMES`; and how long it takes, in milliseconds.
+    pub transition: String,
+    pub transition_ms: u32,
 }
 
 impl Default for WallpaperSettings {
     fn default() -> Self {
-        Self { enabled: true, image: String::new(), directory: String::new(), interval: 0, configured: String::new(), fit: Fit::Cover, world: false, terrain: 0.34, relief: 1.0, stars: 0.0, grain: 1.0 }
+        Self { enabled: true, image: String::new(), directory: String::new(), interval: 0, configured: String::new(), fit: Fit::Cover, world: false, terrain: 0.34, relief: 1.0, stars: 0.0, grain: 1.0, transition: "random".into(), transition_ms: 1200 }
     }
 }
 
@@ -249,15 +253,28 @@ impl Default for WeatherSettings {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct WidgetSettings {
-    /// Any of clock, weather, media, calendar, system; empty shows none.
+    /// Any of `widgets::KINDS`; empty shows none.
     pub show: Vec<String>,
     /// Song words under what's playing, from LRCLIB (sends the song's name, nothing else).
     pub lyrics: bool,
+    /// The photo frame's folder (empty: ~/Pictures), and the minutes each picture stays.
+    pub photos: String,
+    pub photo_minutes: u32,
+    /// What the sticky note says.
+    pub note: String,
 }
 
 impl Default for WidgetSettings {
     fn default() -> Self {
-        Self { show: vec!["clock".into(), "weather".into(), "media".into()], lyrics: true }
+        Self { show: vec!["clock".into(), "weather".into(), "media".into()], lyrics: true, photos: String::new(), photo_minutes: 10, note: String::new() }
+    }
+}
+
+impl WidgetSettings {
+    /// The photo frame's folder, as a path.
+    pub fn photo_dir(&self) -> PathBuf {
+        let dir = self.photos.trim();
+        if dir.is_empty() { home().join("Pictures") } else { expand_home(dir) }
     }
 }
 
@@ -349,6 +366,15 @@ pub struct Colors {
     pub accent: Option<String>,
     /// The bar's and the frame's colour.
     pub surface: Option<String>,
+    /// Apps that get the scheme too, as files of their own to include: kitty, foot,
+    /// alacritty, gtk.
+    pub apps: Vec<String>,
+    /// The bar's icons: tinted (empty too) leans toward the wallpaper's colour, accent is that
+    /// colour, colourful gives each group of icons a colour of its own, plain is the text's.
+    /// (Not `icons`: that's the icon set, at the top of the config.)
+    pub bar_icons: String,
+    /// The desktop's widgets: tinted takes the wallpaper's colour, plain doesn't.
+    pub widgets: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -370,6 +396,8 @@ pub struct Config {
     pub tray_tint: bool,
     /// The bar's top-right corner opens the control centre.
     pub hot_corner: bool,
+    /// A card with the cover and the title when the song changes.
+    pub song_popup: bool,
     /// Be the polkit authentication agent (asks your password when an app needs it).
     pub polkit_agent: bool,
     /// How strongly text glows off the wallpaper, 0 to 1 (0: none, the clean look).
@@ -418,6 +446,7 @@ impl Default for Config {
             media_title: MediaTitle::Scroll,
             tray_tint: false,
             hot_corner: true,
+            song_popup: true,
             polkit_agent: true,
             glow: 0.0,
             frame: 8,
@@ -451,14 +480,7 @@ pub fn default_path() -> PathBuf {
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .unwrap_or_else(|| home().join(".config"));
-    let path = base.join("asterism").join("config.toml");
-    // Before it was called Asterism, the config lived under etea-bar
-    let old = base.join("etea-bar").join("config.toml");
-    if !path.exists() && old.exists() {
-        log::debug!("reading {} (move it to {} when you like)", old.display(), path.display());
-        return old;
-    }
-    path
+    base.join("asterism").join("config.toml")
 }
 
 /// "~/Pictures/sky.jpg" → "/home/you/Pictures/sky.jpg".

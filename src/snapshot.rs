@@ -212,29 +212,75 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
     let marquee = HashMap::new();
     let scale = options.scale;
 
-    if options.panel.as_deref() == Some("wallpaper") {
+    // The visualizer can't hear anything here: a made-up row of levels while music plays
+    if model.spectrum.is_empty() && model.media.player().is_some_and(|p| p.playing) {
+        model.spectrum = crate::spectrum::sample_levels(crate::spectrum::BARS);
+    }
+    // A frame of the wallpaper changing: from yours to the next one in the folder, by the kind
+    // asked ("ink", or "ink@0.3" for a moment other than halfway; else one at random)
+    if options.panel.as_deref() == Some("transition") {
+        let (w, h) = ((options.width * scale) as u32, (options.width * 0.625 * scale) as u32);
+        let planet = crate::theme::planet(&config.planet);
+        let old = crate::world::render(w, h, scale, planet, &config.wallpaper, &theme.palette).ok_or_else(|| anyhow::anyhow!("nothing drawn"))?;
+        let list = crate::wallpapers::list(&crate::wallpapers::directory(&config.wallpaper));
+        let current = crate::config::expand_home(config.wallpaper.image.trim());
+        let next = list.iter().position(|p| *p == current).map(|i| list[(i + 1) % list.len()].clone()).or_else(|| list.first().cloned()).ok_or_else(|| anyhow::anyhow!("no other picture in the folder"))?;
+        let settings = crate::config::WallpaperSettings { image: next.display().to_string(), ..config.wallpaper.clone() };
+        let new = crate::world::render(w, h, scale, planet, &settings, &theme.palette).ok_or_else(|| anyhow::anyhow!("nothing drawn"))?;
+        let (name, at) = options.query.split_once('@').map_or((options.query.as_str(), 0.5), |(n, t)| (n, t.parse().unwrap_or(0.5)));
+        let mut chance = crate::transition::Chance::from_clock();
+        let kind = crate::transition::pick(if name.is_empty() { "random" } else { name }, None, &mut chance).unwrap_or(crate::transition::Kind::Fade);
+        let map = crate::transition::map(kind, w, h, scale);
+        let mut canvas = old.clone();
+        crate::transition::compose(canvas.data_mut(), old.data(), new.data(), &map, kind, at, w, h);
+        canvas.save_png(&options.path)?;
+        println!("{} ({kind:?} at {at})", options.path.display());
+        std::process::exit(0);
+    }
+    let editing = options.panel.as_deref() == Some("widgets");
+    if options.panel.as_deref() == Some("wallpaper") || editing {
         // A screen with the screen's proportions, 16:10
         let (w, h) = ((options.width * scale) as u32, (options.width * 0.625 * scale) as u32);
         let mut picture = crate::world::render(w, h, scale, crate::theme::planet(&config.planet), &config.wallpaper, &theme.palette).ok_or_else(|| anyhow::anyhow!("nothing drawn"))?;
         // The desktop's widgets, where they'd stand
-        if !config.widgets.show.is_empty() {
+        let mut desk_canvas = None;
+        if !config.widgets.show.is_empty() || editing {
             let (dw, dh) = (options.width, options.width * 0.625);
             let requested = HashSet::new();
-            let mut view = crate::widgets::View { model: &model, theme: &theme, text: &mut painter.text, now: chrono::Local::now(), lyrics: config.widgets.lyrics, requested: &requested, requests: Vec::new() };
-            let mut pieces: Vec<crate::ui::Piece> = config.widgets.show.iter().filter_map(|k| crate::widgets::build(k, &mut view)).collect();
             let places = crate::widgets::load_places();
-            for piece in &mut pieces {
-                let kind = piece.key.trim_start_matches("widget.").to_string();
-                let (fx, fy) = places.get(&kind).copied().unwrap_or_else(|| crate::widgets::default_place(&kind));
-                piece.x = (fx * dw).clamp(16.0, (dw - piece.w - 16.0).max(16.0)).round();
-                piece.y = (fy * dh).clamp(16.0, (dh - piece.h - 16.0).max(16.0)).round();
+            // Twice: what the first pass asks for (the photo frame's folder and picture) is
+            // fetched here, then shown
+            let mut pieces = Vec::new();
+            for _ in 0..3 {
+                let mut view = crate::widgets::View { model: &model, theme: &theme, text: &mut painter.text, now: chrono::Local::now(), lyrics: config.widgets.lyrics, requested: &requested, requests: Vec::new(), settings: &config.widgets, photo_step: 0 };
+                pieces = crate::widgets::arrange(&config.widgets.show, &mut view, &places, (dw, dh), editing);
+                let requests = std::mem::take(&mut view.requests);
+                for request in requests {
+                    match request {
+                        crate::model::Command::ListPhotos(dir) => model.photos = Some((dir.clone(), crate::wallpapers::list(&dir))),
+                        crate::model::Command::Thumbnail(path) => {
+                            let image = crate::wallpapers::thumbnail(&path);
+                            model.thumbnails.insert(path, image);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let mut background = None;
+            if editing {
+                let top = if theme.on_top { theme.reserve() + 20.0 } else { 28.0 };
+                let active = options.hover.as_deref().and_then(|k| k.strip_prefix("widget.")).map(str::to_string);
+                pieces = crate::widgets::editor(pieces, &config.widgets.show, &places, active.as_deref(), &theme, &mut painter.text, dw, top);
+                background = Some(theme.surface.alpha(0.6));
             }
             let mut desk = Surf::offscreen(dw, dh, scale);
             desk.begin_frame();
-            crate::app::render_desk_snapshot(&mut desk, pieces, &mut painter, &theme);
-            if let Some(canvas) = desk.canvas() {
-                picture.draw_pixmap(0, 0, canvas.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
-            }
+            crate::app::render_desk_snapshot(&mut desk, pieces, &mut painter, &theme, background);
+            desk_canvas = desk.canvas();
+        }
+        // The widgets lie under the bar; while arranging, over everything
+        if !editing && let Some(canvas) = desk_canvas.take() {
+            picture.draw_pixmap(0, 0, canvas.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
         }
         // The bar on it, as it would be
         let mut surf = Surf::offscreen(options.width, theme.surface_height(), scale);
@@ -246,6 +292,9 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
         if let Some(bar) = surf.canvas() {
             let y = if theme.on_top { 0 } else { (h as f32 - theme.surface_height() * scale) as i32 };
             picture.draw_pixmap(0, y, bar.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
+        }
+        if let Some(canvas) = desk_canvas.take() {
+            picture.draw_pixmap(0, 0, canvas.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
         }
         // The frame's other edges, as the shell draws them
         if theme.framed() && theme.frame > 0.0 {

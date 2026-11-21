@@ -98,10 +98,10 @@ use backdrop::{Backdrop, Edge, Painted};
 pub use shell::preview;
 
 /// The desktop's widgets drawn into an offscreen surface, for snapshots.
-pub fn render_desk_snapshot(surf: &mut Surf, pieces: Vec<Piece>, painter: &mut Painter, theme: &Theme) {
+pub fn render_desk_snapshot(surf: &mut Surf, pieces: Vec<Piece>, painter: &mut Painter, theme: &Theme, background: Option<crate::theme::Rgba>) {
     for _ in 0..2 {
         surf.begin_frame();
-        shell::render_panel(surf, pieces.clone(), painter, theme, None, 0.0);
+        shell::render_panel(surf, pieces.clone(), painter, theme, background, 0.0);
         // Past the fade-in
         std::thread::sleep(Duration::from_millis(350));
     }
@@ -405,8 +405,23 @@ pub struct App {
     overview: Option<crate::overview::Overview>,
     /// Desktop widgets: a surface per output, where each widget stands, and one being moved.
     desks: Vec<desk::Desk>,
-    widget_places: HashMap<String, (f32, f32)>,
+    widget_places: HashMap<String, crate::widgets::Place>,
     widget_drag: Option<desk::WidgetDrag>,
+    /// The widgets are being arranged (the desks raised above the windows, with the editor).
+    desk_edit: bool,
+    /// The visualizer's capture is running.
+    spectrum_on: bool,
+    /// The surface the keyboard is on, of ours.
+    keyboard_on: Option<wl_surface::WlSurface>,
+    /// The desktop's right-click menu, while it's open.
+    desk_menu: Option<desk::DeskMenu>,
+    /// Pictures the photo frame was asked to skip.
+    photo_step: u64,
+    /// The song last seen playing (player, artist, title), and the card for a new one.
+    last_track: Option<String>,
+    song_generation: u64,
+    /// When the shell started: songs already playing then aren't news.
+    started: Instant,
     /// The clipboard: the compositor's data-control, our device on the seat, the selection we
     /// offer (when one was chosen from the history), the picker, and where reads come back.
     clip_manager: Option<smithay_client_toolkit::reexports::protocols::ext::data_control::v1::client::ext_data_control_manager_v1::ExtDataControlManagerV1>,
@@ -460,6 +475,8 @@ pub struct App {
     marquee_at: Instant,
     marquee_timer: bool,
     last_minute: String,
+    /// The wallpaper's last animation, so the next one is another.
+    last_transition: Option<&'static str>,
 }
 
 fn stamp(path: &PathBuf) -> Option<SystemTime> {
@@ -584,6 +601,17 @@ impl App {
             Update::LockNow => return self.start_lock(),
             Update::WifiJoined(ssid, ok, why) => return self.wifi_joined(ssid, ok, why),
             Update::Pairing(pairing) => return self.pairing(pairing),
+            Update::Spectrum(levels) => {
+                // Thirty a second: only the desktop shows them, the bar needn't hear of it
+                self.model.spectrum = levels;
+                for desk in &mut self.desks {
+                    desk.surf.dirty = true;
+                }
+                if let Some(index) = self.panel_index(PanelKind::Song) {
+                    self.panels[index].surf.dirty = true;
+                }
+                return;
+            }
             _ => {}
         }
         self.notice(&update);
@@ -591,7 +619,15 @@ impl App {
         let auth = matches!(update, Update::Auth(_));
         let icons = matches!(update, Update::AppIcon(..));
         let thumbnails = matches!(update, Update::Thumbnail(..));
+        let media = matches!(update, Update::Media(_));
         self.model.apply(update);
+        if media {
+            self.notice_song();
+            self.watch_spectrum();
+        }
+        if let Some(index) = self.panel_index(PanelKind::Song) {
+            self.panels[index].surf.dirty = true;
+        }
         if notifications {
             self.sync_toasts();
         }
@@ -625,6 +661,13 @@ impl App {
         let _ = self.commands.send(command);
     }
 
+    /// The scheme's files for the apps that want them (written only where they changed).
+    fn send_app_colors(&self) {
+        if !self.config.colors.apps.is_empty() {
+            self.send(Command::AppColors(Box::new(self.theme.palette), self.config.colors.apps.clone()));
+        }
+    }
+
     fn send_settings(&self) {
         self.send(Command::WeatherSettings(self.config.weather.clone()));
         self.send(Command::LockBeforeSleep(self.config.lock.before_sleep));
@@ -656,6 +699,7 @@ impl App {
             }
         }
         self.watch_clipboard();
+        self.watch_spectrum();
         let now = chrono::Local::now();
         let minute = now.format(if self.config.clock.seconds { "%H:%M:%S" } else { "%H:%M" }).to_string();
         if minute != self.last_minute {
@@ -717,6 +761,7 @@ impl App {
             bar.surf.last = None;
         }
         self.close_menu();
+        self.send_app_colors();
     }
 
     // ---------------------------------------------------------------- menus
@@ -868,6 +913,7 @@ impl App {
             Action::CloseMenu => {
                 self.close_menu();
                 self.close_panel(PanelKind::Control);
+                self.close_panel(PanelKind::DeskMenu);
             }
             Action::Month(month) => {
                 if let Some(popup) = self.popup.as_mut() {
@@ -906,7 +952,9 @@ impl App {
             Action::ToggleNightLight => self.toggle_night_light(None),
             Action::ToggleClipboard => self.toggle_clipboard(None),
             Action::ToggleDashboard => self.toggle_dashboard(None),
-            Action::ToggleSettings => self.toggle_settings(None),
+            // A button for an app opens it; it doesn't close it again
+            Action::ToggleSettings => self.toggle_settings(Some(true)),
+            Action::CloseSettings => self.toggle_settings(Some(false)),
             Action::LockNow => self.start_lock(),
             Action::WifiAsk(ssid) => self.wifi_ask(ssid),
             Action::WifiSubmit => self.wifi_submit(),
@@ -915,20 +963,40 @@ impl App {
             Action::ToggleOverview => self.toggle_overview(None),
             Action::OverviewWindow(_) | Action::OverviewWorkspace(_) | Action::OverviewClose(_) => self.overview_action(&action),
             Action::SetSetting(keys, value) => self.set_setting(&keys, &value),
+            Action::MoveWindow => self.move_window(serial),
+            Action::EditWidgets(on) => self.edit_widgets(on),
+            Action::WidgetAdd(kind) => self.show_widget(&kind, true),
+            Action::WidgetRemove(kind) => self.show_widget(&kind, false),
+            Action::NextPhoto => {
+                self.photo_step += 1;
+                for desk in &mut self.desks {
+                    desk.surf.dirty = true;
+                }
+            }
+            Action::EditNote => {
+                // The note's row in Settings, ready to type into
+                self.toggle_settings(Some(true));
+                if let Some(settings) = self.settings.as_mut() {
+                    settings.page = 3;
+                    settings.scroll = 0.0;
+                    settings.editing = Some((vec!["widgets".into(), "note".into()], self.config.widgets.note.clone()));
+                }
+                if let Some(index) = self.panel_index(PanelKind::Settings) {
+                    self.panels[index].surf.dirty = true;
+                }
+            }
             Action::SettingsPage(page) => {
                 if let Some(settings) = self.settings.as_mut() {
                     settings.page = page;
                     settings.editing = None;
+                    settings.scroll = 0.0;
                 }
                 if let Some(index) = self.panel_index(PanelKind::Settings) {
                     self.panels[index].surf.dirty = true;
                 }
             }
             Action::SettingsEdit(keys) => {
-                let current = match keys.as_slice() {
-                    [a, b] if a == "weather" && b == "city" => self.config.weather.city.clone(),
-                    _ => String::new(),
-                };
+                let current = crate::settings::text_value(&self.config, &keys);
                 if let Some(settings) = self.settings.as_mut() {
                     settings.editing = Some((keys, current));
                 }
@@ -1186,6 +1254,7 @@ impl App {
         if self.popup.as_ref().is_some_and(|p| p.surf.dirty && p.surf.configured && !p.surf.frame_pending) {
             self.draw_popup();
         }
+        self.step_changes();
         self.paint_backdrops();
         self.paint_edges();
         for index in 0..self.desks.len() {
@@ -1302,6 +1371,9 @@ impl App {
         if let Some(index) = self.desks.iter().position(|d| d.surf.is(&event.surface)) {
             return self.desk_pointer(index, event);
         }
+        if let Some(index) = self.backdrops.iter().position(|b| b.surf.is(&event.surface)) {
+            return self.backdrop_pointer(index, event);
+        }
         let (x, y) = (event.position.0 as f32, event.position.1 as f32);
         let Some(which) = self.which(&event.surface) else { return };
         let in_popup = which == Which::Popup;
@@ -1335,6 +1407,20 @@ impl App {
                 }
             }
             PointerEventKind::Axis { vertical, .. } => {
+                // The settings window scrolls its page
+                if let Which::Panel(i) = which
+                    && self.panels.get(i).is_some_and(|p| p.kind == PanelKind::Settings)
+                {
+                    let pixels = if vertical.value120 != 0 {
+                        vertical.value120 as f32 / 120.0 * 48.0
+                    } else if vertical.discrete != 0 {
+                        vertical.discrete as f32 * 48.0
+                    } else {
+                        vertical.absolute as f32
+                    };
+                    self.scroll_settings(pixels);
+                    return;
+                }
                 // A long menu scrolls, unless what's under the pointer takes the wheel itself
                 if in_popup
                     && let Some(popup) = self.popup.as_mut()
@@ -1351,20 +1437,7 @@ impl App {
                     popup.scroll_to(popup.scroll + pixels);
                     return;
                 }
-                // Wheels click in steps of 120; touchpads glide, so their pixels add up to steps
-                let steps = if vertical.value120 != 0 {
-                    self.scroll += vertical.value120 as f64 / 120.0;
-                    let whole = self.scroll.trunc();
-                    self.scroll -= whole;
-                    whole as i32
-                } else if vertical.discrete != 0 {
-                    vertical.discrete
-                } else {
-                    self.scroll += vertical.absolute / 24.0;
-                    let whole = self.scroll.trunc();
-                    self.scroll -= whole;
-                    whole as i32
-                };
+                let steps = self.wheel_steps(&vertical);
                 if steps == 0 {
                     return;
                 }
@@ -1377,6 +1450,20 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Wheels click in steps of 120; touchpads glide, so their pixels add up to steps.
+    fn wheel_steps(&mut self, vertical: &smithay_client_toolkit::seat::pointer::AxisScroll) -> i32 {
+        if vertical.value120 != 0 {
+            self.scroll += vertical.value120 as f64 / 120.0;
+        } else if vertical.discrete != 0 {
+            return vertical.discrete;
+        } else {
+            self.scroll += vertical.absolute / 24.0;
+        }
+        let whole = self.scroll.trunc();
+        self.scroll -= whole;
+        whole as i32
     }
 
     fn hover(&mut self, which: Which, at: Option<(f32, f32)>) {
@@ -1400,7 +1487,7 @@ impl App {
                 .map(|(_, t)| (piece.x + t.x, t.label.clone(), t.app.clone())),
             _ => None,
         };
-        let clickable = hit.is_some_and(|p| !p.actions.is_empty());
+        let clickable = hit.is_some_and(|p| !p.actions.is_empty() && !matches!(p.actions.left, Some(Action::MoveWindow)));
         // A window's star: its app's icon goes beside its name, looked up once
         let wanted_icon = target.as_ref().map(|(_, _, app)| app.clone()).filter(|app| !app.is_empty());
         if key != surf.hovered || target != surf.target {
@@ -1434,7 +1521,7 @@ impl App {
         let Some(surf) = self.surf_of(which) else { return };
         let Some(piece) = surf.hit(x, y).cloned() else {
             // Around the launcher or the control centre: a click there puts it away
-            if let Some(kind @ (PanelKind::Launcher | PanelKind::Control | PanelKind::Wallpapers | PanelKind::Shortcuts | PanelKind::Clipboard | PanelKind::Dashboard | PanelKind::Overview)) = panel {
+            if let Some(kind @ (PanelKind::Launcher | PanelKind::Control | PanelKind::Wallpapers | PanelKind::Shortcuts | PanelKind::Clipboard | PanelKind::Dashboard | PanelKind::Overview | PanelKind::DeskMenu)) = panel {
                 self.close_panel(kind);
             }
             return;
@@ -1965,7 +2052,7 @@ impl OutputHandler for App {
 
 impl LayerShellHandler for App {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        self.panels.retain(|p| &p.layer != layer);
+        self.panels.retain(|p| !p.is_layer(layer));
         self.backdrops.retain(|b| &b.layer != layer);
         self.edges.retain(|e| &e.layer != layer);
         self.desks.retain(|d| &d.layer != layer);
@@ -2005,7 +2092,7 @@ impl LayerShellHandler for App {
             }
             return;
         }
-        if let Some(panel) = self.panels.iter_mut().find(|p| &p.layer == layer) {
+        if let Some(panel) = self.panels.iter_mut().find(|p| p.is_layer(layer)) {
             let (w, h) = configure.new_size;
             let surf = &mut panel.surf;
             surf.w = if w > 0 { w as f32 } else { panel.want.0 as f32 };
@@ -2045,18 +2132,36 @@ impl PopupHandler for App {
     }
 }
 
-/// The bar opens no windows, but binding xdg-shell asks for this.
+/// The settings app is a window of its own, like any app's.
 impl smithay_client_toolkit::shell::xdg::window::WindowHandler for App {
-    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &smithay_client_toolkit::shell::xdg::window::Window) {}
+    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, window: &smithay_client_toolkit::shell::xdg::window::Window) {
+        if let Some(kind) = self.panels.iter().find(|p| p.is_window(window)).map(|p| p.kind) {
+            self.close_panel(kind);
+        }
+    }
 
     fn configure(
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &smithay_client_toolkit::shell::xdg::window::Window,
-        _: smithay_client_toolkit::shell::xdg::window::WindowConfigure,
+        window: &smithay_client_toolkit::shell::xdg::window::Window,
+        configure: smithay_client_toolkit::shell::xdg::window::WindowConfigure,
         _: u32,
     ) {
+        let Some(panel) = self.panels.iter_mut().find(|p| p.is_window(window)) else { return };
+        // No size given: ours to choose, the size it had or the one it opened with
+        let (w, h) = configure.new_size;
+        let surf = &mut panel.surf;
+        let w = w.map_or(if surf.configured { surf.w } else { panel.want.0 as f32 }, |w| w.get() as f32);
+        let h = h.map_or(if surf.configured { surf.h } else { panel.want.1 as f32 }, |h| h.get() as f32);
+        if (w - surf.w).abs() > 0.5 || (h - surf.h).abs() > 0.5 {
+            surf.w = w;
+            surf.h = h;
+            surf.last = None;
+        }
+        surf.configured = true;
+        surf.dirty = true;
+        surf.frame_pending = false;
     }
 }
 
@@ -2110,9 +2215,15 @@ impl SeatHandler for App {
 }
 
 impl KeyboardHandler for App {
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[smithay_client_toolkit::seat::keyboard::Keysym]) {}
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, surface: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[smithay_client_toolkit::seat::keyboard::Keysym]) {
+        self.keyboard_on = Some(surface.clone());
+    }
 
-    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, surface: &wl_surface::WlSurface, _: u32) {
+        if self.keyboard_on.as_ref() == Some(surface) {
+            self.keyboard_on = None;
+        }
+    }
 
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, event: KeyEvent) {
         self.key_event(&event);
@@ -2250,6 +2361,14 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         desks: Vec::new(),
         widget_places: crate::widgets::load_places(),
         widget_drag: None,
+        desk_edit: false,
+        spectrum_on: false,
+        keyboard_on: None,
+        desk_menu: None,
+        photo_step: 0,
+        last_track: None,
+        song_generation: 0,
+        started: Instant::now(),
         clip_manager: clipboard::bind_clipboard(&globals, &qh),
         clip_device: None,
         clip_source: None,
@@ -2288,8 +2407,10 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         marquee_at: Instant::now(),
         marquee_timer: false,
         last_minute: String::new(),
+        last_transition: None,
     };
     app.send_settings();
+    app.send_app_colors();
 
     loop {
         event_loop.dispatch(None, &mut app)?;

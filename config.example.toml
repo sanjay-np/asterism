@@ -1,0 +1,158 @@
+# asterism — copy to ~/.config/asterism/config.toml and change what you like.
+# Every line is optional: a missing value keeps the default. The bar reads this file again
+# within a couple of seconds of a change, no restart needed.
+
+# "line": a slim solid strip with a hairline under it, menus floating just off it as
+# outlined cards (the default). "frame": a thin frame round the whole screen with rounded
+# inner corners, menus hanging from the bar like drawers. "floating": one rounded bar off
+# the edge. "islands": each end and the middle on a pill of its own. "transparent": no
+# surface, the bar straight on the wallpaper.
+style = "line"
+frame = 8                 # style = "frame": the frame's thickness
+frame_radius = 22         # and its inner corners' radius
+
+size = "normal"           # compact, normal or large
+position = "top"          # top or bottom
+page_style = "dots"       # dots (busy workspaces joined by a line), numbers, or kanji (一 二 三…)
+pages = 8                 # Hyprland: pages in a group (4 to 10). niri shows its own workspaces.
+percent = true            # numbers beside volume, battery and resources
+media_title = "scroll"    # scroll, short or off
+tray_tint = false         # background apps drawn in the bar's colour
+hot_corner = true         # the bar's top-right corner opens the control centre
+polkit_agent = true       # ask for passwords when apps need an administrator's say
+font = "Google Sans Flex" # ships with the bar, as does Poppins; any installed family works
+icons = "outline"         # outline (thin Material), material (rounded) or phosphor (filled)
+outputs = []              # only these outputs, like ["DP-1"]; empty means all
+
+[clock]
+hours24 = true
+seconds = false
+date = "%A, %B %-d"       # strftime; "%a %-d %b" is shorter, "" hides the date
+
+[layout]
+# Modules: pages, clock, weather, media, resources, tray, tools, status, launcher (an apps button)
+left = ["launcher", "pages"]
+center = ["resources", "clock", "weather", "media"]
+right = ["tools", "tray", "status"]
+
+# The status items, in order: notifications (needs swaync), keyboard (shown with two
+# layouts or more), network, bluetooth, volume, battery, control (the control centre),
+# settings (needs a command below), session.
+# status = ["notifications", "keyboard", "network", "bluetooth", "volume", "battery", "control", "session"]
+
+# The resources: cpu, memory, temperature, network
+# resources = ["cpu", "memory", "network"]
+
+# Tools: leave them out to get ones that suit your compositor (screenshot and colour
+# picker, the microphone, staying awake). Tools whose programs aren't installed are hidden.
+# `kind` can be "microphone" or "awake" for the built-in toggles.
+#
+# [[tools]]
+# icon = "capture"
+# label = "Screenshot"
+# command = "niri msg action screenshot"
+#
+# [[tools]]
+# icon = "picker"
+# label = "Pick a colour"
+# command = "hyprpicker -a"
+#
+# [[tools]]
+# icon = "coffee"
+# label = "Stay awake"
+# kind = "awake"
+#
+# Icons available: add apps battery-* bell bell-slash bluetooth* brightness calendar
+# capture caret-left caret-right check checklist clipboard close cloud* coffee cpu down
+# energy fingerprint gear-six image keyboard layout lock logout lyrics microphone
+# microphone-off moon music nightlight pause picker play plugs-connected power ram
+# refresh restart search skip-back skip-forward sleep speaker-* speed sun timer up wifi-*
+
+[commands]
+# Run through `sh -c`. Empty settings/network/bluetooth/monitor hide their entries.
+settings = ""
+network = ""              # like "nm-connection-editor"
+bluetooth = ""            # like "blueman-manager"
+monitor = ""              # like "kitty -e btop"
+notifications = ""        # replaces the swaync panel toggle
+lock = "loginctl lock-session"
+suspend = "systemctl suspend"
+logout = ""               # empty: niri `quit`, Hyprland `exit`
+reboot = "systemctl reboot"
+poweroff = "systemctl poweroff"
+
+[notifications]
+daemon = true             # be the notification daemon when no other one runs
+timeout = 6               # seconds a pop-up stays when the app doesn't say
+max_popups = 4
+battery_low = 15          # percent for a "battery low" warning; 0 turns it off
+battery_critical = 5      # and for an urgent one that stays until you answer
+
+# What to do with an app's notifications, by its name (case doesn't matter):
+# "silence" keeps them in the centre without a pop-up, "discard" drops them.
+[notifications.apps]
+# Spotify = "silence"
+# "Some Chatty App" = "discard"
+
+[wallpaper]
+enabled = true            # off keeps another program's wallpaper
+image = ""                # a picture, like "~/Pictures/Wallpapers/sea.jpg"; the colours come from it
+fit = "cover"             # cover, contain or stretch
+# The wallpaper changer (control centre tile, or `asterism msg wallpaper`) shows the pictures
+# in this folder; empty uses the picture's own folder, else ~/Pictures/Wallpapers. A picture
+# chosen there is remembered without touching this file (edit `image` and yours wins again).
+directory = ""
+interval = 0              # minutes between changing to another picture at random; 0 never
+grain = 1.0               # film grain against banding, 0 to 2
+# Without a picture you get a quiet gradient in the scheme's colours. Or, for a painted
+# landscape of the `planet` below instead:
+# world = true
+# planet = "vesper"       # (top level, not here) aster, nere, ocre or vesper
+# terrain = 0.34          # how much of the screen the hills take, 0 to 0.8
+# relief = 1.0            # 0 smooth, 1 normal, 2 wild
+# stars = 0.0             # 0 to 2
+
+[launcher]
+terminal = ""             # for terminal apps; empty finds one ($TERMINAL, kitty, foot…)
+search = "https://duckduckgo.com/?q={}"
+
+[colors]
+# The whole scheme (a dark Material 3 "tonal spot" one) grows from one colour: the one that
+# stands out most in your wallpaper image, or this. As "#rrggbb".
+# accent = "#4a6fd9"
+# Then single roles can be overridden, as "#rrggbb" or "#rrggbbaa":
+# surface = "#141218"     # the bar, and the frame
+# card = "#211f26"        # menus, panels and pop-ups
+# text = "#e6e0e9"
+# text_soft = "#cac4d0"
+# warn = "#f2b8b5"
+
+[lock]
+idle = 10                 # minutes without input before the screen locks; 0 never
+before_sleep = true       # lock before the machine sleeps (closing the lid too)
+fingerprint = true        # unlock with a fingerprint too, when fprintd has a reader and your fingers
+# Locked out? Ctrl+Alt+F3, log in, and run `asterism unlock`.
+
+[night_light]
+mode = "off"              # off, on, or schedule (from start to end)
+temperature = 4000        # kelvin at night: 6500 is the screen as it is, 3000 very warm
+start = "sunset"          # "HH:MM", or sunset / sunrise where the weather is
+end = "sunrise"
+
+[weather]
+enabled = true
+city = ""                 # empty: the city your time zone is named after
+# latitude = 27.7         # or exact coordinates, which win over the name
+# longitude = 85.3
+units = "metric"          # metric (°C, km/h) or imperial (°F, mph)
+
+[timers]
+focus = 25                # minutes of focus in the focus timer
+short_break = 5
+long_break = 15
+rounds = 4                # a long break after this many rounds
+
+[widgets]
+# On the desktop, under your windows; drag one to move it (it stays where you leave it).
+show = ["clock", "weather", "media"]   # any of clock, weather, media, calendar, system; [] for none
+lyrics = true             # song words under what's playing, from LRCLIB (sends the song's name)

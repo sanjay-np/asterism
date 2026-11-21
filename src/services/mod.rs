@@ -208,6 +208,16 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
             FetchLyrics { .. } => {
                 let _ = lyrics.send(command);
             }
+            PetSound(voice, variant, volume) => {
+                tokio::task::spawn_blocking(move || {
+                    // Made the first time it's wanted, then played by whichever player there is
+                    let Some(path) = crate::pet::sound::file(voice, variant) else { return };
+                    let played = std::process::Command::new("pw-play").arg("--volume").arg(format!("{volume:.2}")).arg(&path).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+                    if played.is_err() {
+                        let _ = std::process::Command::new("paplay").arg(format!("--volume={}", (volume * 65536.0) as u32)).arg(&path).stderr(std::process::Stdio::null()).status();
+                    }
+                });
+            }
             ListPhotos(dir) => {
                 let out = out.clone();
                 tokio::task::spawn_blocking(move || {

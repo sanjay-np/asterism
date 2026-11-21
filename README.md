@@ -186,6 +186,30 @@ microphone, power profile, night light, wallpaper, settings); volume and brightn
 playing; notifications grouped by app; and lock, sleep, log out, restart, shut down (the last
 three ask twice). Esc or a click beside it closes it.
 
+**A pet.** A cat, a fox or a bird lives on your screen, above the windows. The cat and the fox
+walk along the foot of the screen; the bird flies about, hops, and perches on the bar. Each has
+a real coat to choose from (a tabby, ginger, black, white, tuxedo or Siamese cat; a red or arctic
+fox; a sparrow, robin or bluebird) or the wallpaper's colours, blinks, and follows things with
+its eyes.
+
+It behaves like a pet: it has energy (it naps when tired), hunger (it asks to be fed) and wants
+attention (ignored a while, it comes to find you). It loafs, grooms, lies about, stretches and
+yawns when it wakes; falls asleep after a minute without input; gets the zoomies when the
+machine is busy; sways to music; perks up when a notification comes. Where the shell can see your
+pointer (over the desktop and the bar) it runs over to it, and when it's low and near, crouches,
+wiggles and pounces.
+
+Click it to stroke it: it purrs, eyes shut, a heart over it. Drag it to pick it up: it dangles,
+and lands on its feet when you let go (complaining if you dropped it from high). Right-click it to
+**feed** it (a bowl appears and it goes to eat) or **play** (a ball it chases and bats about;
+click the ball to kick it), for another animal, or to put it away. It speaks now and then with a
+small bubble and a sound: meows, trills and purrs for the cat, yips for the fox, chirps for the
+bird, made by Asterism itself (no recordings), played quietly, and never in do-not-disturb or
+while the screen is locked. Clicks anywhere else pass straight through.
+
+Settings → Desktop → Pet (animal, coat, sounds, volume, size), or `[pet]` in the config;
+`asterism msg pet feed|play|next|away` for keybinds.
+
 **A new song** shows a small card under the bar for a few seconds: its cover, its name and its
 singer, the music moving under them. Not while the music's menu or the control centre is open;
 `song_popup = false` turns it off.
@@ -444,7 +468,7 @@ show = ["clock", "weather", "media"]
 
 ```sh
 cargo run --release                     # run it (refuses to start twice)
-cargo test                              # 51 tests: compositor IPC, the Bluetooth agent, settings writes, the visualizer's FFT…
+cargo test                              # 62 tests (and 2 opt-in): compositor IPC, the Bluetooth agent, settings writes, the visualizer's FFT…
 cargo run --example fixtures -- 60      # a fake player and a fake tray app for a minute
 asterism --snapshot bar.png             # draw the bar with live data into a PNG
 asterism --snapshot m.png --menu sound  # or one of its menus
@@ -456,6 +480,7 @@ asterism --snapshot e.png --panel widgets [--hover widget.media] # the desktop w
 asterism --snapshot m.png --panel deskmenu [--query note]         # the desktop's menu (for a widget)
 asterism --snapshot s.png --panel song                           # the new-song card
 asterism --snapshot t.png --panel transition [--query ink@0.3]   # a frame of the wallpaper changing
+asterism --snapshot p.png --panel pet --query cat:ginger --scale 2  # an animal in every pose
 asterism --snapshot s.png --demo        # made-up workspaces, windows and networks, for sharing
 RUST_LOG=asterism::app=trace asterism   # frame timings
 ```

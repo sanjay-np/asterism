@@ -34,6 +34,7 @@ asterism msg COMMAND
     settings [open|close]          Toggle the settings app
     overview [open|close]          Toggle the window overview
     widgets [edit|done]            Arrange the desktop's widgets (add, remove, move), or finish
+    pet feed|play|next|away        Put down food or a ball for the pet; another animal; put it away
     screenshot [region|screen|window]  Take a screenshot (a region you choose, by default)
     record [audio]                 Start recording the screen (with sound), or stop
     timer MINUTES                  Start a countdown
@@ -85,6 +86,7 @@ pub fn parse(words: &[&str]) -> Result<Request, String> {
         ["settings"] => Request::Settings(None),
         ["settings", "open"] => Request::Settings(Some(true)),
         ["settings", "close"] => Request::Settings(Some(false)),
+        ["pet", what @ ("feed" | "play" | "next" | "away")] => Request::Pet(what.to_string()),
         ["widgets"] => Request::Widgets(None),
         ["widgets", "edit"] => Request::Widgets(Some(true)),
         ["widgets", "done"] => Request::Widgets(Some(false)),
@@ -212,6 +214,8 @@ mod tests {
         assert_eq!(parse(&["shortcuts", "open"]), Ok(Request::Shortcuts(Some(true))));
         assert_eq!(parse(&["night-light", "off"]), Ok(Request::NightLight(Some(false))));
         assert_eq!(parse(&["widgets"]), Ok(Request::Widgets(None)));
+        assert_eq!(parse(&["pet", "feed"]), Ok(Request::Pet("feed".into())));
+        assert!(parse(&["pet", "bite"]).is_err());
         assert_eq!(parse(&["widgets", "edit"]), Ok(Request::Widgets(Some(true))));
         assert_eq!(parse(&["widgets", "done"]), Ok(Request::Widgets(Some(false))));
         assert!(parse(&["volume", "up", "lots"]).is_err());

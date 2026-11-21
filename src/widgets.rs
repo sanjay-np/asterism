@@ -31,6 +31,7 @@ pub fn name(kind: &str) -> &'static str {
         "calendar" => "Calendar",
         "photos" => "Photo frame",
         "note" => "Sticky note",
+        "pet" => "Your pet",
         _ => "The machine",
     }
 }

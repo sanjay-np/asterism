@@ -26,6 +26,7 @@ mod theme;
 mod transition;
 mod timers;
 mod palette;
+mod pet;
 mod ui;
 mod wallpapers;
 mod weather;

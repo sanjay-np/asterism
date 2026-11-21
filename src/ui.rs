@@ -27,6 +27,8 @@ pub enum Prim {
     Line { points: Vec<(f32, f32)>, width: f32, color: Rgba },
     /// The space between a line and a level beneath it, filled: a graph's body.
     Area { points: Vec<(f32, f32)>, base: f32, color: Rgba },
+    /// A closed outline, filled: as smooth as its points are close (the pet's body and limbs).
+    Shape { points: Vec<(f32, f32)>, color: Rgba },
     Rect { x: f32, y: f32, w: f32, h: f32, radius: f32, color: Rgba },
     /// A card: a rounded surface in the container colour, outlined with a hairline, on a soft
     /// shadow that reaches up to 12px below it.
@@ -84,6 +86,13 @@ impl Prim {
             Prim::Ring { cx, cy, r, width, value, color } => {
                 for v in [*cx, *cy, *r, *width, *value * 4.0] {
                     f(h, v);
+                }
+                c(h, *color);
+            }
+            Prim::Shape { points, color } => {
+                for (x, y) in points {
+                    f(h, *x);
+                    f(h, *y);
                 }
                 c(h, *color);
             }
@@ -183,6 +192,11 @@ pub enum Action {
     /// The sticky note, to be written (in Settings); the photo frame's next picture.
     EditNote,
     NextPhoto,
+    /// The pet: another animal, put away, a bowl of food, a ball to play with.
+    PetNext,
+    PetAway,
+    PetFeed,
+    PetPlay,
     LockNow,
     /// The wifi password prompt: ask for this network's password, send it, or let it be.
     WifiAsk(String),
@@ -353,6 +367,12 @@ impl Piece {
                         *y *= k;
                     }
                     *width *= k;
+                }
+                Prim::Shape { points, .. } => {
+                    for (x, y) in points.iter_mut() {
+                        *x *= k;
+                        *y *= k;
+                    }
                 }
                 Prim::Area { points, base, .. } => {
                     for (x, y) in points.iter_mut() {

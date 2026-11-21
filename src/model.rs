@@ -517,6 +517,8 @@ pub enum Request {
     Overview(Option<bool>),
     /// Arranging the desktop's widgets: start, finish, or (None) the other way.
     Widgets(Option<bool>),
+    /// Something for the pet: feed, play, next (another animal), away.
+    Pet(String),
 }
 
 /// Something done to a timer, from its menu or from `asterism msg`.
@@ -690,7 +692,8 @@ impl Model {
                 self.thumbnails.insert(path, image);
             }
             Update::Art(url, image) => {
-                if self.art.len() > 16 {
+                // A few covers are plenty: the playing one, and the ones just before
+                if self.art.len() >= 6 {
                     self.art.clear();
                 }
                 self.art.insert(url, image);
@@ -747,6 +750,8 @@ pub enum Command {
     WatchProcesses(bool),
     /// Listen to what the speakers play, for the visualizer, or stop.
     WatchSpectrum(bool),
+    /// The pet speaks: this sound, this take of it, this loud (0 to 1).
+    PetSound(crate::pet::Voice, u32, f32),
     /// List a folder's pictures, for the photo frame.
     ListPhotos(std::path::PathBuf),
     /// Write the scheme's files for these apps (`appcolors`).

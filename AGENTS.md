@@ -59,13 +59,31 @@ and Poppins (OFL), Material outline icons and Material Symbols (Apache 2.0), Pho
 
 Asterism **is** the user's shell now: niri starts `/home/uncore/.local/bin/asterism`
 (`spawn-at-startup`; Noctalia's line is commented out; the original config is saved as
-`~/.config/niri/config.kdl.before-asterism`). Binds: Mod+Space launcher, Mod+A control centre,
-Mod+N notifications, Mod+W wallpaper changer, Mod+Shift+W random wallpaper, Mod+Shift+Escape
-session menu; volume/brightness/media keys stay on wpctl/brightnessctl/playerctl. Lid close only
-suspends (no locker installed; the user chose that) — the session menu's Lock does nothing
-until a locker exists. After a rebuild, `install -Dm755 target/release/asterism
-~/.local/bin/asterism`, then restart it (`pkill -x asterism; setsid -f ~/.local/bin/asterism`)
-for the change to show. A restart briefly takes the bar away, so say so first.
+`~/.config/niri/config.kdl.before-asterism`). Binds (all `asterism msg …`): Mod+Space launcher,
+Mod+A control centre, Mod+N notifications, Mod+W wallpaper changer, Mod+Shift+W random
+wallpaper, Mod+Shift+Escape session menu, Mod+Alt+L lock, Mod+Ctrl+V clipboard,
+Mod+Shift+Slash shortcuts sheet, Mod+O overview; volume/brightness/media keys stay on
+wpctl/brightnessctl/playerctl. The lock is Asterism's own (`[lock] idle = 10`, `before_sleep =
+true`). After a rebuild, `install -Dm755 target/release/asterism ~/.local/bin/asterism`, then
+restart it (`pkill -x asterism; setsid -f ~/.local/bin/asterism`) for the change to show.
+
+The machine: laptop, eDP-1 1920×1200 at scale 1; niri with `default-column-width 0.9` and
+`prefer-no-csd` (so windows open wide and nobody draws title bars). PipeWire with
+pipewire-pulse (`parec`, `pactl`, `pw-record` present). kitty (its kitty.conf still includes
+`themes/noctalia.conf`; pointing it at `asterism-colors.conf` was offered, not done) and GTK
+through adw-gtk3-dark (gtk.css is a symlink to the theme). The user's config has
+`[wallpaper] interval = 5` (asked for 2026-11-21) with the default random animation, and
+widgets clock, media and visualizer (placed by hand in the editor), and a pet: `[pet] animal =
+"fox"` (switched from the cat by the user), its other settings at their defaults (sounds on,
+volume 40). Measured on their screen after the optimization round: ~34 MB RSS (21 MB of it the
+binary and fonts, file-backed), 1.9 MB shm, ~2.3 % CPU with the fox out (it was 79 MB, ~3 %).
+
+How the user works: short requests, picks from offered options; after each round they want
+the build installed and the shell restarted. **Ask before restarting** (they've said yes every
+time): it briefly takes the bar away and empties the clipboard history, which lives in memory.
+They try things by hand afterwards, so end with what needs their pointer or keys. They commit
+themselves (today's work went in as f539ecf); commit only when asked. The project's rename
+history (etea-bar) was removed on request; keep the ETEA Shell credit in the README.
 
 ## Build, run, test
 
@@ -73,7 +91,9 @@ for the change to show. A restart briefly takes the bar away, so say so first.
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 52 tests, see below
+cargo test --release                            # 62 tests (+2 opt-in, --ignored), see below
+ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
+cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
 cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
 cargo clippy --release                          # remaining warnings are style-only
 cargo run --example fixtures -- 60              # fake MPRIS player + fake tray app, 60 s
@@ -97,6 +117,7 @@ asterism --snapshot out.png --panel widgets [--hover widget.KIND]  # the desktop
 asterism --snapshot out.png --panel deskmenu [--query KIND]        # the desktop's right-click menu
 asterism --snapshot out.png --panel song                           # the new-song card (needs a player)
 asterism --snapshot out.png --panel transition [--query KIND@0.3]  # a frame of the wallpaper changing
+asterism --snapshot out.png --panel pet --query cat[:coat]|fox|bird --scale 2  # every pose
 asterism --snapshot out.png --demo      # made-up workspaces, windows, networks (use for anything shared)
 ```
 
@@ -130,6 +151,30 @@ afterwards (they're named by the time; check the newest is yours).
 
 Things a script can't do (real clicks, key presses, grabs) must be listed for the user to try.
 
+**Pitfalls met while testing on the user's machine** (each cost a wrong result or a side effect
+once):
+
+- The nested niri window is often off screen in the user's scrolling layout, and niri sends no
+  frame callbacks to what it doesn't show: animations there get 3–4 frames. Measure the cost of
+  a frame instead (`frame_cost`), and don't move the user's focus to make it visible.
+- `examples/fixtures` is on the shared session bus, so the user's real shell reacts to it too
+  (a second `parec`, a song card). Stop it with `pkill -x fixtures`.
+- Never `pkill -f PATTERN` when the pattern is also in your own command line: it killed the
+  command's own shell once. Stop a test shell by its config path, as above.
+- Snapshots read the user's real `~/.local/state/asterism` (widget places, the chosen
+  wallpaper, which wins over `image`). Run them with `XDG_STATE_HOME=<scratch dir>` to start
+  clean.
+- `cargo test` and `cargo clippy` don't rebuild `target/release/asterism`: `cargo build
+  --release` before a snapshot of a change.
+- Test configs written by script: multi-line TOML strings need `"""…"""`; check the file
+  parses (an invalid config silently falls back to the defaults).
+- Top-level `icons` is the icon set; `[colors] bar_icons` is their colour. A blanket
+  `sed 's/^icons = …/'` changes both.
+- A screenshot (`screenshot-screen`) of an off-screen nested niri is drawn apart from the
+  output, so it sends no frame callbacks: it shows whatever was last presented when the window
+  was really on screen, not the state now. Trust logs (`RUST_LOG=asterism=debug`) over such
+  pictures for anything that changes with time (the pet's pose, an animation).
+
 ## Architecture
 
 ```
@@ -146,10 +191,13 @@ main.rs ── CLI: run | msg … | --snapshot …
    │     night.rs   wlr-gamma-control per output, schedule, the control-centre switch
    │     idle.rs    ext-idle-notify → lock; start_lock() spawns `asterism lock` detached
    │     timer.rs   timer actions and the once-a-second tick
-   │     desk.rs    desktop widgets: a Layer::Bottom surface per output, input region = widgets,
-   │               drag to move (Grab cursor), drawn with shell::render_panel; the editor
-   │               (`edit_widgets`): same surfaces set_layer(Overlay), whole input, Esc; starts
-   │               and stops the visualizer's capture (`watch_spectrum`)
+   │     pet.rs     the pet's 240×180 Overlay surface moved by its margins, timer, idle watch,
+   │               drag to pick up, sounds, its props (bowl, ball) as small surfaces
+   │     desk.rs    desktop widgets: per output a `Desk` of small `Part`s, one Layer::Bottom
+   │               surface per widget placed by margins (laid out on the whole output, then each
+   │               group of pieces shifted into its part); arranging: a 1-pixel dim stretched by
+   │               the viewporter, parts remade on Overlay above it; drag to move; starts and
+   │               stops the visualizer's capture (`watch_spectrum`)
    │
    ├── services/ (own thread, tokio current_thread runtime; polkit agent, notification daemon…)
    │     send Update → calloop channel → App::update ; receive Command ← App
@@ -168,6 +216,8 @@ main.rs ── CLI: run | msg … | --snapshot …
    ├── widgets.rs   desktop widgets + saved places (~/.local/state/asterism/widgets.json) + lyrics parsing;
    │               `arrange` (placing, shared with snapshots), `placeholder`, `editor` (frames, ×, add strip)
    ├── spectrum.rs  the visualizer's analysis: radix-2 FFT, log bands, auto-gain, fall-off
+   ├── pet/         the pet: mod.rs behaviour (needs, acts, `Pet::step` → events, poses),
+   │               draw.rs (rig, IK legs, coats), sound.rs (voices synthesized → WAV)
    ├── transition.rs wallpaper animations: kinds, `pick` (random, never twice), per-pixel reveal
    │               maps, `compose` (a lookup table per frame), `ease`
    ├── appcolors.rs the scheme for kitty/foot/alacritty/GTK: 16 ANSI colours harmonized to the
@@ -265,7 +315,10 @@ with a test in `ipc::tests`.
 - Comments and doc comments say *why*, in plain sentences, in the voice already used
   ("The title slides on with time, once for every bar showing it"). Keep that tone.
 - Prefer small free functions and immediate-mode builders over stateful widgets.
-- Colours and sizes come from `Theme`'s Material roles; no hard-coded colours. Several old
+- Colours and sizes come from `Theme`'s Material roles; no hard-coded colours. **One deliberate
+  exception: the pet's coats** (`pet::draw::coat`) are the animals' own colours (tabby, ginger,
+  red fox, sparrow…), because the user asked for it to be lifelike; its "wallpaper" coat and
+  everything round it (bubble, bowl, ball) still use the roles. Several old
   names (`color_text`, `color_soft`, `card_deep`, `glow`, `lit`, `warn`) are kept as aliases of
   roles; prefer the role names in new code.
 - New config options: field in `config.rs` with a default, documented in
@@ -286,6 +339,23 @@ with a test in `ipc::tests`.
 - **The lock's outside unlock** (`asterism unlock` → a file in `$XDG_RUNTIME_DIR`) means any
   process running as the user can unlock the screen, the same trade-off as swaylock's
   `SIGUSR1`. It's the recovery path from a console; don't remove it without another one.
+- **Buffers for big surfaces come from the surface's own pool** (`BIG_BUFFER` = 1 MB in
+  `present`; at most 2 buffers), dropped with the surface. The shared `SlotPool` never shrinks,
+  so before this one full-screen panel opened once kept ~27 MB resident for good. Don't make
+  whole-output surfaces to show something small (the desktop widgets were one, 9 MB a buffer
+  for a clock); fill a whole screen with one colour by a 1-pixel buffer + viewporter
+  (`desk::present_fill`). The wallpaper drops its buffer and pool once its frame has come
+  (`release_backdrops`).
+- **Dragging something whose surface moves with it** (the pet, a desktop widget): never take
+  the pointer's position from the moving surface. Event positions are relative to wherever the
+  compositor has the surface at that instant, which lags the margins just asked for; adding
+  the new margin to an old position overshoots, the overshoot moves it further, and it runs off
+  (the user saw the pet fly to the top). Take the press position (exact: nothing has moved
+  yet), then add the pointer's own motion (`relative-pointer`, `App::relative_motion`), clamped
+  to the output like the cursor. Without the protocol it falls back to surface positions.
+- **Don't redraw for news that doesn't concern you**: `App::update` dirties the desks only for
+  what widgets show; a part waiting on a frame callback is marked and drawn when it comes
+  (`desk_due`), never retried in a loop (hidden under windows, its frame may never come).
 - **Memory with big pictures**: `images::tune_allocator()` (first thing in `main`) pins glibc's
   mmap threshold at 1 MB, so decoded wallpapers (tens of MB) go back to the system when freed;
   `images::give_back_memory()` (`malloc_trim`) runs after wallpaper paints, palette and
@@ -293,9 +363,13 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (52)
+### Tests (62, +2 opt-in)
 
-`theme` (icons and widgets follow the wallpaper: blue vs orange, plain, accent with a distinct
+`pet` (sleeps while away and wakes with a stretch and a hello, stalks and pounces, follows a
+high pointer, ignores a far one, eats from the bowl and bats the ball, purrs when petted and
+complains when dropped from high, stays on screen and speaks a few times in ten minutes, draws
+every pose in every coat), `pet::sound` (every voice and take: length, peak, not silence; a
+meow's pitch falls after its middle; WAV header; files made once), `theme` (icons and widgets follow the wallpaper: blue vs orange, plain, accent with a distinct
 "on", colourful groups), `transition` (every kind starts old and ends new, a wipe goes its way, random never repeats,
 maps fit; `frame_cost` is an ignored timing), `world` (the repaint key ignores interval and
 animation), `appcolors` (terminal colours keep their meaning and read on the background; every file format,
@@ -311,7 +385,123 @@ bus: yes, Rejected, passkey; names vs addresses), `services::niri` window rects,
 ranking, desktop file parsing). Add tests for any new parsing or protocol logic.
 
 ## Current progress (as of 2026-11-21: the first and second rounds from ETEA / caelestia, then
-fingerprint, Wi-Fi passwords, Bluetooth pairing and the window overview; newest first)
+fingerprint, Wi-Fi passwords, Bluetooth pairing, the window overview, the desktop rounds, the
+pet, and an optimization round; newest first)
+
+**State of the tree**: f539ecf (the user's commit) holds everything up to the icon tinting.
+After it, uncommitted: the pet (both rounds), the optimization round and the drag fix below,
+with their README/AGENTS updates. All installed and running on the user's machine.
+
+### Dragging the pet sent it to the top (2026-11-21, fixed)
+
+The user picked up the pet and it flew to the top of the screen. Cause: during a drag the
+pointer was read from the pet's own surface (local position + the margins last asked for), but
+that surface moves with the drag and the compositor reports positions against where it has the
+surface *now*, which lags the margins just requested; each overshoot moved it further (positive
+feedback). The per-widget desk parts from the optimization round had the same bug waiting.
+Fixed with `zwp_relative_pointer_v1` (sctk `RelativePointerState`, bound in `run`, one per
+pointer in `new_capability`, `RelativePointerHandler` → `App::relative_motion`): the press
+position is exact, the drag adds the pointer's own motion to it, clamped to the output
+(`PetSurface::at`, `WidgetDrag::at`; `pet_pointer_to`, `move_widget`). Surface positions are the
+fallback only when the protocol is missing. See the rule in Code conventions. **Not verified by
+a script** (needs a real drag); the user restarted on it to try.
+
+### Less memory and CPU (2026-11-21, the user asked to "use less ram and less cpu")
+
+Measured first on the user's running shell: 79 MB RSS (37 MB shm, 20 MB anon, 21 MB file),
+~3 % CPU, nearly all on the Wayland thread (the pet). The shm pool's mapping had grown to 74 MB.
+
+- Desktop widgets: a surface per widget (see Architecture), not a full-output one (whose
+  buffers were 9.2 MB each ×3, plus a full-screen `LastFrame` canvas in anon memory).
+- Per-surface pools for buffers ≥ 1 MB, two buffers at most; the wallpaper lets its pool go
+  after its frame; wallpaper transitions use the surface's pool (their own one is gone).
+- `Painter::configure` on reload instead of a new `Painter` (which rescanned every system font).
+- Widgets redraw only for updates they show; parts waiting on frames don't spin (a bug in the
+  first version of the per-widget desk, found by measuring: a hidden part kept the desk dirty).
+- Pet frame rates by activity (`Pet::delay`: 33/50/83/200/500 ms), 20-point ellipses.
+- Caches bounded: covers ≤ 6, the photo frame keeps one thumbnail while the picker is closed,
+  closing the launcher drops icons of apps with no window open.
+
+Results, A/B in nested niri with the user's config (clock, media, visualizer, the fox): RSS 48.6
+→ 31.7 MB, shm 10.8 → 1.8 MB, anon 17.5 → 10.4 MB, CPU ~3 % → 1.6 % (no pet: 0.27 % both;
+arranging widgets 37 MB). A frame of the cat costs ~0.35 ms to paint (`pet::tests::frame_cost`,
+opt-in). Found and fixed on the way: `present_fill` wrote 4 bytes into a 64-byte slot (a panic on
+arranging, caught in the nested run). **Not yet measured**: the user's real screen after a restart.
+
+### The pet, made lifelike (2026-11-21: "life like… like real pet… interactions, like speak like
+meow for cat from time to time")
+
+Replaces the first pet's drawing and behaviour (below; its surface, idle watch, pointer
+sightings and menu stay).
+
+- **Drawing** (`pet/draw.rs`): a `Rig` (hip, shoulder, head + tilt, four feet, tail angle/curl/
+  sway, ears, eyes, mouth, tuck, ball, wing) that the behaviour lerps toward each act's pose
+  (`pose()` in mod.rs; walking feet come from a 4-beat gait directly). Drawn with the new
+  `Prim::Shape` (filled closed outline: ellipses, tapered capsules, triangles): torso = capsule +
+  haunch + chest, legs by 2-joint IK bending back (elbow/hock), paws, a 9-segment tapering tail
+  (the fox's a bushy brush) clamped to the floor unless airborne, head with ears (+inner), muzzle
+  or snout, almond eyes with slit pupils that follow `look` and blink, nose, mouth/yawn,
+  whiskers; tabby stripes, Siamese points, fox socks; the bird with breast, streaks, flapping
+  wings (drawn 1.35× so it isn't a speck). A floor shadow. Bubble, heart, "!", z's round it.
+- **Behaviour** (`pet/mod.rs`): needs energy (−1/1500 s awake, +1/90 s asleep), hunger
+  (+1/7200 s), lonely (+1/900 s; petting −0.35). Acts Stand, Walk, Run, Sit, Loaf, Lie, Sleep,
+  Groom, Stretch, Yawn, Crouch, Pounce, Bat, Eat, Held, Fall, Fly, Hop, Peck. Priorities in
+  `live`: idle → lie → sleep; waking → Stretch → Yawn → hello; a bowl and any hunger → eat; a
+  ball → run and bat (`Event::Kick`, bored after 6–10, 60 s cool); the pointer within 520 px →
+  low and near: crouch-wiggle-pounce (4 s calm after), else run over and sit watching. `choose`
+  by needs: tired → lie/nap, needy → walk to the middle and call, busy → zoomies, music → sit and
+  sway, else weighted idle acts. Speaks (`Event::Say(voice, take)` + bubble) on its own every
+  150–390 s (40–90 s when hungry or lonely), when petted (purr), woken, fed, notified (30%),
+  dropped from > 260 px (complain); never twice within 3 s.
+- **Sound** (`pet/sound.rs`): additive synthesis (harmonics × moving formants, breath noise,
+  envelopes) at 22 050 Hz: meow (m→ee→a→ow, pitch up then down), trill (rolled 30 Hz tremble),
+  purr (25 Hz pulses in two breaths), complain, yip, chirp; 3 takes each; WAVs cached in
+  ~/.cache/asterism/pet; `Command::PetSound` → `pw-play --volume` (else `paplay`). Gated in
+  `App::pet_event`: `[pet] sounds`, volume > 0, not do-not-disturb, not locked.
+- **Interactions** (`app/pet.rs`): click = petted; press + 6 px = grab (implicit grab keeps the
+  motion coming past the surface), carried, dropped (falls with gravity); right-click menu:
+  Feed it, Play with a ball, Another animal, Put it away (`Action::PetFeed/PetPlay/...`, also
+  `msg pet feed|play|next|away`). Props are 48 px Overlay surfaces: the bowl (kibble or seeds)
+  gone 3 s after `Ate`; the ball rolls with friction, bounces off the sides, hops when batted,
+  can be clicked to kick, goes 20 s after `Bored` or 2 min untouched.
+- Config `[pet] animal, coat, sounds (true), volume (40), size (100)`; Settings → Desktop shows
+  coat/sounds/volume/size once an animal is chosen.
+- Verified: 62 tests; every pose in every coat by snapshot; the sounds written and played (at
+  volume 0, so nothing was heard); nested niri with sounds off: `msg pet feed` → bowl mapped,
+  the cat ate (`Ate`, a trill), the bowl went; `msg pet play` → six kicks (one backward) then
+  `Bored`; ~3% CPU while active (the first pet ~1%), 49 MB. **Not verified (needs the user)**:
+  how the sounds actually sound, stroking, dragging, the right-click menu, the pounce on the
+  real pointer, the frame rate and CPU on their visible screen.
+
+### The pet (2026-11-21, the user asked for "pets": over everything, a few animals, reacting
+to the pointer, idle/busy, music and notifications)
+
+`[pet] animal` = none (default) | cat | fox | bird; Settings → Desktop → Pet; right-click menu
+(the desktop menu with widget "pet": Another animal → `Action::PetNext`, Put it away →
+`PetAway`, both write the config). Not a recreation of any existing pet program: drawn from the
+shell's prims (ellipses as round Rects, ears/beak/tail feathers as `Prim::Area` triangles, legs
+and tails as round-capped lines), coloured by roles (fox = primary, cat = soft text toward the
+icon tint, bird = icon tint with primary wings), so they follow the wallpaper.
+
+- **Surface** (`app/pet.rs`): one 96×96 Overlay layer, anchor top-left, exclusive −1, moved by
+  `set_margin` each frame; input region only the body (16,30 64×58), so clicks pass through
+  around it. On the working output; if that output goes, it comes back on another at a tick.
+  A calloop timer steps it (`Pet::delay`: 33 ms moving, 90 ms still, 140 ms asleep) and draws
+  when the frame callback has come; `render_panel` on one piece.
+- **Behaviour** (`pet.rs`, pure): acts Sit, Walk, Groom, Sleep, Chase, Pounce, Fly; wanders by
+  chance (`transition::Chance`), floor = screen foot (above a bottom bar), the bird's perch =
+  the bar's lower edge. Idle: an idle notification of its own (60 s, `PetIdle`, apart from the
+  lock's) → sleeps (the bird lands first) and wakes on resume. Busy (cpu > 0.6): runs. Music:
+  bobs by the mean of the 8 lowest spectrum bands (so `watch_spectrum` also runs the capture
+  while a pet is out and music plays). Notifications (`toast`) → "!" and a look right for 2 s.
+  Pointer: `saw_pointer` from motion over backdrops, desks, bars (bar y converted to the output)
+  and the pet; counts for 1.5 s; chased within 700 px; a pounce when it's near and low, then 3 s
+  calm. Click → heart (solid, grows and shrinks: overlapping see-through shapes showed seams).
+- Verified: 4 tests; poses by snapshot (`--panel pet`); nested niri: the layer maps on Overlay
+  with no keyboard, the cat walks the foot of the screen in the wallpaper's colours, the idle
+  notice comes after 60 s (debug log), ~1% CPU. **Not verified (needs the user)**: clicking and
+  right-clicking it, chasing the real pointer, the bird on a real bar, bobbing to real music,
+  how big it feels on their screen (96 px; a size setting could follow).
 
 ### Icons and widgets in the wallpaper's colours (2026-11-21, the user asked)
 
@@ -592,8 +782,8 @@ Not yet seen by the user live: everything in the new look — ask for their impr
   (`world = true`) a planet's sky and four curved hill layers. Painted on a worker thread
   (~110 ms for 1920×1200), repainted only when size, scale, planet or settings change. Verified
   live on niri and by snapshot for all four planets.
-- **Performance**: ~29 MB RSS with the wallpaper (~19 MB without), ~0.1 % of a core idle, ~2 %
-  while a title scrolls at 30 fps.
+- **Performance** (re-measured 2026-11-21 after the optimization round below): ~31 MB RSS with
+  the wallpaper and three widgets (was ~46–79 MB), ~0.3 % of a core idle, the pet ~1.5 %.
 
 ### Not yet verified by a person (needs real input)
 
@@ -607,6 +797,8 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 - Bluetooth live, pairing above all (bluetooth.service is off on the user's machine).
 - The widget editor by pointer (add chips, ×, dragging, Done) and Esc; the settings window's
   move-by-sidebar; the visualizer with real sound.
+- The pet by pointer: stroking, picking up and dropping (the relative-pointer drag), the
+  right-click menu, the ball by click; its sounds heard; the desktop right-click menu.
 - Things by pointer and keys in the newer panels: the overview (click, drag, middle-click),
   settings (every control), the dashboard's End, dragging desktop widgets, the clipboard
   picker's Enter, the Wi-Fi card with a real password, the lock screen with the real password.
@@ -634,10 +826,14 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 1. **User test pass**, above all the lock screen with the real password (Mod+Alt+L), then the
    clipboard picker, timers, night light schedule; fix what breaks.
 2. Try Bluetooth pairing for real once the user starts bluetooth.service.
-3. The user to watch a wallpaper change animate (Settings → Wallpaper: Change by itself, or
+3. The user to try the pet by hand: pick it up (the fixed drag), stroke it, feed it, play with
+   the ball, and say how its synthesized sounds sound; the widgets' drag (same fix). If its CPU
+   (~2.3 % with the fox) matters: cache the rendered frames of still poses, or a lower frame
+   rate while walking (both offered, not chosen).
+4. The user to watch a wallpaper change animate (Settings → Wallpaper: Change by itself, or
    Mod+Shift+W) and say how it feels; then the desktop's round two (right-click menus, resizing, photo frame, note,
    edge bars, song card) and the app colours (include the file in kitty.conf, gtk.css).
-4. Next from the ETEA/caelestia list (offered 2026-11-21, not chosen yet): a phone link (KDE
+5. Next from the ETEA/caelestia list (offered 2026-11-21, not chosen yet): a phone link (KDE
    Connect), workspace window previews on hover (could reuse `overview::layout` in a small
    popup), a left day panel (calendar, to-do, notes as files), OCR of a screen region
    (tesseract), Bluetooth device battery, a VPN tile, settings search. Declined as off-theme

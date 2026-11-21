@@ -278,6 +278,27 @@ impl WidgetSettings {
     }
 }
 
+/// The pet on the screen.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PetSettings {
+    /// cat, fox, bird, or none.
+    pub animal: String,
+    /// Its coat (`pet::draw::coats`): empty is the animal's own first one.
+    pub coat: String,
+    /// It speaks now and then (meows, purrs, chirps), and how loud, in percent.
+    pub sounds: bool,
+    pub volume: u32,
+    /// How big, in percent (70 to 140).
+    pub size: u32,
+}
+
+impl Default for PetSettings {
+    fn default() -> Self {
+        Self { animal: "none".into(), coat: String::new(), sounds: true, volume: 40, size: 100 }
+    }
+}
+
 /// When the screen locks by itself.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -430,6 +451,7 @@ pub struct Config {
     pub lock: LockSettings,
     pub widgets: WidgetSettings,
     pub wallpaper: WallpaperSettings,
+    pub pet: PetSettings,
 }
 
 impl Default for Config {
@@ -471,6 +493,7 @@ impl Default for Config {
             lock: LockSettings::default(),
             widgets: WidgetSettings::default(),
             wallpaper: WallpaperSettings::default(),
+            pet: PetSettings::default(),
         }
     }
 }

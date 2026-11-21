@@ -21,6 +21,8 @@ pub(super) struct Backdrop {
     pub job: Option<Job>,
     /// A change under way.
     pub change: Option<Change>,
+    /// A picture was just sent: its buffers go once the compositor has drawn it.
+    pub release: Option<Instant>,
 }
 
 /// Everything a wallpaper is painted from.
@@ -48,8 +50,6 @@ pub(super) struct Change {
     kind: crate::transition::Kind,
     started: Instant,
     length: Duration,
-    /// Its frames' buffers: a pool of its own, so the memory goes when the change is over.
-    pool: Option<SlotPool>,
     frames: u32,
 }
 
@@ -78,7 +78,7 @@ impl App {
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.set_size(0, 0);
         layer.commit();
-        self.backdrops.push(Backdrop { surf, layer, output, shown: None, painting: None, job: None, change: None });
+        self.backdrops.push(Backdrop { surf, layer, output, shown: None, painting: None, job: None, change: None, release: None });
     }
 
     /// Wallpapers follow the config: on, off, or painted again with new settings.
@@ -162,10 +162,9 @@ impl App {
         match before {
             Some((old, kind, map)) if old.width() == picture.width() && old.height() == picture.height() => {
                 log::debug!("wallpaper changes by {}", kind.name());
-                let bytes = old.data().len();
                 surf.last = Some(LastFrame { canvas: old.clone(), entries: Vec::new(), stars: Vec::new() });
                 let length = Duration::from_millis(self.config.wallpaper.transition_ms.clamp(200, 5000) as u64);
-                backdrop.change = Some(Change { old, new: picture, map, kind, started: Instant::now(), length, pool: SlotPool::new(bytes * 2, &self.shm).ok(), frames: 0 });
+                backdrop.change = Some(Change { old, new: picture, map, kind, started: Instant::now(), length, frames: 0 });
                 // The frames come from `step_changes`, in `flush`
             }
             _ => {
@@ -178,20 +177,40 @@ impl App {
     /// A picture on the wallpaper for good: sent once, then let go of (the compositor keeps its
     /// own copy).
     fn show_backdrop(&mut self, index: usize, picture: Pixmap) {
-        let surf = &mut self.backdrops[index].surf;
+        let backdrop = &mut self.backdrops[index];
+        let surf = &mut backdrop.surf;
         let full = (0, 0, picture.width() as i32, picture.height() as i32);
-        // Buffers from a change's own pool go with it
         surf.buffers.clear();
         surf.last = Some(LastFrame { canvas: picture, entries: Vec::new(), stars: Vec::new() });
         present(surf, full, &mut self.pool, &self.qh);
+        // The picture isn't needed here any more; its buffer (and the surface's own pool) only
+        // until the compositor has drawn it (`release_backdrops`)
         surf.last = None;
-        surf.buffers.clear();
+        backdrop.release = Some(Instant::now());
         crate::images::give_back_memory();
         if let Some(wl) = &surf.wl {
             // The whole wallpaper takes the pointer: a right click on it opens the desktop's
             // menu (`desk::backdrop_pointer`); nothing else is done with clicks there
             wl.set_input_region(None);
             wl.commit();
+        }
+    }
+
+    /// Lets go of a shown wallpaper's buffer and pool once the compositor has drawn it (its frame
+    /// came), or after a few seconds if it never shows (a screen covered by windows).
+    pub(super) fn release_backdrops(&mut self) {
+        let mut freed = false;
+        for backdrop in &mut self.backdrops {
+            let Some(sent) = backdrop.release else { continue };
+            if backdrop.change.is_none() && (!backdrop.surf.frame_pending || sent.elapsed() > Duration::from_secs(5)) {
+                backdrop.surf.buffers.clear();
+                backdrop.surf.own_pool = None;
+                backdrop.release = None;
+                freed = true;
+            }
+        }
+        if freed {
+            crate::images::give_back_memory();
         }
     }
 
@@ -217,8 +236,7 @@ impl App {
             let Some(last) = surf.last.as_mut() else { continue };
             let (w, h) = (last.canvas.width(), last.canvas.height());
             crate::transition::compose(last.canvas.data_mut(), change.old.data(), change.new.data(), &change.map, change.kind, crate::transition::ease(t), w, h);
-            let pool = change.pool.as_mut().unwrap_or(&mut self.pool);
-            present(surf, (0, 0, w as i32, h as i32), pool, &self.qh);
+            present(surf, (0, 0, w as i32, h as i32), &mut self.pool, &self.qh);
             change.frames += 1;
         }
     }

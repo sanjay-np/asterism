@@ -90,6 +90,7 @@ mod desk;
 mod idle;
 mod night;
 mod overview;
+mod pet;
 mod shell;
 mod timer;
 mod wallpaper;
@@ -162,6 +163,9 @@ pub struct Surf {
     /// Buffers sent before, each with what changed since it was last written: once the
     /// compositor lets go of one, it only needs that part brought up to date.
     buffers: Vec<(smithay_client_toolkit::shm::slot::Buffer, Option<Damage>)>,
+    /// A big surface's own buffer pool (see `BIG_BUFFER`), and what makes one.
+    own_pool: Option<SlotPool>,
+    shm: Option<wl_shm::WlShm>,
 }
 
 /// What each piece looked like and where, last time.
@@ -235,6 +239,8 @@ impl Surf {
             visible: None,
             last: None,
             buffers: Vec::new(),
+            own_pool: None,
+            shm: None,
         }
     }
 
@@ -376,6 +382,9 @@ pub struct App {
     seat: Option<wl_seat::WlSeat>,
     pointer: Option<wl_pointer::WlPointer>,
     cursor: Option<WpCursorShapeDeviceV1>,
+    /// The pointer's own motion, for drags (a widget, the pet): the manager, and ours.
+    relative_manager: smithay_client_toolkit::seat::relative_pointer::RelativePointerState,
+    relative: Option<smithay_client_toolkit::reexports::protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1::ZwpRelativePointerV1>,
     cursor_shape: Option<Shape>,
     enter_serial: u32,
     scroll: f64,
@@ -422,6 +431,15 @@ pub struct App {
     song_generation: u64,
     /// When the shell started: songs already playing then aren't news.
     started: Instant,
+    /// The pet, its timer running, whether you've been away a minute (and the watch that
+    /// says so), and where the pointer was last seen on its output.
+    pet: Option<pet::PetSurface>,
+    pet_timer: bool,
+    pet_idle: bool,
+    pet_idle_watch: Option<smithay_client_toolkit::reexports::protocols::ext::idle_notify::v1::client::ext_idle_notification_v1::ExtIdleNotificationV1>,
+    pet_pointer: Option<((f32, f32), Instant)>,
+    /// The pet's bowl and ball, while they're out.
+    props: Vec<pet::Prop>,
     /// The clipboard: the compositor's data-control, our device on the seat, the selection we
     /// offer (when one was chosen from the history), the picker, and where reads come back.
     clip_manager: Option<smithay_client_toolkit::reexports::protocols::ext::data_control::v1::client::ext_data_control_manager_v1::ExtDataControlManagerV1>,
@@ -510,8 +528,14 @@ impl App {
         if let Some(edge) = self.edges.iter_mut().find(|e| e.surf.is(wl)) {
             return Some(&mut edge.surf);
         }
-        if let Some(desk) = self.desks.iter_mut().find(|d| d.surf.is(wl)) {
-            return Some(&mut desk.surf);
+        if let Some(surf) = self.desks.iter_mut().find_map(|d| d.surf_mut(wl)) {
+            return Some(surf);
+        }
+        if let Some(pet) = self.pet.as_mut().filter(|p| p.surf.is(wl)) {
+            return Some(&mut pet.surf);
+        }
+        if let Some(prop) = self.props.iter_mut().find(|p| p.surf.is(wl)) {
+            return Some(&mut prop.surf);
         }
         self.bars.iter_mut().find(|b| b.surf.is(wl)).map(|b| &mut b.surf)
     }
@@ -546,6 +570,8 @@ impl App {
             visible: None,
             last: None,
             buffers: Vec::new(),
+            own_pool: None,
+            shm: Some(self.shm.wl_shm().clone()),
         }
     }
 
@@ -605,7 +631,7 @@ impl App {
                 // Thirty a second: only the desktop shows them, the bar needn't hear of it
                 self.model.spectrum = levels;
                 for desk in &mut self.desks {
-                    desk.surf.dirty = true;
+                    desk.dirty = true;
                 }
                 if let Some(index) = self.panel_index(PanelKind::Song) {
                     self.panels[index].surf.dirty = true;
@@ -620,6 +646,20 @@ impl App {
         let icons = matches!(update, Update::AppIcon(..));
         let thumbnails = matches!(update, Update::Thumbnail(..));
         let media = matches!(update, Update::Media(_));
+        // With the picker closed, a thumbnail is the photo frame's: only the newest is kept
+        if let Update::Thumbnail(path, _) = &update
+            && self.picker.is_none()
+        {
+            let path = path.clone();
+            self.model.thumbnails.retain(|p, _| *p == path);
+            self.requested.retain(|key| !key.starts_with("thumb:") || key.strip_prefix("thumb:").is_some_and(|k| std::path::Path::new(k) == path));
+        }
+        // What the desktop's widgets show: other news leaves them be
+        let widgets = match &update {
+            Update::Machine(_) => self.config.widgets.show.iter().any(|k| k == "system"),
+            Update::Media(_) | Update::Weather(_) | Update::Art(..) | Update::Lyrics(..) | Update::Photos(..) | Update::Thumbnail(..) => true,
+            _ => false,
+        };
         self.model.apply(update);
         if media {
             self.notice_song();
@@ -652,8 +692,10 @@ impl App {
         if let Some(index) = self.panel_index(PanelKind::Dashboard) {
             self.panels[index].surf.dirty = true;
         }
-        for desk in &mut self.desks {
-            desk.surf.dirty = true;
+        if widgets {
+            for desk in &mut self.desks {
+                desk.dirty = true;
+            }
         }
     }
 
@@ -694,12 +736,17 @@ impl App {
         // The desktop's clock, and the song's progress and words, move on
         let playing = self.model.media.player().is_some_and(|p| p.playing);
         for desk in &mut self.desks {
-            if playing || desk.surf.pieces.is_empty() {
-                desk.surf.dirty = true;
+            if playing || desk.parts.is_empty() {
+                desk.dirty = true;
             }
         }
         self.watch_clipboard();
         self.watch_spectrum();
+        // The pet, when it's wanted and not up yet (or its idle watch couldn't be made before
+        // the seat was known)
+        if crate::pet::Species::from_name(&self.config.pet.animal).is_some() && (self.pet.is_none() || self.pet_idle_watch.is_none()) {
+            self.sync_pet();
+        }
         let now = chrono::Local::now();
         let minute = now.format(if self.config.clock.seconds { "%H:%M:%S" } else { "%H:%M" }).to_string();
         if minute != self.last_minute {
@@ -708,7 +755,7 @@ impl App {
                 bar.surf.dirty = true;
             }
             for desk in &mut self.desks {
-                desk.surf.dirty = true;
+                desk.dirty = true;
             }
             if let Some(index) = self.panel_index(PanelKind::Control) {
                 self.panels[index].surf.dirty = true;
@@ -734,7 +781,8 @@ impl App {
         self.send_settings();
         self.theme = Theme::new(&self.config);
         self.tools = tools_for(&self.config, self.idle_inhibit.is_some());
-        self.painter = Painter::new(&self.config.font, &self.config.icons);
+        // The same fonts, scanned once: only the family and the icons may change
+        self.painter.configure(&self.config.font, &self.config.icons);
         let outputs: Vec<_> = self.outputs.outputs().collect();
         // Bars on outputs no longer wanted go, new ones come
         let keep: Vec<bool> = self.bars.iter().map(|b| self.wanted(&b.output_name)).collect();
@@ -762,6 +810,7 @@ impl App {
         }
         self.close_menu();
         self.send_app_colors();
+        self.sync_pet();
     }
 
     // ---------------------------------------------------------------- menus
@@ -967,10 +1016,14 @@ impl App {
             Action::EditWidgets(on) => self.edit_widgets(on),
             Action::WidgetAdd(kind) => self.show_widget(&kind, true),
             Action::WidgetRemove(kind) => self.show_widget(&kind, false),
+            Action::PetNext => self.pet_action(true),
+            Action::PetAway => self.pet_action(false),
+            Action::PetFeed => self.pet_feed(),
+            Action::PetPlay => self.pet_play(),
             Action::NextPhoto => {
                 self.photo_step += 1;
                 for desk in &mut self.desks {
-                    desk.surf.dirty = true;
+                    desk.dirty = true;
                 }
             }
             Action::EditNote => {
@@ -1255,11 +1308,11 @@ impl App {
             self.draw_popup();
         }
         self.step_changes();
+        self.release_backdrops();
         self.paint_backdrops();
         self.paint_edges();
         for index in 0..self.desks.len() {
-            let surf = &self.desks[index].surf;
-            if surf.dirty && surf.configured && !surf.frame_pending {
+            if self.desk_due(index) {
                 self.draw_desk(index);
             }
         }
@@ -1368,7 +1421,27 @@ impl App {
     }
 
     fn pointer_event(&mut self, event: &PointerEvent) {
-        if let Some(index) = self.desks.iter().position(|d| d.surf.is(&event.surface)) {
+        if self.pet.as_ref().is_some_and(|p| p.surf.is(&event.surface)) {
+            return self.pet_pointer_event(event);
+        }
+        if let Some(index) = self.props.iter().position(|p| p.surf.is(&event.surface)) {
+            return self.prop_pointer_event(index, event);
+        }
+        // Where the pointer is, for the pet: on the desktop, its widgets or the bar
+        if matches!(event.kind, PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. }) {
+            let (x, y) = (event.position.0 as f32, event.position.1 as f32);
+            let seen = if let Some(desk) = self.desks.iter().find(|d| d.has(&event.surface)) {
+                desk.to_output(&event.surface, x, y).map(|(_, y)| (desk.output.clone(), y))
+            } else if let Some(backdrop) = self.backdrops.iter().find(|b| b.surf.is(&event.surface)) {
+                Some((backdrop.output.clone(), y))
+            } else {
+                self.bars.iter().find(|b| b.surf.is(&event.surface)).map(|b| (b.output.clone(), if self.theme.on_top { y } else { b.output_height - b.surf.h + y }))
+            };
+            if let Some((output, y)) = seen {
+                self.saw_pointer(&output, x, y);
+            }
+        }
+        if let Some(index) = self.desks.iter().position(|d| d.has(&event.surface)) {
             return self.desk_pointer(index, event);
         }
         if let Some(index) = self.backdrops.iter().position(|b| b.surf.is(&event.surface)) {
@@ -1923,9 +1996,34 @@ fn to_bgra(dst: &mut [u8], src: &[u8]) {
     }
 }
 
+/// A buffer this big or bigger comes from its surface's own pool, not the shared one: the shared
+/// pool never shrinks, so one full-screen panel opened once would keep tens of megabytes for good.
+const BIG_BUFFER: usize = 1 << 20;
+
 /// Hands a finished canvas to the compositor. The previous buffer is used again when the
-/// compositor is done with it: only what changed is copied in.
-fn present(surf: &mut Surf, damage: Damage, pool: &mut SlotPool, qh: &QueueHandle<App>) {
+/// compositor is done with it: only what changed is copied in. Big surfaces draw from a pool of
+/// their own (two buffers at most), which goes when they do.
+fn present(surf: &mut Surf, damage: Damage, shared: &mut SlotPool, qh: &QueueHandle<App>) {
+    let Some(canvas) = surf.last.as_ref().map(|l| &l.canvas) else { return };
+    let bytes = canvas.width() as usize * canvas.height() as usize * 4;
+    if bytes < BIG_BUFFER {
+        surf.own_pool = None;
+        return present_from(surf, damage, shared, qh, 3);
+    }
+    let own = surf.own_pool.take().or_else(|| {
+        let wl_shm = surf.shm.clone()?;
+        SlotPool::new(bytes * 2, &smithay_client_toolkit::shm::Shm::from(wl_shm)).ok()
+    });
+    match own {
+        Some(mut pool) => {
+            present_from(surf, damage, &mut pool, qh, 2);
+            surf.own_pool = Some(pool);
+        }
+        None => present_from(surf, damage, shared, qh, 3),
+    }
+}
+
+fn present_from(surf: &mut Surf, damage: Damage, pool: &mut SlotPool, qh: &QueueHandle<App>, keep: usize) {
     let Some(wl) = surf.wl.clone() else { return };
     let Some(canvas) = surf.last.as_ref().map(|l| &l.canvas) else { return };
     let (w, h) = (canvas.width() as i32, canvas.height() as i32);
@@ -1957,7 +2055,7 @@ fn present(surf: &mut Surf, damage: Damage, pool: &mut SlotPool, qh: &QueueHandl
                 return;
             };
             to_bgra(bytes, canvas.data());
-            if surf.buffers.len() >= 3 {
+            if surf.buffers.len() >= keep {
                 surf.buffers.remove(0);
             }
             surf.buffers.push((buffer, None));
@@ -2039,6 +2137,11 @@ impl OutputHandler for App {
         self.edges.retain(|e| e.output != output);
         self.gammas.retain(|g| g.output != output);
         self.desks.retain(|d| d.output != output);
+        // Gone with its screen; it comes back on another at the next tick
+        if self.pet.as_ref().is_some_and(|p| p.output == output) {
+            self.pet = None;
+            self.props.clear();
+        }
         if let Some(index) = self.bars.iter().position(|b| b.output == output) {
             let id = self.bars[index].surf.id;
             if self.popup.as_ref().is_some_and(|p| p.parent == id) {
@@ -2052,10 +2155,19 @@ impl OutputHandler for App {
 
 impl LayerShellHandler for App {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
+        if self.pet.as_ref().is_some_and(|p| &p.layer == layer) {
+            self.pet = None;
+        }
+        self.props.retain(|p| &p.layer != layer);
         self.panels.retain(|p| !p.is_layer(layer));
         self.backdrops.retain(|b| &b.layer != layer);
         self.edges.retain(|e| &e.layer != layer);
-        self.desks.retain(|d| &d.layer != layer);
+        for desk in &mut self.desks {
+            desk.parts.retain(|p| &p.layer != layer);
+            if desk.dim.as_ref().is_some_and(|d| &d.layer == layer) {
+                desk.dim = None;
+            }
+        }
         self.bars.retain(|b| &b.layer != layer);
         self.keep_awake_somewhere();
     }
@@ -2071,14 +2183,29 @@ impl LayerShellHandler for App {
             }
             return;
         }
-        if let Some(desk) = self.desks.iter_mut().find(|d| &d.layer == layer) {
+        if let Some(pet) = self.pet.as_mut().filter(|p| &p.layer == layer) {
+            let surf = &mut pet.surf;
+            surf.w = crate::pet::W;
+            surf.h = crate::pet::H;
+            surf.configured = true;
+            surf.dirty = true;
+            surf.frame_pending = false;
+            return self.pet_configured();
+        }
+        if let Some(index) = self.props.iter().position(|p| &p.layer == layer) {
+            return self.prop_configured(index);
+        }
+        for desk in &mut self.desks {
+            let Some(part) = desk.part_mut(layer) else { continue };
             let (w, h) = configure.new_size;
             if w > 0 && h > 0 {
-                desk.surf.w = w as f32;
-                desk.surf.h = h as f32;
-                desk.surf.configured = true;
-                desk.surf.dirty = true;
-                desk.surf.last = None;
+                part.surf.w = w as f32;
+                part.surf.h = h as f32;
+                part.surf.configured = true;
+                part.surf.frame_pending = false;
+                part.surf.last = None;
+                part.surf.buffers.clear();
+                desk.dirty = true;
             }
             return;
         }
@@ -2181,6 +2308,8 @@ impl SeatHandler for App {
             match self.seat_state.get_pointer(qh, &seat) {
                 Ok(pointer) => {
                     self.cursor = self.cursor_shapes.as_ref().map(|m| m.get_shape_device(&pointer, qh));
+                    // Without it (an older compositor), drags fall back to positions on surfaces
+                    self.relative = self.relative_manager.get_relative_pointer(&pointer, qh).ok();
                     self.pointer = Some(pointer);
                 }
                 Err(error) => log::warn!("no pointer: {error}"),
@@ -2246,6 +2375,20 @@ impl PointerHandler for App {
         for event in events {
             self.pointer_event(event);
         }
+    }
+}
+
+/// The pointer's motion as such, apart from any surface: what drags follow.
+impl smithay_client_toolkit::seat::relative_pointer::RelativePointerHandler for App {
+    fn relative_pointer_motion(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &smithay_client_toolkit::reexports::protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1::ZwpRelativePointerV1,
+        _: &wl_pointer::WlPointer,
+        event: smithay_client_toolkit::seat::relative_pointer::RelativeMotionEvent,
+    ) {
+        self.relative_motion(event.delta.0 as f32, event.delta.1 as f32);
     }
 }
 
@@ -2339,6 +2482,8 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         seat: None,
         pointer: None,
         cursor: None,
+        relative_manager: smithay_client_toolkit::seat::relative_pointer::RelativePointerState::bind(&globals, &qh),
+        relative: None,
         cursor_shape: None,
         enter_serial: 0,
         scroll: 0.0,
@@ -2369,6 +2514,12 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         last_track: None,
         song_generation: 0,
         started: Instant::now(),
+        pet: None,
+        pet_timer: false,
+        pet_idle: false,
+        pet_idle_watch: None,
+        pet_pointer: None,
+        props: Vec::new(),
         clip_manager: clipboard::bind_clipboard(&globals, &qh),
         clip_device: None,
         clip_source: None,

@@ -144,6 +144,21 @@ widgets = "tinted"
 # kitty reads it again at once; Alacritty follows the file; foot and GTK apps at their next start.
 apps = []                 # any of kitty, foot, alacritty, gtk
 
+[pet]
+# A companion living on the screen above your windows (clicks pass through all but it): a "cat"
+# or a "fox" along the foot of the screen, a "bird" flying about and perching on the bar; or
+# "none". It has energy, hunger and wants attention: it naps, asks to be fed, comes to find you.
+# It sleeps after a minute without input (and stretches and yawns when you're back), gets the
+# zoomies when the machine is busy, sways to music, perks up at notifications, and stalks and
+# pounces on the pointer over the desktop and the bar. Click it to stroke it (it purrs); drag
+# it to pick it up; right-click for food, a ball, another animal, or to put it away.
+animal = "none"
+coat = ""                 # cat: tabby, ginger, black, white, tuxedo, siamese; fox: red, arctic;
+                          # bird: sparrow, robin, bluebird; any: wallpaper. Empty: the first.
+sounds = true             # it meows (yips, chirps) now and then and purrs; never in do-not-disturb
+volume = 40               # percent
+size = 100                # percent, 70 to 140
+
 [lock]
 idle = 10                 # minutes without input before the screen locks; 0 never
 before_sleep = true       # lock before the machine sleeps (closing the lid too)

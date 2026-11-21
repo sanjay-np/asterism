@@ -109,8 +109,7 @@ impl App {
         }
         // The widgets too: their colours aren't in what decides when they're drawn again
         for desk in &mut self.desks {
-            desk.surf.dirty = true;
-            desk.surf.last = None;
+            desk.repaint();
         }
         if let Some(popup) = self.popup.as_mut() {
             popup.surf.dirty = true;

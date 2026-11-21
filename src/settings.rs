@@ -135,6 +135,23 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
                 };
                 list.push(in_list(&["widgets", "show"], &c.widgets.show, kind, crate::widgets::name(kind), about));
             }
+            list.push(row(&["pet", "animal"], "Pet", "A companion roaming the screen above your windows", choice(&[("None", "none"), ("Cat", "cat"), ("Fox", "fox"), ("Bird", "bird")], &c.pet.animal)));
+            if let Some(species) = crate::pet::Species::from_name(&c.pet.animal) {
+                // Its coats, by the names the animal has
+                let names = crate::pet::draw::coats(species);
+                let options: Vec<(String, Value)> = names.iter().map(|n| {
+                    let mut label = n.to_string();
+                    if let Some(first) = label.get_mut(0..1) {
+                        first.make_ascii_uppercase();
+                    }
+                    (label, Value::Str(n.to_string()))
+                }).collect();
+                let current = names.iter().position(|n| n.eq_ignore_ascii_case(c.pet.coat.trim())).unwrap_or(0);
+                list.push(Row { keys: vec!["pet".into(), "coat".into()], label: "Coat".into(), about: "Its own colours, or the wallpaper's".into(), control: Control::Choice(options, Some(current)) });
+                list.push(row(&["pet", "sounds"], "Sounds", "It meows (or yips, or chirps) now and then; purrs when petted", Control::Switch(c.pet.sounds)));
+                list.push(row(&["pet", "volume"], "Its volume", "", Control::Stepper { value: c.pet.volume as i64, min: 10, max: 100, step: 10, unit: "%" }));
+                list.push(row(&["pet", "size"], "Its size", "", Control::Stepper { value: c.pet.size as i64, min: 70, max: 140, step: 10, unit: "%" }));
+            }
             list.push(row(&["widgets", "lyrics"], "Song words", "Under what's playing, line by line (asks LRCLIB with the song's name)", Control::Switch(c.widgets.lyrics)));
             list.push(row(&["widgets", "photos"], "Photo folder", "Empty takes ~/Pictures", Control::Text(c.widgets.photos.clone())));
             list.push(row(&["widgets", "photo_minutes"], "Each picture stays", "", Control::Stepper { value: c.widgets.photo_minutes as i64, min: 1, max: 120, step: 1, unit: "min" }));

@@ -701,9 +701,18 @@ pub fn desktop(ctx: &mut Ctx<'_>, widget: Option<&str>) -> Built {
         match kind {
             "note" => col.row("desk.note", Some("lyrics"), "Write the note", "", Mark::None, true, then(Action::EditNote)),
             "photos" => col.row("desk.photo", Some("skip-forward"), "Next picture", "", Mark::None, true, then(Action::NextPhoto)),
+            "pet" => {
+                col.row("desk.pet.feed", Some("coffee"), "Feed it", "", Mark::None, true, then(Action::PetFeed));
+                col.row("desk.pet.play", Some("play"), "Play with a ball", "", Mark::None, true, then(Action::PetPlay));
+                col.row("desk.pet.next", Some("refresh"), "Another animal", "", Mark::None, true, then(Action::PetNext));
+            }
             _ => {}
         }
-        col.row("desk.remove", Some("close"), "Take it off the desktop", "", Mark::None, true, then(Action::WidgetRemove(kind.to_string())));
+        if kind == "pet" {
+            col.row("desk.pet.away", Some("close"), "Put it away", "", Mark::None, true, then(Action::PetAway));
+        } else {
+            col.row("desk.remove", Some("close"), "Take it off the desktop", "", Mark::None, true, then(Action::WidgetRemove(kind.to_string())));
+        }
         col.separator();
         col.gap(4.0);
     }

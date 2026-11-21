@@ -190,6 +190,14 @@ impl App {
         if kind == PanelKind::Overview {
             self.overview = None;
         }
+        if kind == PanelKind::Launcher {
+            // Every app's icon was loaded for the grid: only those with windows open stay (the
+            // overview and the bar's labels use them); the rest come back with the launcher
+            let open: HashSet<String> = self.model.compositor.workspaces.iter().flat_map(|w| &w.windows).map(|w| w.app_id.clone()).collect();
+            self.model.app_icons.retain(|app, _| open.contains(app));
+            self.requested.retain(|key| key.strip_prefix("icon:").is_none_or(|app| open.contains(app)));
+            crate::images::give_back_memory();
+        }
         if kind == PanelKind::DeskMenu {
             self.desk_menu = None;
         }
@@ -657,7 +665,7 @@ impl App {
             self.settings_key(event);
             return;
         }
-        if self.desk_edit && self.desks.iter().any(|d| on(&d.surf)) {
+        if self.desk_edit && self.desks.iter().any(|d| d.surfs().any(on)) {
             self.desk_key(event);
             return;
         }
@@ -735,6 +743,9 @@ impl App {
     /// A notification arrived (or was replaced): it pops up, unless it's quiet time.
     pub(super) fn toast(&mut self, id: u32) {
         let Some(n) = self.model.notifications.list.iter().find(|n| n.id == id) else { return };
+        if let Some(shown) = self.pet.as_mut() {
+            shown.pet.notice();
+        }
         if self.model.notifications.quiet && n.urgency < 2 {
             return;
         }
@@ -962,6 +973,12 @@ impl App {
             Request::Settings(open) => self.toggle_settings(open),
             Request::Overview(open) => self.toggle_overview(open),
             Request::Widgets(on) => self.edit_widgets(on),
+            Request::Pet(what) => match what.as_str() {
+                "feed" => self.pet_feed(),
+                "play" => self.pet_play(),
+                "next" => self.pet_action(true),
+                _ => self.pet_action(false),
+            },
             Request::Record { audio } => self.send(if self.model.recording.is_some() { Command::RecordStop } else { Command::RecordStart { audio } }),
             Request::Control(open) => self.toggle_control(open),
             Request::Menu(name) => self.menu_from_keys(&name),
@@ -1289,6 +1306,25 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
                 piece.y += m;
             }
             (Surf::offscreen(built.w + m * 2.0, built.h + m * 2.0, scale), pieces, None)
+        }
+        "pet" => {
+            // Every pose in a row, on the wallpaper's colours
+            // "cat" or "cat:ginger"; drawn in a grid, a few to a row
+            let (animal, coat) = query.split_once(':').unwrap_or((query, ""));
+            let species = crate::pet::Species::from_name(animal).unwrap_or(crate::pet::Species::Cat);
+            let coat = crate::pet::draw::coat(species, coat, theme);
+            let poses = crate::pet::Pet::poses(species);
+            let (cell_w, cell_h, across) = (130.0, 110.0, 4);
+            let mut pieces = Vec::new();
+            for (i, pet) in poses.iter().enumerate() {
+                let mut piece = pet.draw(theme, &coat, 1.0, 0.0);
+                piece.key = format!("pet.{i}");
+                piece.x = (i % across) as f32 * cell_w - (crate::pet::W - cell_w) / 2.0;
+                piece.y = (i / across) as f32 * cell_h - (crate::pet::H - cell_h) + 4.0;
+                pieces.push(piece);
+            }
+            let rows = poses.len().div_ceil(across);
+            (Surf::offscreen(cell_w * across as f32, cell_h * rows as f32, scale), pieces, Some(theme.surface))
         }
         "song" => {
             let player = model.media.player()?.clone();

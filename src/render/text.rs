@@ -77,6 +77,14 @@ impl Text {
         Self { fonts, swash: SwashCache::new(), family: family.to_string(), layouts: HashMap::new(), frame: 0 }
     }
 
+    /// Text in another family from now on; layouts made in the old one go.
+    pub fn set_family(&mut self, family: &str) {
+        if self.family != family {
+            self.family = family.to_string();
+            self.layouts.clear();
+        }
+    }
+
     /// Forgets layouts nobody asked for in a while.
     pub fn tidy(&mut self) {
         self.frame += 1;

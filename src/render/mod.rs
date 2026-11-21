@@ -270,6 +270,18 @@ impl Painter {
         }
     }
 
+    /// The config changed: another font or icon pack, maybe new colours. The font system (every
+    /// system font scanned, the costly part) is kept; what was drawn or laid out is let go.
+    pub fn configure(&mut self, font: &str, pack: &str) {
+        self.text.set_family(font);
+        if self.pack != pack {
+            self.pack = pack.to_string();
+            self.icons.clear();
+        }
+        self.pieces.clear();
+        self.glowing.clear();
+    }
+
     /// Forgets pieces a surface no longer shows.
     /// A surface went away: nothing drawn for it is wanted any more, nor pictures sized for it.
     pub fn forget_surface(&mut self, surface: u32) {
@@ -417,6 +429,18 @@ impl Painter {
                     let sweep = value.clamp(0.02, 1.0) * std::f32::consts::TAU;
                     if let Some(path) = arc(*cx, *cy, *r, -std::f32::consts::FRAC_PI_2, sweep) {
                         pixmap.stroke_path(&path, &solid(*color), &stroke, t, None);
+                    }
+                }
+                Prim::Shape { points, color } => {
+                    let mut path = PathBuilder::new();
+                    for (i, (x, y)) in points.iter().enumerate() {
+                        if i == 0 { path.move_to(*x, *y) } else { path.line_to(*x, *y) }
+                    }
+                    path.close();
+                    if points.len() > 2
+                        && let Some(path) = path.finish()
+                    {
+                        pixmap.fill_path(&path, &solid(*color), FillRule::Winding, t, None);
                     }
                 }
                 Prim::Area { points, base, color } => {

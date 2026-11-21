@@ -548,6 +548,21 @@ impl App {
         }
         let Some(settings) = self.settings.as_mut() else { return };
         match (&mut settings.editing, event.keysym) {
+            // Typing, not into a value: the search
+            (None, Keysym::BackSpace) if !settings.query.is_empty() => {
+                settings.query.pop();
+                settings.scroll = 0.0;
+            }
+            (None, Keysym::Escape) if !settings.query.is_empty() => {
+                settings.query.clear();
+                settings.scroll = 0.0;
+            }
+            (None, _) if event.utf8.as_ref().is_some_and(|t| !t.is_empty() && !t.chars().any(char::is_control)) && !self.modifiers.ctrl && !self.modifiers.alt => {
+                if let Some(typed) = &event.utf8 {
+                    settings.query.push_str(typed);
+                }
+                settings.scroll = 0.0;
+            }
             (None, Keysym::Up) => {
                 settings.page = settings.page.saturating_sub(1);
                 settings.scroll = 0.0;
@@ -743,7 +758,7 @@ impl App {
     /// A notification arrived (or was replaced): it pops up, unless it's quiet time.
     pub(super) fn toast(&mut self, id: u32) {
         let Some(n) = self.model.notifications.list.iter().find(|n| n.id == id) else { return };
-        if let Some(shown) = self.pet.as_mut() {
+        for shown in &mut self.pets {
             shown.pet.notice();
         }
         if self.model.notifications.quiet && n.urgency < 2 {
@@ -912,6 +927,16 @@ impl App {
 
     /// The model is about to change: changes made outside the shell show the level.
     pub(super) fn notice(&mut self, update: &Update) {
+        // A Bluetooth device running low: said once, until it's been charged again
+        if let Update::Bluetooth(bluetooth) = update {
+            for device in bluetooth.devices.iter().filter(|d| d.connected && d.battery >= 0) {
+                if device.battery <= 15 && self.bt_warned.insert(device.path.clone()) {
+                    self.send(Command::Notify(crate::model::Note { summary: format!("{} is running low", device.name), body: format!("{}% left", device.battery), icon: "bluetooth".into(), ..Default::default() }));
+                } else if device.battery > 25 {
+                    self.bt_warned.remove(&device.path);
+                }
+            }
+        }
         let menu = self.popup.as_ref().map(|p| p.kind.clone());
         match update {
             Update::Audio(audio) => {
@@ -968,6 +993,7 @@ impl App {
             Request::Shortcuts(open) => self.toggle_shortcuts(open),
             Request::Clipboard(open) => self.toggle_clipboard(open),
             Request::Screenshot(kind) => self.send(Command::Screenshot(kind)),
+            Request::ScreenText => self.send(Command::ScreenText),
             Request::Lock => self.start_lock(),
             Request::Dashboard(open) => self.toggle_dashboard(open),
             Request::Settings(open) => self.toggle_settings(open),
@@ -976,8 +1002,13 @@ impl App {
             Request::Pet(what) => match what.as_str() {
                 "feed" => self.pet_feed(),
                 "play" => self.pet_play(),
-                "next" => self.pet_action(true),
-                _ => self.pet_action(false),
+                "yarn" => self.pet_yarn(),
+                "bed" => self.pet_bed(true),
+                "nobed" => self.pet_bed(false),
+                "next" => self.pet_action(0, true),
+                "away" => self.pet_action(0, false),
+                "friend next" => self.pet_action(1, true),
+                _ => self.pet_action(1, false),
             },
             Request::Record { audio } => self.send(if self.model.recording.is_some() { Command::RecordStop } else { Command::RecordStart { audio } }),
             Request::Control(open) => self.toggle_control(open),
@@ -1225,6 +1256,9 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
         "settings" => {
             let mut settings = crate::settings::Settings::new();
             settings.page = query.parse().unwrap_or(0);
+            if let Some(words) = query.strip_prefix("search:") {
+                settings.query = words.to_string();
+            }
             let pieces = settings.build(config, model, theme, &mut painter.text, w, h);
             (Surf::offscreen(w, h, scale), pieces, Some(theme.surface))
         }
@@ -1292,6 +1326,16 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
                 piece.y += m;
             }
             (Surf::offscreen(built.w + m * 2.0, built.h + m * 2.0, scale), pieces, None)
+        }
+        "peek" => {
+            // The workspace with the most windows (or the one named by number)
+            let ws = model.compositor.workspaces.iter().filter(|w| query.parse::<i64>().map_or(true, |n| w.idx == n)).max_by_key(|w| w.windows.len())?;
+            let (cw, ch, mut pieces) = cards::peek(theme, &mut painter.text, ws, &model.app_icons);
+            for piece in &mut pieces {
+                piece.x += m;
+                piece.y += m;
+            }
+            (Surf::offscreen(cw + m * 2.0, ch + m * 2.0, scale), pieces, None)
         }
         "deskmenu" => {
             let state = popups::State::default();

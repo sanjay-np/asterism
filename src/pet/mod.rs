@@ -130,8 +130,21 @@ pub struct World {
     pub beat: Option<f32>,
     /// A bowl of food on the floor, at this x.
     pub bowl: Option<f32>,
-    /// A ball on the floor: where, and how fast it's rolling.
+    /// A toy on the floor (a ball, yarn): where, and how fast it's rolling.
     pub ball: Option<(f32, f32)>,
+    /// Its bed, at this x on the floor: where it goes to nap.
+    pub bed: Option<f32>,
+    /// The other pets on the screen.
+    pub friends: Vec<Friend>,
+}
+
+/// Another pet, as this one sees it.
+#[derive(Clone, Copy, Debug)]
+pub struct Friend {
+    pub x: f32,
+    pub act: Act,
+    pub facing: f32,
+    pub species: Species,
 }
 
 pub struct Pet {
@@ -176,6 +189,11 @@ pub struct Pet {
     waking: bool,
     /// You're away (nobody's watching it closely).
     away: bool,
+    /// What it does when it gets where it's walking (lie down by a friend, nap on its bed).
+    after: Option<(Act, f32)>,
+    /// The clock its picture moves by: stepped while it's calm, so the same few pictures come
+    /// round again and an unchanged one isn't painted at all.
+    frame_clock: f32,
     pub rig: Rig,
     look: (f32, f32),
     events: Vec<Event>,
@@ -232,6 +250,8 @@ impl Pet {
             dropped_from: 0.0,
             waking: false,
             away: false,
+            after: None,
+            frame_clock: 0.0,
             rig,
             look: (0.0, 0.0),
             events: Vec::new(),
@@ -418,9 +438,20 @@ impl Pet {
             (dx / d, dy / d)
         });
         self.look = (self.look.0 + (look.0 - self.look.0) * (dt * 8.0).min(1.0), self.look.1 + (look.1 - self.look.1) * (dt * 8.0).min(1.0));
+        // In tenths: the eyes settle rather than creep
+        self.look = ((self.look.0 * 10.0).round() / 10.0, (self.look.1 * 10.0).round() / 10.0);
 
         // The body follows the pose smoothly; walking feet follow the stride directly
-        let mut target = pose(self.species, self.act, self.stride, self.clock, world.beat);
+        // Calm, its picture moves in steps (six a second, four asleep): breathing and a tail tip
+        // read just as well, and between steps the picture is the same, so it isn't painted
+        let calm = matches!(self.act, Act::Sit | Act::Loaf | Act::Lie | Act::Sleep | Act::Stand) && world.beat.is_none();
+        self.frame_clock = if calm {
+            let steps = if self.act == Act::Sleep { 4.0 } else { 6.0 };
+            (self.clock * steps).floor() / steps
+        } else {
+            self.clock
+        };
+        let mut target = pose(self.species, self.act, self.stride, self.frame_clock, world.beat);
         if self.alert > 0.0 {
             target.ears = 1.0;
         }
@@ -433,6 +464,10 @@ impl Pet {
         let k = 1.0 - (-dt * 10.0).exp();
         let moving = matches!(self.act, Act::Walk | Act::Run | Act::Pounce | Act::Fly | Act::Hop);
         self.rig = self.rig.lerp(&target, k, if moving { 1.0 } else { 1.0 - (-dt * 14.0).exp() });
+        // Close enough is there: a pose that has arrived stops changing
+        if self.rig.distance(&target) < 0.08 {
+            self.rig = target;
+        }
         std::mem::take(&mut self.events)
     }
 
@@ -442,6 +477,19 @@ impl Pet {
 
         // You're away: it settles down to sleep (the bird lands first). Back: it wakes slowly
         if world.idle {
+            // To its bed first, if it has one
+            if let Some(bed) = world.bed
+                && self.species.grounded()
+                && (self.x - bed).abs() > 6.0
+                && !matches!(self.act, Act::Held | Act::Fall | Act::Walk)
+            {
+                self.go(Act::Walk, bed, world.floor);
+                self.after = Some((Act::Lie, 2.0));
+                return;
+            }
+            if self.act == Act::Walk {
+                return;
+            }
             if !matches!(self.act, Act::Sleep | Act::Held | Act::Fall) {
                 if self.species == Species::Bird && self.y < world.floor - 1.0 && world.perch.is_none_or(|p| (self.y - p).abs() > 1.0) {
                     self.act = Act::Fly;
@@ -466,6 +514,22 @@ impl Pet {
             return;
         }
         if busy_with || self.act == Act::Sleep {
+            return;
+        }
+
+        // A friend running at it: a game of chase, it runs off
+        if self.species.grounded()
+            && self.energy > 0.3
+            && let Some(friend) = world.friends.iter().find(|f| f.act == Act::Run && f.species != Species::Bird && (self.x - f.x).abs() < 170.0 && (self.x - f.x).signum() == f.facing)
+            && self.act != Act::Run
+        {
+            let away = (self.x - friend.x).signum();
+            let (w, _) = world.size;
+            let spot = (self.x + away * 260.0).clamp(60.0, w - 60.0);
+            // Cornered: back past it instead
+            let spot = if (spot - self.x).abs() < 60.0 { (friend.x - away * 200.0).clamp(60.0, w - 60.0) } else { spot };
+            self.go(Act::Run, spot, world.floor);
+            self.after = Some((Act::Sit, 2.0));
             return;
         }
 
@@ -586,8 +650,7 @@ impl Pet {
                 };
                 let dx = self.target.0 - self.x;
                 if dx.abs() < 3.0 {
-                    self.act = Act::Stand;
-                    self.left = 1.0 + 2.0 * self.chance.unit();
+                    (self.act, self.left) = self.after.take().unwrap_or((Act::Stand, 1.0 + 2.0 * self.chance.unit()));
                 } else {
                     self.facing = dx.signum();
                     let step = (speed * dt).min(dx.abs());
@@ -727,9 +790,41 @@ impl Pet {
             };
             return;
         }
-        // Tired: lie down, then a nap
+        // Tired: to its bed if it has one, lie down, then a nap
         if self.energy < 0.25 {
+            if let Some(bed) = world.bed
+                && (self.x - bed).abs() > 6.0
+            {
+                self.go(Act::Walk, bed, world.floor);
+                self.after = Some((Act::Lie, 4.0));
+                return;
+            }
             (self.act, self.left) = if self.act == Act::Lie { (Act::Sleep, 30.0 + 40.0 * self.chance.unit()) } else { (Act::Lie, 4.0) };
+            return;
+        }
+        // A friend about: go and say hello, start a chase, or lie down by it while it sleeps
+        if let Some(friend) = world.friends.iter().filter(|f| f.species != Species::Bird).min_by(|a, b| (a.x - self.x).abs().total_cmp(&(b.x - self.x).abs())).copied()
+            && roll < 0.3
+        {
+            let side = if self.x < friend.x { -1.0 } else { 1.0 };
+            let beside = (friend.x + side * 46.0).clamp(60.0, w - 60.0);
+            if friend.act == Act::Sleep {
+                self.go(Act::Walk, beside, world.floor);
+                self.after = Some((Act::Sleep, 30.0 + 30.0 * self.chance.unit()));
+            } else if roll < 0.12 && self.energy > 0.5 && (friend.x - self.x).abs() > 80.0 {
+                self.go(Act::Run, friend.x, world.floor);
+                self.after = Some((Act::Stand, 1.0));
+            } else if (friend.x - self.x).abs() > 70.0 {
+                self.go(Act::Walk, beside, world.floor);
+                self.after = Some((Act::Sit, 4.0));
+                if self.chance.unit() < 0.4 {
+                    self.say(Mood::Hello);
+                }
+            } else {
+                self.facing = -side;
+                self.act = Act::Sit;
+                self.left = 4.0;
+            }
             return;
         }
         // Lonely or hungry: it comes over to the middle of the screen to ask
@@ -773,6 +868,15 @@ impl Pet {
         if self.act == Act::Walk {
             self.left = 30.0;
         }
+        // A nap is taken on its bed, if it has one
+        if self.act == Act::Sleep
+            && let Some(bed) = world.bed
+            && (self.x - bed).abs() > 6.0
+        {
+            let nap = self.left;
+            self.go(Act::Walk, bed, world.floor);
+            self.after = Some((Act::Sleep, nap));
+        }
     }
 
     /// Its picture on its surface, with what's round it.
@@ -791,11 +895,11 @@ impl Pet {
         };
         let mut prims: Vec<Prim> = Vec::new();
         match self.species {
-            Species::Cat | Species::Fox => draw::quadruped(&mut prims, &fr, &self.rig, coat, self.species == Species::Fox, self.clock, &extras),
-            Species::Bird => draw::bird(&mut prims, &fr, &self.rig, coat, self.clock, &extras),
+            Species::Cat | Species::Fox => draw::quadruped(&mut prims, &fr, &self.rig, coat, self.species == Species::Fox, self.frame_clock, &extras),
+            Species::Bird => draw::bird(&mut prims, &fr, &self.rig, coat, self.frame_clock, &extras),
         }
         let top = (FEET.0 + self.rig.head.0 * self.facing * size, FEET.1 + (self.rig.head.1 - 10.0) * size);
-        draw::extras(&mut prims, t, top, (W, H), &extras, self.clock);
+        draw::extras(&mut prims, t, top, (W, H), &extras, self.frame_clock);
         piece.prims = prims;
         piece
     }
@@ -1068,7 +1172,74 @@ mod tests {
     use super::*;
 
     fn world() -> World {
-        World { size: (1920.0, 1200.0), floor: 1200.0, perch: Some(36.0), pointer: None, idle: false, busy: 0.1, beat: None, bowl: None, ball: None }
+        World { size: (1920.0, 1200.0), floor: 1200.0, perch: Some(36.0), pointer: None, idle: false, busy: 0.1, beat: None, bowl: None, ball: None, bed: None, friends: Vec::new() }
+    }
+
+    #[test]
+    fn runs_off_when_a_friend_chases_it() {
+        let mut pet = Pet::new(Species::Cat, 1000.0, 1200.0, Chance::new(11));
+        let mut w = world();
+        // A fox running at it from the left
+        w.friends = vec![Friend { x: 880.0, act: Act::Run, facing: 1.0, species: Species::Fox }];
+        run(&mut pet, &w, 0.5);
+        assert_eq!(pet.act, Act::Run, "fled");
+        assert!(pet.x > 1000.0, "away from the fox, to {}", pet.x);
+    }
+
+    #[test]
+    fn sleeps_on_its_bed() {
+        // Away: it walks to its bed first, then sleeps there
+        let mut pet = Pet::new(Species::Cat, 400.0, 1200.0, Chance::new(12));
+        let mut w = world();
+        w.bed = Some(900.0);
+        w.idle = true;
+        run(&mut pet, &w, 25.0);
+        assert_eq!(pet.act, Act::Sleep);
+        assert!((pet.x - 900.0).abs() < 8.0, "on the bed, at {}", pet.x);
+        // Tired, the same
+        let mut pet = Pet::new(Species::Fox, 1500.0, 1200.0, Chance::new(13));
+        pet.energy = 0.1;
+        let w = World { idle: false, ..w };
+        run(&mut pet, &w, 30.0);
+        assert!((pet.x - 900.0).abs() < 8.0 && matches!(pet.act, Act::Lie | Act::Sleep), "{:?} at {}", pet.act, pet.x);
+    }
+
+    #[test]
+    fn naps_beside_a_sleeping_friend() {
+        let mut w = world();
+        w.friends = vec![Friend { x: 1300.0, act: Act::Sleep, facing: 1.0, species: Species::Cat }];
+        // Over enough tries one of its choices is the nap together
+        let napped = (0..40).any(|seed| {
+            let mut pet = Pet::new(Species::Cat, 700.0, 1200.0, Chance::new(seed));
+            run(&mut pet, &w, 40.0);
+            pet.act == Act::Sleep && (pet.x - 1300.0).abs() < 60.0
+        });
+        assert!(napped);
+    }
+
+    #[test]
+    fn a_calm_pet_draws_the_same_picture_between_steps() {
+        let theme = Theme::new(&crate::config::Config::default());
+        let coat = draw::coat(Species::Cat, "", &theme);
+        let mut pet = Pet::new(Species::Cat, 700.0, 1200.0, Chance::new(14));
+        pet.act = Act::Loaf;
+        pet.left = 100.0;
+        let w = world();
+        // Settled into the pose, then a fiftieth of a second apart (within one of six steps); no
+        // blink meanwhile (a blink is a real change, and is drawn)
+        run(&mut pet, &w, 3.0);
+        pet.blink = 100.0;
+        run(&mut pet, &w, 1.0);
+        let hash = |pet: &Pet| pet.draw(&theme, &coat, 1.0, 1200.0).content_hash(1.0);
+        let mut same = 0;
+        for _ in 0..30 {
+            let before = hash(&pet);
+            pet.step(0.02, &w);
+            if hash(&pet) == before {
+                same += 1;
+            }
+        }
+        assert!(same >= 20, "only {same} of 30 frames repeated");
     }
 
     fn run(pet: &mut Pet, world: &World, seconds: f32) -> Vec<Event> {

@@ -136,6 +136,19 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
                 list.push(in_list(&["widgets", "show"], &c.widgets.show, kind, crate::widgets::name(kind), about));
             }
             list.push(row(&["pet", "animal"], "Pet", "A companion roaming the screen above your windows", choice(&[("None", "none"), ("Cat", "cat"), ("Fox", "fox"), ("Bird", "bird")], &c.pet.animal)));
+            list.push(row(&["pet", "friend"], "A second pet", "Company for the first: they greet, chase and nap together", choice(&[("None", "none"), ("Cat", "cat"), ("Fox", "fox"), ("Bird", "bird")], &c.pet.friend)));
+            if let Some(species) = crate::pet::Species::from_name(&c.pet.friend) {
+                let names = crate::pet::draw::coats(species);
+                let options: Vec<(String, Value)> = names.iter().map(|n| {
+                    let mut label = n.to_string();
+                    if let Some(first) = label.get_mut(0..1) {
+                        first.make_ascii_uppercase();
+                    }
+                    (label, Value::Str(n.to_string()))
+                }).collect();
+                let current = names.iter().position(|n| n.eq_ignore_ascii_case(c.pet.friend_coat.trim())).unwrap_or(0);
+                list.push(Row { keys: vec!["pet".into(), "friend_coat".into()], label: "Its coat".into(), about: "The second pet's colours".into(), control: Control::Choice(options, Some(current)) });
+            }
             if let Some(species) = crate::pet::Species::from_name(&c.pet.animal) {
                 // Its coats, by the names the animal has
                 let names = crate::pet::draw::coats(species);
@@ -258,6 +271,25 @@ pub struct Settings {
     /// How far the page is scrolled, and how far it can be.
     pub scroll: f32,
     pub max_scroll: f32,
+    /// What's typed in the search field: the rows of every page that match, instead of a page.
+    pub query: String,
+}
+
+/// The rows of every page whose name, description or page matches `query` (any case); each
+/// says which page it's on.
+pub fn search(query: &str, c: &Config, model: &Model) -> Vec<Row> {
+    let query = query.trim().to_lowercase();
+    let mut found = Vec::new();
+    for (page, name) in PAGES.iter().enumerate() {
+        for mut row in rows(page, c, model) {
+            let haystack = format!("{} {} {}", row.label, row.about, name).to_lowercase();
+            if query.split_whitespace().all(|word| haystack.contains(word)) {
+                row.about = if row.about.is_empty() { name.to_string() } else { format!("{name} · {}", row.about) };
+                found.push(row);
+            }
+        }
+    }
+    found
 }
 
 /// How wide a row's control is.
@@ -274,7 +306,7 @@ fn control_width(control: &Control, text: &mut Text, font: Font) -> f32 {
 
 impl Settings {
     pub fn new() -> Self {
-        Self { page: 0, editing: None, scroll: 0.0, max_scroll: 0.0 }
+        Self { page: 0, editing: None, scroll: 0.0, max_scroll: 0.0, query: String::new() }
     }
 
     /// The app's window: the pages down a sidebar, the page's rows on a card beside them.
@@ -294,15 +326,33 @@ impl Settings {
         let note = text.wrap("Saved to config.toml as you change things", note_font, side_w - 48.0, 2);
         let (_, nh) = text.measure("Ag", note_font);
         // Only where the pages leave room for it
-        let pages_end = 80.0 + 44.0 * PAGES.len() as f32;
+        let pages_end = 120.0 + 44.0 * PAGES.len() as f32;
         let note = if h - 24.0 - nh * note.len() as f32 > pages_end + 16.0 { note } else { Vec::new() };
         for (i, line) in note.iter().rev().enumerate() {
             side.prims.push(Prim::Text { x: 24.0, y: h - 24.0 - nh * (i + 1) as f32, text: line.clone(), font: note_font, color: t.color_soft.alpha(0.75) });
         }
         side.actions.left = Some(Action::MoveWindow);
         pieces.push(side);
+        // The search field: typing anywhere in the window (not into a value) goes here
+        let (sw, sh) = (side_w - 24.0, 34.0);
+        let mut field = Piece::new("set.search", sw, sh);
+        let searching = !self.query.is_empty();
+        field.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: sw, h: sh, radius: sh / 2.0, color: if searching { t.primary } else { t.hairline() } });
+        field.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: sw - 2.0, h: sh - 2.0, radius: sh / 2.0 - 1.0, color: t.surface });
+        field.prims.push(Prim::Icon { x: 12.0, y: (sh - 16.0) / 2.0, size: 16.0, name: "search".into(), color: t.color_soft });
+        let field_font = Font::new(t.text);
+        let shown = if searching { crate::bar::Ctx::ellipsize_with(text, &self.query, field_font, sw - 50.0) } else { "Search".into() };
+        let (qw, qh) = text.measure(&shown, field_font);
+        field.prims.push(Prim::Text { x: 36.0, y: ((sh - qh) / 2.0).round(), text: shown, font: field_font, color: if searching { t.color_text } else { t.color_soft } });
+        if searching {
+            field.prims.push(Prim::Rect { x: 37.0 + qw, y: 9.0, w: 2.0, h: sh - 18.0, radius: 1.0, color: t.primary });
+        }
+        field.blocks = true;
+        field.x = 12.0;
+        field.y = 72.0;
+        pieces.push(field);
         let nav_font = Font::new(t.text + 1.0);
-        let mut y = 80.0;
+        let mut y = 120.0;
         for (i, name) in PAGES.iter().enumerate() {
             let (iw, ih) = (side_w - 24.0, 40.0);
             let mut item = Piece::new(format!("set.page.{i}"), iw, ih);
@@ -337,7 +387,16 @@ impl Settings {
         let card_index = pieces.len();
         let top = head_h + 4.0 - self.scroll;
         let mut y = top + 6.0;
-        let rows = rows(self.page, c, model);
+        let rows = if self.query.trim().is_empty() { rows(self.page, c, model) } else { search(&self.query, c, model) };
+        if rows.is_empty() {
+            let words = format!("Nothing here matches “{}”", self.query.trim());
+            let (nw, nh) = text.measure(&words, about_font);
+            let mut none = Piece::new("set.none", nw, nh);
+            none.prims.push(Prim::Text { x: 0.0, y: 0.0, text: words, font: about_font, color: t.color_soft });
+            none.x = cx + 4.0;
+            none.y = head_h + 12.0;
+            pieces.push(none);
+        }
         let count = rows.len();
         for (r, row) in rows.into_iter().enumerate() {
             // The control beside its label; when there isn't room for both, under it
@@ -479,7 +538,7 @@ impl Settings {
             }
             y += row_h;
         }
-        let card_h = y + 6.0 - top;
+        let card_h = if count == 0 { 0.0 } else { y + 6.0 - top };
         let mut card = Piece::new("set.card", cw, card_h);
         card.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: cw, h: card_h, radius: t.radius, color: t.hairline() });
         card.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: cw - 2.0, h: card_h - 2.0, radius: t.radius - 1.0, color: t.card_deep });
@@ -505,7 +564,7 @@ impl Settings {
         head.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: room - 1.0, h: head_h, radius: 0.0, color: t.surface });
         let head_font = Font::new(t.text + 11.0).weight(400);
         let (_, hh) = text.measure("Ag", head_font);
-        head.prims.push(Prim::Text { x: pad, y: ((head_h - hh) / 2.0).round() + 4.0, text: PAGES[self.page].into(), font: head_font, color: t.color_text });
+        head.prims.push(Prim::Text { x: pad, y: ((head_h - hh) / 2.0).round() + 4.0, text: if self.query.trim().is_empty() { PAGES[self.page].into() } else { "Search".into() }, font: head_font, color: t.color_text });
         if self.scroll > 0.5 {
             head.prims.push(Prim::Rect { x: 0.0, y: head_h - 1.0, w: room - 1.0, h: 1.0, radius: 0.0, color: t.hairline() });
         }

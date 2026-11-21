@@ -170,6 +170,42 @@ pub enum Level {
     Layout(String),
 }
 
+pub const PEEK_WIDTH: f32 = 272.0;
+
+/// A workspace at a glance, for the bar's page dot under the pointer: its windows where they
+/// sit (scaled into the card, the way the overview draws them), each with its app's icon, the
+/// focused one outlined in the accent. Returns the card's size and its pieces.
+pub fn peek(t: &Theme, text: &mut Text, ws: &crate::model::Workspace, icons: &std::collections::HashMap<String, Option<std::sync::Arc<crate::model::Image>>>) -> (f32, f32, Vec<Piece>) {
+    let (w, pad, title_h, map_h) = (PEEK_WIDTH, 14.0, 26.0, 136.0);
+    let h = pad + title_h + map_h + pad;
+    let mut card = Piece::new("peek.card", w, h);
+    card.prims.push(Prim::Card { x: 0.0, y: 0.0, w, h, radius: t.radius });
+    card.pad = 14.0;
+    let font = Font::new(t.text - 1.0).weight(600).spacing(0.6);
+    let count = ws.windows.len();
+    let title = format!("WORKSPACE {} · {} WINDOW{}", ws.idx, count, if count == 1 { "" } else { "S" });
+    let title = crate::bar::Ctx::ellipsize_with(text, &title, font, w - pad * 2.0);
+    card.prims.push(Prim::Text { x: pad, y: pad, text: title, font, color: t.primary });
+    let (mx, my, mw) = (pad, pad + title_h, w - pad * 2.0);
+    for (window, (x, y, ww, wh)) in ws.windows.iter().zip(crate::overview::layout(&ws.windows, mw, map_h)) {
+        let (x, y) = (mx + x, my + y);
+        let edge = if window.focused { t.primary } else { t.hairline() };
+        card.prims.push(Prim::Rect { x, y, w: ww, h: wh, radius: 6.0, color: edge });
+        card.prims.push(Prim::Rect { x: x + 1.5, y: y + 1.5, w: (ww - 3.0).max(1.0), h: (wh - 3.0).max(1.0), radius: 5.0, color: t.container_high });
+        let size = (ww.min(wh) * 0.45).clamp(10.0, 28.0);
+        match icons.get(&window.app_id).cloned().flatten() {
+            Some(image) => card.prims.push(Prim::Image { x: x + (ww - size) / 2.0, y: y + (wh - size) / 2.0, w: size, h: size, image, tint: None, radius: 0.0 }),
+            None => {
+                let letter: String = window.app_id.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+                let font = Font::new(size * 0.7).weight(600);
+                let (lw, lh) = text.measure(&letter, font);
+                card.prims.push(Prim::Text { x: x + (ww - lw) / 2.0, y: y + (wh - lh) / 2.0, text: letter, font, color: t.color_soft });
+            }
+        }
+    }
+    (w, h, vec![card])
+}
+
 pub const SONG_WIDTH: f32 = 380.0;
 pub const SONG_HEIGHT: f32 = 92.0;
 

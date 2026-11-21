@@ -49,6 +49,16 @@ fn num(a: f32, b: f32, k: f32) -> f32 {
 }
 
 impl Rig {
+    /// The most any part of it is away from `other` (pixels or radians, alike).
+    pub fn distance(&self, other: &Rig) -> f32 {
+        let points = [(self.hip, other.hip), (self.shoulder, other.shoulder), (self.head, other.head)].into_iter().chain(self.feet.into_iter().zip(other.feet));
+        let far = points.map(|(a, b)| (a.0 - b.0).abs().max((a.1 - b.1).abs())).fold(0.0, f32::max);
+        [(self.tilt, other.tilt), (self.tail, other.tail), (self.curl, other.curl), (self.sway, other.sway), (self.ears, other.ears), (self.eyes, other.eyes), (self.mouth, other.mouth), (self.tuck, other.tuck), (self.ball, other.ball), (self.wing, other.wing)]
+            .into_iter()
+            .map(|(a, b)| (a - b).abs())
+            .fold(far, f32::max)
+    }
+
     /// `k` of the way to `other` (0 stays, 1 arrives).
     pub fn lerp(&self, other: &Rig, k: f32, feet_k: f32) -> Rig {
         let mut feet = self.feet;

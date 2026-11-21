@@ -158,6 +158,10 @@ coat = ""                 # cat: tabby, ginger, black, white, tuxedo, siamese; f
 sounds = true             # it meows (yips, chirps) now and then and purrs; never in do-not-disturb
 volume = 40               # percent
 size = 100                # percent, 70 to 140
+friend = "none"           # a second pet: cat, fox or bird; they greet, chase and nap together
+friend_coat = ""
+bed = -1                  # their bed's place, in thousandths of the screen's width; -1 none
+                          # (the pet's menu puts one down: "Give them a bed")
 
 [lock]
 idle = 10                 # minutes without input before the screen locks; 0 never

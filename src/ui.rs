@@ -192,11 +192,14 @@ pub enum Action {
     /// The sticky note, to be written (in Settings); the photo frame's next picture.
     EditNote,
     NextPhoto,
-    /// The pet: another animal, put away, a bowl of food, a ball to play with.
-    PetNext,
-    PetAway,
+    /// A pet (0 the first, 1 the second): another animal, put away. For them both: a bowl of
+    /// food, a ball or yarn to play with, a bed (put down or taken away).
+    PetNext(u8),
+    PetAway(u8),
     PetFeed,
     PetPlay,
+    PetYarn,
+    PetBed(bool),
     LockNow,
     /// The wifi password prompt: ask for this network's password, send it, or let it be.
     WifiAsk(String),

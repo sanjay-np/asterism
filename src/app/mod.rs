@@ -90,6 +90,7 @@ mod desk;
 mod idle;
 mod night;
 mod overview;
+mod peek;
 mod pet;
 mod shell;
 mod timer;
@@ -433,7 +434,12 @@ pub struct App {
     started: Instant,
     /// The pet, its timer running, whether you've been away a minute (and the watch that
     /// says so), and where the pointer was last seen on its output.
-    pet: Option<pet::PetSurface>,
+    pets: Vec<pet::PetSurface>,
+    /// The workspace card under a page dot, and the dot it's waiting on (workspace, bar, x).
+    peek: Option<peek::Peek>,
+    peek_wait: Option<(i64, usize, f32)>,
+    /// Bluetooth devices already warned about running low (by path).
+    bt_warned: HashSet<String>,
     pet_timer: bool,
     pet_idle: bool,
     pet_idle_watch: Option<smithay_client_toolkit::reexports::protocols::ext::idle_notify::v1::client::ext_idle_notification_v1::ExtIdleNotificationV1>,
@@ -531,7 +537,10 @@ impl App {
         if let Some(surf) = self.desks.iter_mut().find_map(|d| d.surf_mut(wl)) {
             return Some(surf);
         }
-        if let Some(pet) = self.pet.as_mut().filter(|p| p.surf.is(wl)) {
+        if let Some(peek) = self.peek.as_mut().filter(|p| p.surf.is(wl)) {
+            return Some(&mut peek.surf);
+        }
+        if let Some(pet) = self.pets.iter_mut().find(|p| p.surf.is(wl)) {
             return Some(&mut pet.surf);
         }
         if let Some(prop) = self.props.iter_mut().find(|p| p.surf.is(wl)) {
@@ -680,6 +689,9 @@ impl App {
         if let Some(popup) = self.popup.as_mut() {
             popup.surf.dirty = true;
         }
+        if let Some(peek) = self.peek.as_mut() {
+            peek.surf.dirty = true;
+        }
         if icons && let Some(index) = self.panel_index(PanelKind::Launcher) {
             self.panels[index].surf.dirty = true;
         }
@@ -744,7 +756,8 @@ impl App {
         self.watch_spectrum();
         // The pet, when it's wanted and not up yet (or its idle watch couldn't be made before
         // the seat was known)
-        if crate::pet::Species::from_name(&self.config.pet.animal).is_some() && (self.pet.is_none() || self.pet_idle_watch.is_none()) {
+        let wanted = [&self.config.pet.animal, &self.config.pet.friend].iter().filter(|a| crate::pet::Species::from_name(a).is_some()).count();
+        if wanted > 0 && (self.pets.len() < wanted || self.pet_idle_watch.is_none()) {
             self.sync_pet();
         }
         let now = chrono::Local::now();
@@ -1016,10 +1029,12 @@ impl App {
             Action::EditWidgets(on) => self.edit_widgets(on),
             Action::WidgetAdd(kind) => self.show_widget(&kind, true),
             Action::WidgetRemove(kind) => self.show_widget(&kind, false),
-            Action::PetNext => self.pet_action(true),
-            Action::PetAway => self.pet_action(false),
+            Action::PetNext(slot) => self.pet_action(slot, true),
+            Action::PetAway(slot) => self.pet_action(slot, false),
             Action::PetFeed => self.pet_feed(),
             Action::PetPlay => self.pet_play(),
+            Action::PetYarn => self.pet_yarn(),
+            Action::PetBed(put) => self.pet_bed(put),
             Action::NextPhoto => {
                 self.photo_step += 1;
                 for desk in &mut self.desks {
@@ -1043,6 +1058,7 @@ impl App {
                     settings.page = page;
                     settings.editing = None;
                     settings.scroll = 0.0;
+                    settings.query.clear();
                 }
                 if let Some(index) = self.panel_index(PanelKind::Settings) {
                     self.panels[index].surf.dirty = true;
@@ -1307,6 +1323,7 @@ impl App {
         if self.popup.as_ref().is_some_and(|p| p.surf.dirty && p.surf.configured && !p.surf.frame_pending) {
             self.draw_popup();
         }
+        self.draw_peek();
         self.step_changes();
         self.release_backdrops();
         self.paint_backdrops();
@@ -1421,8 +1438,8 @@ impl App {
     }
 
     fn pointer_event(&mut self, event: &PointerEvent) {
-        if self.pet.as_ref().is_some_and(|p| p.surf.is(&event.surface)) {
-            return self.pet_pointer_event(event);
+        if let Some(index) = self.pets.iter().position(|p| p.surf.is(&event.surface)) {
+            return self.pet_pointer_event(index, event);
         }
         if let Some(index) = self.props.iter().position(|p| p.surf.is(&event.surface)) {
             return self.prop_pointer_event(index, event);
@@ -1561,6 +1578,8 @@ impl App {
             _ => None,
         };
         let clickable = hit.is_some_and(|p| !p.actions.is_empty() && !matches!(p.actions.left, Some(Action::MoveWindow)));
+        let centre = hit.map_or(0.0, |p| p.x + p.w / 2.0);
+        let page = key.clone();
         // A window's star: its app's icon goes beside its name, looked up once
         let wanted_icon = target.as_ref().map(|(_, _, app)| app.clone()).filter(|app| !app.is_empty());
         if key != surf.hovered || target != surf.target {
@@ -1579,6 +1598,10 @@ impl App {
             && self.requested.insert(format!("icon:{app}"))
         {
             self.send(Command::AppIcon(app));
+        }
+        // On a bar, a page dot shows its workspace a moment later
+        if let Which::Bar(bar) = which {
+            self.peek_hover(bar, page.as_deref(), centre);
         }
     }
 
@@ -2138,8 +2161,8 @@ impl OutputHandler for App {
         self.gammas.retain(|g| g.output != output);
         self.desks.retain(|d| d.output != output);
         // Gone with its screen; it comes back on another at the next tick
-        if self.pet.as_ref().is_some_and(|p| p.output == output) {
-            self.pet = None;
+        if self.pets.iter().any(|p| p.output == output) {
+            self.pets.retain(|p| p.output != output);
             self.props.clear();
         }
         if let Some(index) = self.bars.iter().position(|b| b.output == output) {
@@ -2155,8 +2178,9 @@ impl OutputHandler for App {
 
 impl LayerShellHandler for App {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        if self.pet.as_ref().is_some_and(|p| &p.layer == layer) {
-            self.pet = None;
+        self.pets.retain(|p| &p.layer != layer);
+        if self.peek.as_ref().is_some_and(|p| &p.layer == layer) {
+            self.peek = None;
         }
         self.props.retain(|p| &p.layer != layer);
         self.panels.retain(|p| !p.is_layer(layer));
@@ -2183,14 +2207,11 @@ impl LayerShellHandler for App {
             }
             return;
         }
-        if let Some(pet) = self.pet.as_mut().filter(|p| &p.layer == layer) {
-            let surf = &mut pet.surf;
-            surf.w = crate::pet::W;
-            surf.h = crate::pet::H;
-            surf.configured = true;
-            surf.dirty = true;
-            surf.frame_pending = false;
-            return self.pet_configured();
+        if let Some(index) = self.pets.iter().position(|p| &p.layer == layer) {
+            return self.pet_configured(index);
+        }
+        if self.peek.as_ref().is_some_and(|p| &p.layer == layer) {
+            return self.peek_configured();
         }
         if let Some(index) = self.props.iter().position(|p| &p.layer == layer) {
             return self.prop_configured(index);
@@ -2514,7 +2535,10 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         last_track: None,
         song_generation: 0,
         started: Instant::now(),
-        pet: None,
+        pets: Vec::new(),
+        peek: None,
+        peek_wait: None,
+        bt_warned: HashSet::new(),
         pet_timer: false,
         pet_idle: false,
         pet_idle_watch: None,

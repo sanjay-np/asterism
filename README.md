@@ -75,7 +75,8 @@ cosmic-text and resvg.
 | `status` | Timers, notifications, keyboard layout, network, Bluetooth, volume, battery, control centre, settings, session; a red dot and the time while recording | Their menus | Mute, Bluetooth on/off, do not disturb | Volume |
 
 The menus: calendar, music, sound (volume, brightness, output device, microphone, per-app
-volume), network (Wi-Fi on/off, networks nearby), Bluetooth (your devices, devices nearby),
+volume), network (Wi-Fi on/off, networks nearby, your saved VPNs with a switch each),
+Bluetooth (your devices with their charge, devices nearby; a device running low says so),
 battery (level, time left, power profiles), timers, weather, screenshot, session (lock, sleep,
 log out, restart, shut down; the last three ask for a second click), traffic, keyboard layouts,
 notifications, and every tray app's own menu.
@@ -181,7 +182,7 @@ in and out over 20 minutes.
 ## Day to day
 
 **The control centre** — the button beside the power icon, the bar's top-right corner, Mod+A,
-or `asterism msg control`. The time; quick tiles (Wi-Fi, Bluetooth, do not disturb, stay awake,
+or `asterism msg control`. The time; quick tiles (Wi-Fi, VPN when one's saved, Bluetooth, do not disturb, stay awake,
 microphone, power profile, night light, wallpaper, settings); volume and brightness; what's
 playing; notifications grouped by app; and lock, sleep, log out, restart, shut down (the last
 three ask twice). Esc or a click beside it closes it.
@@ -207,8 +208,19 @@ small bubble and a sound: meows, trills and purrs for the cat, yips for the fox,
 bird, made by Asterism itself (no recordings), played quietly, and never in do-not-disturb or
 while the screen is locked. Clicks anywhere else pass straight through.
 
-Settings → Desktop → Pet (animal, coat, sounds, volume, size), or `[pet]` in the config;
-`asterism msg pet feed|play|next|away` for keybinds.
+A **second pet** (`[pet] friend`) keeps the first company: they go over to say hello, start a
+game of chase (one runs at the other, which runs off), lie down beside each other when one's
+asleep, and bat the same toys. **Yarn** is a second toy, softer than the ball, trailing a
+thread. Give them a **bed** from the menu and they go to it to nap, and when you're away; it
+stays where it was put. While a pet sits still its picture steps (six times a second, four
+asleep) rather than gliding, so most of the time nothing needs painting at all.
+
+Settings → Desktop → Pet (animal, coat, a second pet, sounds, volume, size), or `[pet]` in the
+config; `asterism msg pet feed|play|yarn|bed|nobed|next|away` and `pet friend next|away` for
+keybinds.
+
+**A workspace at a glance.** Rest the pointer on a workspace dot for a moment and a small card
+shows its windows where they sit, each with its app's icon, the focused one outlined.
 
 **A new song** shows a small card under the bar for a few seconds: its cover, its name and its
 singer, the music moving under them. Not while the music's menu or the control centre is open;
@@ -235,7 +247,8 @@ window-rule {
 }
 ```
 
-Each change is written to `config.toml` at once, keeping your comments and order. Every option is
+Type anywhere in the window (when you're not typing into a value) to search every page; Esc
+clears it. Each change is written to `config.toml` at once, keeping your comments and order. Every option is
 also in [config.example.toml](config.example.toml) for editing by hand.
 
 **The dashboard** — the CPU and memory rings, or `asterism msg dashboard`. Graphs of the
@@ -294,6 +307,11 @@ in focus (niri's own screenshot UI; grim and slurp on Hyprland). A notification 
 thumbnail. Recording the screen, with or without sound, needs `wf-recorder`; while it runs the bar
 shows a red dot and the time, and a click stops it. Recordings go to `~/Videos/Recordings`. Also
 `asterism msg screenshot [region|screen|window]` and `msg record [audio]`.
+
+**Text off the screen**: "Copy text from a region" in the same menu (or `msg screen-text`): choose
+a region and the text in it is read and copied, with a notification showing what was found.
+It needs `slurp`, `grim` and `tesseract`; the picture goes straight from one to the next through
+a pipe, never to disk, and nothing leaves your machine.
 
 ## What leaves your machine
 

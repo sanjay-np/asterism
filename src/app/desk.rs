@@ -242,7 +242,7 @@ impl App {
     pub(super) fn watch_spectrum(&mut self) {
         let playing = self.model.media.player().is_some_and(|p| p.playing);
         let shown = !self.desks.is_empty() && self.config.widgets.show.iter().any(|k| k == "visualizer" || k == "edge");
-        let want = playing && (shown || self.panel_index(PanelKind::Song).is_some() || self.pet.is_some());
+        let want = playing && (shown || self.panel_index(PanelKind::Song).is_some() || !self.pets.is_empty());
         if want != self.spectrum_on {
             self.spectrum_on = want;
             self.send(Command::WatchSpectrum(want));

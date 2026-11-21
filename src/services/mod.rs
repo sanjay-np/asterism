@@ -3,7 +3,7 @@
 
 mod audio;
 mod bluetooth;
-mod capture;
+pub mod capture;
 mod brightness;
 mod dbus;
 mod hyprland;
@@ -165,7 +165,7 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
                 let _ = audio.send(command);
             }
             SetPowerProfile(_) => forward(&power, command),
-            SetWifi(_) | ScanWifi | ConnectWifi(_) | ConnectWifiWith(..) => forward(&network, command),
+            SetWifi(_) | ScanWifi | ConnectWifi(_) | ConnectWifiWith(..) | SetVpn(..) => forward(&network, command),
             SetBluetoothPower(_) | BluetoothConnect(..) | ScanBluetooth | BluetoothPair(_) | BluetoothForget(_) | PairAnswer(_) => forward(&bluetooth, command),
             TrayActivate(..) | TraySecondary(..) | TrayScroll(..) | TrayMenu(_) | TrayMenuClick(..) => forward(&tray, command),
             NotificationsToggle | NotificationsQuiet | NotificationInvoke(..) | NotificationDismiss(_) | NotificationExpired(_) | NotificationsClear => {
@@ -244,7 +244,7 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
             WatchProcesses(_) | EndProcess(_) => {
                 let _ = machine.send(command);
             }
-            Screenshot(_) | RecordStart { .. } | RecordStop => {
+            Screenshot(_) | RecordStart { .. } | RecordStop | ScreenText => {
                 let _ = capture.send(command);
             }
             WeatherSettings(_) | WeatherRefresh => {

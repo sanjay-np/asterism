@@ -91,7 +91,7 @@ history (etea-bar) was removed on request; keep the ETEA Shell credit in the REA
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 62 tests (+2 opt-in, --ignored), see below
+cargo test --release                            # 66 tests (+3 opt-in, --ignored), see below
 ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
 cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
 cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
@@ -191,8 +191,9 @@ main.rs ── CLI: run | msg … | --snapshot …
    │     night.rs   wlr-gamma-control per output, schedule, the control-centre switch
    │     idle.rs    ext-idle-notify → lock; start_lock() spawns `asterism lock` detached
    │     timer.rs   timer actions and the once-a-second tick
-   │     pet.rs     the pet's 240×180 Overlay surface moved by its margins, timer, idle watch,
-   │               drag to pick up, sounds, its props (bowl, ball) as small surfaces
+   │     pet.rs     the pets (`Vec<PetSurface>`, slot 0/1): 240×180 Overlay surfaces moved by
+   │               margins, one timer, idle watch, drag, sounds; props (bowl, ball, yarn, bed) on Top
+   │     peek.rs    the workspace card under a hovered page dot
    │     desk.rs    desktop widgets: per output a `Desk` of small `Part`s, one Layer::Bottom
    │               surface per widget placed by margins (laid out on the whole output, then each
    │               group of pieces shifted into its part); arranging: a 1-pixel dim stretched by
@@ -216,7 +217,7 @@ main.rs ── CLI: run | msg … | --snapshot …
    ├── widgets.rs   desktop widgets + saved places (~/.local/state/asterism/widgets.json) + lyrics parsing;
    │               `arrange` (placing, shared with snapshots), `placeholder`, `editor` (frames, ×, add strip)
    ├── spectrum.rs  the visualizer's analysis: radix-2 FFT, log bands, auto-gain, fall-off
-   ├── pet/         the pet: mod.rs behaviour (needs, acts, `Pet::step` → events, poses),
+   ├── pet/         the pets: mod.rs behaviour (friends, bed, `after`, stepped frame clock) (needs, acts, `Pet::step` → events, poses),
    │               draw.rs (rig, IK legs, coats), sound.rs (voices synthesized → WAV)
    ├── transition.rs wallpaper animations: kinds, `pick` (random, never twice), per-pixel reveal
    │               maps, `compose` (a lookup table per frame), `ease`
@@ -363,7 +364,11 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (62, +2 opt-in)
+### Tests (66, +3 opt-in)
+
+`pet` also: runs off when a friend chases it, sleeps on its bed (away and tired), naps beside a
+sleeping friend, a calm pet repeats its picture; `ipc`: pet friend commands, screen-text.
+
 
 `pet` (sleeps while away and wakes with a stretch and a hello, stalks and pounces, follows a
 high pointer, ignores a far one, eats from the bowl and bats the ball, purrs when petted and
@@ -391,6 +396,51 @@ pet, and an optimization round; newest first)
 **State of the tree**: f539ecf (the user's commit) holds everything up to the icon tinting.
 After it, uncommitted: the pet (both rounds), the optimization round and the drag fix below,
 with their README/AGENTS updates. All installed and running on the user's machine.
+
+### Pet round three and small everyday things (2026-11-21, the user: "proceed with the pet first
+and small and useful everyday option")
+
+- **Cheaper pet frames**: calm acts (Sit, Loaf, Lie, Sleep, Stand, no music) draw from
+  `Pet::frame_clock`, stepped 6/s (4/s asleep); the rig snaps to its target once within 0.08
+  (`Rig::distance`); `look` in tenths. Unchanged frames hash the same, so `render_panel` sends
+  nothing. Test: a loafing cat repeats ≥ 20 of 30 frames at 50 fps (blinks excluded: they're
+  real changes).
+- **A second pet** (`[pet] friend`, `friend_coat`): `App::pets: Vec<PetSurface>` with a `slot`
+  (0 animal, 1 friend); `pet_world(index)` gives each the others as `World::friends`
+  (`Friend { x, act, facing, species }`). Behaviour: in `choose`, 30% when a friend's about: walk
+  over and sit (40% a hello), or a chase (run at it), or lie down by it when it sleeps
+  (`Pet::after`: what to do on arrival). In `live`: a friend running at it within 170 px → it
+  runs off (cornered: back past). Menus per pet: "pet" / "pet.friend" → `PetNext(slot)`,
+  `PetAway(slot)`.
+- **Bed and yarn**: props now on Layer::Top (pets on Overlay, so always in front). Bed:
+  `[pet] bed` in thousandths of the width (-1 none; Int so `settings::Value` can write it),
+  `Action::PetBed(bool)`, the menu toggles it; pets walk to it to nap and when you're away.
+  Yarn: a softer toy (more friction, 0.7 of the kick, a small hop), a trailing thread.
+  `msg pet feed|play|yarn|bed|nobed|next|away`, `pet friend next|away`.
+- **Workspace peek** (`app/peek.rs`, `cards::peek`): hovering a `page.{id}` piece 350 ms opens a
+  small Overlay surface under it (exclusive zone 0, margin 22, empty input region) with
+  `overview::layout` of that workspace's windows and their icons; any other hover closes it;
+  redrawn on every update while open. Only for workspaces with windows. `--panel peek [--query
+  N]`.
+- **Bluetooth battery**: was already read (Battery1) and shown (menu, bar value); added each
+  device's charge to the bar tooltip and a one-time notification at ≤ 15% (`App::bt_warned`,
+  reset above 25%). BlueZ is off on the user's machine: untested live.
+- **VPN** (`network.rs` `saved_vpns`, cached, re-read every 60 s; `Network::vpns` with
+  active/connecting from the active connections' Uuid and State; `Command::SetVpn(path, on)` →
+  `ActivateConnection` / `DeactivateConnection`): a switch per VPN in the network menu, a tile in
+  the control centre. Verified reading the user's saved "client" VPN (off); **never switched it**.
+- **Settings search**: `Settings::query`, a field in the sidebar; typing (not into a value) goes
+  there, Backspace/Esc; `settings::search` matches label, description and page name (all words),
+  rows keep working and say their page. `--panel settings --query search:WORDS`.
+- **Text off the screen** (`capture::screen_text`, `Command::ScreenText`, `msg screen-text`, a row
+  in the capture menu): slurp → grim → tesseract through a pipe → wl-copy, a notification with
+  what was found. None of slurp/grim/tesseract is installed on the user's machine: the menu says
+  so instead; untested.
+
+Verified: 66 tests; snapshots (settings search, the control centre with the VPN tile, the peek
+card with demo windows); nested niri with the fox and a cat: both pet surfaces, bed and yarn on
+the Top layer, both pets batting the yarn (7 kicks each) then bored, 32.5 MB. **Not verified**:
+the peek by real hover, the pets' friendship by eye (chase, napping together), the bed nap.
 
 ### Dragging the pet sent it to the top (2026-11-21, fixed)
 
@@ -823,6 +873,9 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 
 ## Next progress (immediate)
 
+0. The user to try the new round: hover a workspace dot, a second pet and the bed/yarn (menu),
+   settings search, the VPN switch (their "client"); install slurp/grim/tesseract to try
+   copying text off the screen.
 1. **User test pass**, above all the lock screen with the real password (Mod+Alt+L), then the
    clipboard picker, timers, night light schedule; fix what breaks.
 2. Try Bluetooth pairing for real once the user starts bluetooth.service.

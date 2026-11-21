@@ -91,10 +91,53 @@ async fn screenshot(out: &Out, kind: Capture) {
     }
 }
 
+/// The tools reading text off the screen needs: a region chosen (slurp), captured (grim), read
+/// (tesseract), copied (wl-copy).
+pub const TEXT_TOOLS: [&str; 4] = ["slurp", "grim", "tesseract", "wl-copy"];
+
+/// Reads the text in a region of the screen you choose and copies it; a notification says what
+/// it found (or what's missing). The picture never touches the disk: grim writes it to
+/// tesseract through a pipe.
+async fn screen_text(out: &Out) {
+    let missing: Vec<&str> = TEXT_TOOLS.iter().copied().filter(|t| !crate::config::command_available(t)).collect();
+    if !missing.is_empty() {
+        out.send(Update::Notify(crate::model::Note { summary: "Can't read text off the screen".into(), body: format!("Install {}.", missing.join(", ")), ..Default::default() }));
+        return;
+    }
+    // Esc in slurp: nothing chosen, nothing done
+    let Some(region) = super::output("slurp", &[]).await else { return };
+    let region = region.trim().to_string();
+    if region.is_empty() {
+        return;
+    }
+    let script = "grim -g \"$1\" - | tesseract stdin stdout 2>/dev/null";
+    let Some(text) = super::output("sh", &["-c", script, "sh", &region]).await else { return };
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        out.send(Update::Notify(crate::model::Note { summary: "No text found there".into(), ..Default::default() }));
+        return;
+    }
+    let copied = super::child("wl-copy").stdin(std::process::Stdio::piped()).spawn();
+    if let Ok(mut child) = copied {
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(text.as_bytes()).await;
+        }
+        let _ = child.wait().await;
+    }
+    let words = text.split_whitespace().count();
+    let preview: String = text.chars().take(120).collect();
+    out.send(Update::Notify(crate::model::Note { summary: format!("Copied {words} word{}", if words == 1 { "" } else { "s" }), body: preview, icon: "edit-copy".into(), urgency: 0 }));
+}
+
 pub async fn run(out: Out, mut commands: UnboundedReceiver<Command>) {
     let mut recorder: Option<(tokio::process::Child, PathBuf)> = None;
     while let Some(command) = commands.recv().await {
         match command {
+            Command::ScreenText => {
+                let out = out.clone();
+                tokio::spawn(async move { screen_text(&out).await });
+            }
             Command::Screenshot(kind) => {
                 let out = out.clone();
                 tokio::spawn(async move { screenshot(&out, kind).await });

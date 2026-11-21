@@ -106,7 +106,7 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
             {
                 let _ = commands.send(crate::model::Command::FetchLyrics { artist: player.artist.clone(), title: player.title.clone(), album: player.album.clone(), seconds: (player.length / 1_000_000) as u32 });
             }
-            if options.panel.as_deref() == Some("overview") {
+            if matches!(options.panel.as_deref(), Some("overview" | "peek")) {
                 let apps: HashSet<String> = model.compositor.workspaces.iter().flat_map(|w| &w.windows).map(|w| w.app_id.clone()).chain(["firefox", "kitty", "code", "org.gnome.Nautilus", "spotify"].map(String::from)).collect();
                 for app in apps {
                     let _ = commands.send(crate::model::Command::AppIcon(app));

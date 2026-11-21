@@ -501,7 +501,12 @@ impl Ctx<'_> {
                         ("bluetooth", String::new())
                     };
                     let mut piece = self.icon_text(&key, icon, &value, t.icon_tint(Icons::Status), t.color_soft);
-                    piece.label = Some(if connected.is_empty() { "Bluetooth".into() } else { connected.iter().map(|d| d.name.clone()).collect::<Vec<_>>().join(", ") });
+                    // Each device with its charge, when it says
+                    piece.label = Some(if connected.is_empty() {
+                        "Bluetooth".into()
+                    } else {
+                        connected.iter().map(|d| if d.battery >= 0 { format!("{} {}%", d.name, d.battery) } else { d.name.clone() }).collect::<Vec<_>>().join(" · ")
+                    });
                     piece.actions.left = menu(Kind::Bluetooth);
                     piece.actions.right = send(Command::SetBluetoothPower(!b.powered));
                     Some(piece)

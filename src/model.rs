@@ -254,6 +254,17 @@ pub struct Network {
     pub strength: u8,
     pub address: String,
     pub access_points: Vec<AccessPoint>,
+    /// The VPNs NetworkManager has saved (VPN plugins and WireGuard).
+    pub vpns: Vec<Vpn>,
+}
+
+/// A saved VPN: its name, its NetworkManager settings path, and whether it's up (or coming up).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Vpn {
+    pub name: String,
+    pub path: String,
+    pub active: bool,
+    pub connecting: bool,
 }
 
 // ---------------------------------------------------------------- bluetooth
@@ -517,8 +528,10 @@ pub enum Request {
     Overview(Option<bool>),
     /// Arranging the desktop's widgets: start, finish, or (None) the other way.
     Widgets(Option<bool>),
-    /// Something for the pet: feed, play, next (another animal), away.
+    /// Something for the pets: feed, play, yarn, bed, nobed, next, away, friend next, friend away.
     Pet(String),
+    /// The text in a region of the screen onto the clipboard.
+    ScreenText,
 }
 
 /// Something done to a timer, from its menu or from `asterism msg`.
@@ -750,6 +763,10 @@ pub enum Command {
     WatchProcesses(bool),
     /// Listen to what the speakers play, for the visualizer, or stop.
     WatchSpectrum(bool),
+    /// A saved VPN (by its settings path) up or down.
+    SetVpn(String, bool),
+    /// The text in a region of the screen, chosen now, onto the clipboard.
+    ScreenText,
     /// The pet speaks: this sound, this take of it, this loud (0 to 1).
     PetSound(crate::pet::Voice, u32, f32),
     /// List a folder's pictures, for the photo frame.

@@ -291,11 +291,16 @@ pub struct PetSettings {
     pub volume: u32,
     /// How big, in percent (70 to 140).
     pub size: u32,
+    /// A second pet, and its coat: none, cat, fox or bird.
+    pub friend: String,
+    pub friend_coat: String,
+    /// Where their bed is, in thousandths of the screen's width; below 0, no bed.
+    pub bed: i64,
 }
 
 impl Default for PetSettings {
     fn default() -> Self {
-        Self { animal: "none".into(), coat: String::new(), sounds: true, volume: 40, size: 100 }
+        Self { animal: "none".into(), coat: String::new(), sounds: true, volume: 40, size: 100, friend: "none".into(), friend_coat: String::new(), bed: -1 }
     }
 }
 

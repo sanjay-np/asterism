@@ -679,6 +679,15 @@ fn network(col: &mut Col) {
             col.row(&format!("net.ap.{i}"), Some(icon), &ap.ssid, value, Mark::None, true, action);
         }
     }
+    // The saved VPNs, each with its switch
+    if !n.vpns.is_empty() {
+        col.separator();
+        col.label("VPN");
+        for (i, vpn) in n.vpns.iter().enumerate() {
+            let value = if vpn.connecting { "connecting…" } else { "" };
+            col.row(&format!("net.vpn.{i}"), Some("lock"), &vpn.name, value, Mark::Switch(vpn.active || vpn.connecting), true, send(Command::SetVpn(vpn.path.clone(), !(vpn.active || vpn.connecting))));
+        }
+    }
     if !col.ctx.config.commands.network.is_empty() {
         col.separator();
         let command = col.ctx.config.commands.network.clone();
@@ -701,15 +710,19 @@ pub fn desktop(ctx: &mut Ctx<'_>, widget: Option<&str>) -> Built {
         match kind {
             "note" => col.row("desk.note", Some("lyrics"), "Write the note", "", Mark::None, true, then(Action::EditNote)),
             "photos" => col.row("desk.photo", Some("skip-forward"), "Next picture", "", Mark::None, true, then(Action::NextPhoto)),
-            "pet" => {
-                col.row("desk.pet.feed", Some("coffee"), "Feed it", "", Mark::None, true, then(Action::PetFeed));
+            "pet" | "pet.friend" => {
+                let slot = u8::from(kind == "pet.friend");
+                let bed = col.ctx.config.pet.bed >= 0;
+                col.row("desk.pet.feed", Some("coffee"), "Feed them", "", Mark::None, true, then(Action::PetFeed));
                 col.row("desk.pet.play", Some("play"), "Play with a ball", "", Mark::None, true, then(Action::PetPlay));
-                col.row("desk.pet.next", Some("refresh"), "Another animal", "", Mark::None, true, then(Action::PetNext));
+                col.row("desk.pet.yarn", Some("play"), "Play with yarn", "", Mark::None, true, then(Action::PetYarn));
+                col.row("desk.pet.bed", Some("sleep"), if bed { "Take the bed away" } else { "Give them a bed" }, "", Mark::None, true, then(Action::PetBed(!bed)));
+                col.row("desk.pet.next", Some("refresh"), "Another animal", "", Mark::None, true, then(Action::PetNext(slot)));
+                col.row("desk.pet.away", Some("close"), "Put it away", "", Mark::None, true, then(Action::PetAway(slot)));
             }
             _ => {}
         }
-        if kind == "pet" {
-            col.row("desk.pet.away", Some("close"), "Put it away", "", Mark::None, true, then(Action::PetAway));
+        if kind.starts_with("pet") {
         } else {
             col.row("desk.remove", Some("close"), "Take it off the desktop", "", Mark::None, true, then(Action::WidgetRemove(kind.to_string())));
         }
@@ -1027,6 +1040,12 @@ fn capture(col: &mut Col) {
     if crate::services::detect_compositor() == crate::model::CompositorKind::Niri {
         col.row("capture.window", Some("layout"), "The window in focus", "", Mark::None, true, Some(close_after(Command::Screenshot(Capture::Window))));
     }
+    // Text off the screen: what's in a region, onto the clipboard
+    if crate::services::capture::TEXT_TOOLS.iter().all(|t| crate::config::command_available(t)) {
+        col.row("capture.text", Some("clipboard"), "Copy text from a region", "", Mark::None, true, Some(close_after(Command::ScreenText)));
+    } else {
+        col.note("Copying text off the screen needs grim, slurp and tesseract.");
+    }
     col.separator();
     col.gap(4.0);
     col.label("Record");
@@ -1247,6 +1266,21 @@ pub fn control(ctx: &mut Ctx<'_>, room: f32) -> Built {
     if n.available {
         let detail = if !n.wifi_enabled { "Off".to_string() } else if n.kind == "wifi" { n.name.clone() } else if n.kind.is_empty() { "Not connected".into() } else { n.name.clone() };
         list.push(Tile { key: "wifi", icon: "wifi-high", label: "Wi-Fi", detail, on: n.wifi_enabled, action: send(Command::SetWifi(!n.wifi_enabled)) });
+        // A VPN tile when there's one saved: the one up goes down, else the first comes up
+        if let Some(first) = n.vpns.first() {
+            let up = n.vpns.iter().find(|v| v.active || v.connecting);
+            let detail = match up {
+                Some(v) if v.connecting => format!("{}, connecting…", v.name),
+                Some(v) => v.name.clone(),
+                None if n.vpns.len() == 1 => format!("Off · {}", first.name),
+                None => "Off".into(),
+            };
+            let action = match up {
+                Some(v) => send(Command::SetVpn(v.path.clone(), false)),
+                None => send(Command::SetVpn(first.path.clone(), true)),
+            };
+            list.push(Tile { key: "vpn", icon: "lock", label: "VPN", detail, on: up.is_some(), action });
+        }
     }
     let b = &model.bluetooth;
     if b.available {

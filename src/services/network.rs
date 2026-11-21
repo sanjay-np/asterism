@@ -55,11 +55,31 @@ async fn known_ssids(bus: &Connection) -> Vec<String> {
     known
 }
 
+/// The saved VPNs: name, settings path and uuid. Read now and then, not on every change (each
+/// takes a call per saved connection).
+async fn saved_vpns(bus: &Connection) -> Vec<(String, String, String)> {
+    let mut vpns = Vec::new();
+    let settings = "org.freedesktop.NetworkManager.Settings";
+    let Ok(reply) = bus.call_method(Some(NM), "/org/freedesktop/NetworkManager/Settings", Some(settings), "ListConnections", &()).await else { return vpns };
+    let Ok(paths) = reply.body().deserialize::<Vec<zbus::zvariant::OwnedObjectPath>>() else { return vpns };
+    for path in paths {
+        let Ok(reply) = bus.call_method(Some(NM), path.as_str(), Some("org.freedesktop.NetworkManager.Settings.Connection"), "GetSettings", &()).await else { continue };
+        let Ok(config) = reply.body().deserialize::<std::collections::HashMap<String, std::collections::HashMap<String, zbus::zvariant::OwnedValue>>>() else { continue };
+        let Some(connection) = config.get("connection") else { continue };
+        let text = |key: &str| connection.get(key).and_then(|v| dbus::as_str(v)).unwrap_or_default();
+        if kind(&text("type")) == "vpn" {
+            vpns.push((text("id"), path.to_string(), text("uuid")));
+        }
+    }
+    vpns.sort_by_key(|v| v.0.to_lowercase());
+    vpns
+}
+
 /// RSN/WPA key management bits, as NetworkManager reports them.
 const KEY_MGMT_802_1X: u32 = 0x200;
 const KEY_MGMT_SAE: u32 = 0x400;
 
-async fn read(bus: &Connection, with_aps: bool) -> Network {
+async fn read(bus: &Connection, with_aps: bool, vpns: &[(String, String, String)]) -> Network {
     let Some(nm) = dbus::get_all(bus, NM, NM_PATH, NM).await else { return Network::default() };
     let mut network = Network { available: true, wifi_enabled: dbus::flag(&nm, "WirelessEnabled"), ..Default::default() };
 
@@ -70,6 +90,11 @@ async fn read(bus: &Connection, with_aps: bool) -> Network {
         if let Some(props) = dbus::get_all(bus, NM, path, ACTIVE).await {
             connections.push((path.clone(), props));
         }
+    }
+    // The saved VPNs, and which of them are up (2) or coming up (1)
+    for (name, path, uuid) in vpns {
+        let state = connections.iter().find(|(_, p)| dbus::text(p, "Uuid") == *uuid).map_or(0, |(_, p)| dbus::number(p, "State") as u32);
+        network.vpns.push(crate::model::Vpn { name: name.clone(), path: path.clone(), active: state == 2, connecting: state == 1 });
     }
     // The primary connection names it, but wifi or a cable underneath decide the icon
     let primary_props = connections.iter().find(|(p, _)| *p == primary).map(|(_, props)| props);
@@ -137,7 +162,9 @@ async fn read(bus: &Connection, with_aps: bool) -> Network {
 
 pub async fn run(out: Out, bus: Connection, mut commands: UnboundedReceiver<Command>) {
     let mut wants_aps_until: Option<Instant> = None;
-    let mut current = read(&bus, false).await;
+    let mut vpns = saved_vpns(&bus).await;
+    let mut vpns_read = Instant::now();
+    let mut current = read(&bus, false, &vpns).await;
     out.send(Update::Network(current.clone()));
     // Only NetworkManager's own object: access points report every wobble in strength,
     // and the ticker below follows that closely enough
@@ -168,6 +195,23 @@ pub async fn run(out: Out, bus: Connection, mut commands: UnboundedReceiver<Comm
                             out.send(Update::WifiJoined(ssid, ok, why));
                         });
                     }
+                    Command::SetVpn(path, on) => {
+                        if on {
+                            let root = zbus::zvariant::ObjectPath::try_from("/").expect("path");
+                            if let Ok(connection) = zbus::zvariant::ObjectPath::try_from(path.as_str()) {
+                                dbus::call(&bus, NM, NM_PATH, NM, "ActivateConnection", &(connection, root.clone(), root)).await;
+                            }
+                        } else {
+                            // Down: the active connection made from it
+                            for active in dbus::get(&bus, NM, NM_PATH, NM, "ActiveConnections").await.map(|v| dbus::as_strings(&v)).unwrap_or_default() {
+                                if dbus::get(&bus, NM, &active, ACTIVE, "Connection").await.is_some_and(|c| dbus::as_str(&c).is_some_and(|c| c == path))
+                                    && let Ok(active) = zbus::zvariant::ObjectPath::try_from(active.as_str())
+                                {
+                                    dbus::call(&bus, NM, NM_PATH, NM, "DeactivateConnection", &(active,)).await;
+                                }
+                            }
+                        }
+                    }
                     Command::ConnectWifi(ssid) => {
                         // Known networks and open ones connect straight away; others need a password, which nmcli asks for elsewhere
                         let _ = tokio::process::Command::new("nmcli").args(["device", "wifi", "connect", &ssid]).stdin(std::process::Stdio::null()).status().await;
@@ -179,7 +223,11 @@ pub async fn run(out: Out, bus: Connection, mut commands: UnboundedReceiver<Comm
             _ = settle, if pending => {
                 pending = false;
                 let with_aps = wants_aps_until.is_some_and(|until| Instant::now() < until);
-                let now = read(&bus, with_aps).await;
+                if vpns_read.elapsed() > Duration::from_secs(60) {
+                    vpns = saved_vpns(&bus).await;
+                    vpns_read = Instant::now();
+                }
+                let now = read(&bus, with_aps, &vpns).await;
                 if now != current {
                     current = now;
                     out.send(Update::Network(current.clone()));

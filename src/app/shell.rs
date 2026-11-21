@@ -24,6 +24,7 @@ pub(super) enum PanelKind {
     Overview,
     DeskMenu,
     Song,
+    Day,
 }
 
 pub(super) struct Panel {
@@ -107,6 +108,7 @@ impl App {
             PanelKind::Overview => "asterism-overview",
             PanelKind::DeskMenu => "asterism-desktop-menu",
             PanelKind::Song => "asterism-song",
+            PanelKind::Day => "asterism-day",
         };
         let surface = self.layer_shell.create_layer_surface(&self.qh, wl, layer, Some(namespace), Some(&output));
         surface.set_anchor(anchor);
@@ -366,6 +368,33 @@ impl App {
                 }
                 (pieces, None, if framed { 0.0 } else if self.theme.on_top { -10.0 } else { 10.0 })
             }
+            PanelKind::Day => {
+                let mut anim = std::mem::replace(&mut self.panels[index].surf.anim, Animator::new());
+                let mut ctx = popups::Ctx {
+                    model: &self.model,
+                    config: &self.config,
+                    theme: &self.theme,
+                    text: &mut self.painter.text,
+                    anim: &mut anim,
+                    state: &self.day_state,
+                    now: chrono::Local::now(),
+                    requests: Vec::new(),
+                    requested: &self.requested,
+                };
+                let framed = self.theme.framed();
+                let built = popups::day(&mut ctx, if framed { h } else { h - 24.0 });
+                self.panels[index].surf.anim = anim;
+                // In the middle, by the bar (under the clock, where it usually sits)
+                let gap = if framed { 0.0 } else { 10.0 };
+                let x0 = ((w - built.w) / 2.0).round();
+                let y0 = if self.theme.on_top { gap } else { (h - built.h - gap).round() };
+                let mut pieces = built.pieces;
+                for piece in &mut pieces {
+                    piece.x += x0;
+                    piece.y += y0;
+                }
+                (pieces, None, if framed { 0.0 } else if self.theme.on_top { -10.0 } else { 10.0 })
+            }
             PanelKind::Osd => {
                 let Some(level) = self.osd.as_ref().map(|(level, _)| level.clone()) else { return };
                 let mut pieces = cards::osd(&self.theme, &mut self.painter.text, &level);
@@ -615,6 +644,9 @@ impl App {
             (_, false) => {
                 self.close_menu();
                 self.close_panel(PanelKind::Launcher);
+                if self.panel_index(PanelKind::Day).is_some() {
+                    self.close_day();
+                }
                 self.control_state = popups::State::default();
                 // The whole output below the bar: a click beside the card closes it
                 self.open_panel(PanelKind::Control, Layer::Top, Anchor::all(), (0, 0), (0, 0, 0, 0), KeyboardInteractivity::Exclusive, 0);
@@ -718,6 +750,10 @@ impl App {
             if event.keysym == Keysym::Escape {
                 self.close_panel(PanelKind::Control);
             }
+            return;
+        }
+        if self.panel_index(PanelKind::Day).is_some() {
+            self.day_key(event);
             return;
         }
         if self.panel_index(PanelKind::Dashboard).is_some() {
@@ -1012,6 +1048,7 @@ impl App {
             },
             Request::Record { audio } => self.send(if self.model.recording.is_some() { Command::RecordStop } else { Command::RecordStart { audio } }),
             Request::Control(open) => self.toggle_control(open),
+            Request::Day(open) => self.toggle_day(open),
             Request::Menu(name) => self.menu_from_keys(&name),
             Request::Notifications => self.menu_from_keys("notifications"),
             Request::Quiet => self.send(Command::NotificationsQuiet),
@@ -1320,6 +1357,27 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
             anim.begin();
             let mut ctx = popups::Ctx { model, config, theme, text: &mut painter.text, anim: &mut anim, state: &state, now: chrono::Local::now(), requests: Vec::new(), requested: &requested };
             let built = popups::control(&mut ctx, h - 24.0);
+            let mut pieces = built.pieces;
+            for piece in &mut pieces {
+                piece.x += m;
+                piece.y += m;
+            }
+            (Surf::offscreen(built.w + m * 2.0, built.h + m * 2.0, scale), pieces, None)
+        }
+        "day" => {
+            // What the snapshot read (made up with --demo); `typing` shows the task field with
+            // the keyboard, `notes` the notes
+            let mut state = popups::State::default();
+            match query {
+                "typing" => (state.day_field, state.day_typed) = (1, "Book the".into()),
+                "notes" => state.day_field = 2,
+                _ => {}
+            }
+            let requested = HashSet::new();
+            let mut anim = Animator::new();
+            anim.begin();
+            let mut ctx = popups::Ctx { model, config, theme, text: &mut painter.text, anim: &mut anim, state: &state, now: chrono::Local::now(), requests: Vec::new(), requested: &requested };
+            let built = popups::day(&mut ctx, h - 24.0);
             let mut pieces = built.pieces;
             for piece in &mut pieces {
                 piece.x += m;

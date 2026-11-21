@@ -86,6 +86,7 @@ pub const POPUP_MARGIN: f32 = 14.0;
 
 mod backdrop;
 mod clipboard;
+mod day;
 mod desk;
 mod idle;
 mod night;
@@ -472,6 +473,10 @@ pub struct App {
     auth_cookie: Option<String>,
     /// What the control centre remembers while open (an armed button, a slider being dragged).
     control_state: popups::State,
+    /// What the day panel remembers while open (the month shown, the field being typed in).
+    day_state: popups::State,
+    /// When the to-do list or notes last changed and haven't been written yet.
+    day_dirty: Option<Instant>,
     idle_inhibit: Option<ZwpIdleInhibitManagerV1>,
     /// Holds the screen awake, on the bar with this id.
     inhibitor: Option<(ZwpIdleInhibitorV1, u32)>,
@@ -701,6 +706,7 @@ impl App {
         if let Some(index) = self.panel_index(PanelKind::Control) {
             self.panels[index].surf.dirty = true;
         }
+        self.redraw_day();
         if let Some(index) = self.panel_index(PanelKind::Dashboard) {
             self.panels[index].surf.dirty = true;
         }
@@ -738,6 +744,7 @@ impl App {
         self.expire_toasts();
         self.rotate_wallpaper();
         self.tick_timers();
+        self.save_day(false);
         self.apply_night_light();
         self.watch_idle();
         if self.model.recording.is_some() {
@@ -976,11 +983,17 @@ impl App {
                 self.close_menu();
                 self.close_panel(PanelKind::Control);
                 self.close_panel(PanelKind::DeskMenu);
+                if self.panel_index(PanelKind::Day).is_some() {
+                    self.close_day();
+                }
             }
             Action::Month(month) => {
                 if let Some(popup) = self.popup.as_mut() {
                     popup.state.month = month;
                     popup.surf.dirty = true;
+                } else if self.panel_index(PanelKind::Day).is_some() {
+                    self.day_state.month = month;
+                    self.redraw_day();
                 }
             }
             Action::Submenu(path) => {
@@ -999,6 +1012,11 @@ impl App {
                 }
             }
             Action::ToggleControl => self.toggle_control(None),
+            Action::ToggleDay => self.toggle_day(None),
+            Action::DayFocus(field) => self.day_focus(field),
+            Action::DayToggle(index) => self.day_toggle(index),
+            Action::DayRemove(index) => self.day_remove(index),
+            Action::DayClearDone => self.day_clear_done(),
             Action::AuthSubmit => self.auth_submit(),
             Action::AuthCancel => self.auth_cancel(),
             Action::Launch(index) => self.launch(index),
@@ -1619,6 +1637,9 @@ impl App {
             // Around the launcher or the control centre: a click there puts it away
             if let Some(kind @ (PanelKind::Launcher | PanelKind::Control | PanelKind::Wallpapers | PanelKind::Shortcuts | PanelKind::Clipboard | PanelKind::Dashboard | PanelKind::Overview | PanelKind::DeskMenu)) = panel {
                 self.close_panel(kind);
+            }
+            if panel == Some(PanelKind::Day) {
+                self.close_day();
             }
             return;
         };
@@ -2561,6 +2582,8 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         password: Default::default(),
         auth_cookie: None,
         control_state: popups::State::default(),
+        day_state: popups::State::default(),
+        day_dirty: None,
         inhibitor: None,
         bars: Vec::new(),
         backdrops: Vec::new(),

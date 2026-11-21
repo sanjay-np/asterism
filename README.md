@@ -1,244 +1,328 @@
-# Asterism
+<h1 align="center">Asterism</h1>
 
-A quiet, minimal desktop shell for **niri** and **Hyprland**, written in pure Rust.
+<p align="center">
+  <b>A quiet, complete desktop shell for niri and Hyprland, written in pure Rust.</b><br>
+  Bar · launcher · control centre · notifications · lock screen · widgets · wallpapers · settings — in one ~30 MB program.
+</p>
 
-A slim bar with a hairline under it, menus that float just off it as outlined cards, and colours
-grown from your wallpaper. Around the bar, everything a desktop needs, in the same language: a
-full-screen app launcher, a window overview, a control centre, notifications, a lock screen,
-desktop widgets, a wallpaper changer, a settings app, clipboard history, screenshots, timers,
-weather, night light, and password prompts for polkit, Wi-Fi and Bluetooth.
+<p align="center">
+  <img src="screenshots/readme/hero.png" alt="The Asterism desktop: the bar along the top, widgets on the wallpaper, the control centre open on the right">
+</p>
 
-No GTK, no Qt, no QML: it talks Wayland directly (layer-shell, xdg popups, fractional scaling,
-session lock, data control, gamma control) and draws everything on the CPU with tiny-skia,
-cosmic-text and resvg.
+Asterism draws everything a Wayland desktop needs around your windows, in one consistent look
+whose colours grow from your wallpaper. It talks to the compositor directly (layer-shell, xdg
+popups, session lock, data control, gamma control), renders on the CPU with tiny-skia, and links
+no GTK, Qt or QML.
 
 | | |
 |---|---|
-| ![The desktop with the control centre open](screenshots/readme/desktop.png) | ![The app launcher](screenshots/readme/launcher.png) |
-| The bar and the control centre | The launcher |
-| ![The window overview](screenshots/readme/overview.png) | ![Widgets on the desktop](screenshots/readme/widgets.png) |
-| The window overview | Widgets on the desktop |
-| ![The wallpaper changer](screenshots/readme/wallpapers.png) | ![Settings](screenshots/readme/settings.png) |
-| The wallpaper changer | Settings |
+| **Compositors** | niri, and Hyprland (both the Lua config of 0.55+ and older hyprlang) |
+| **Footprint** | ~32 MB of memory with wallpaper and widgets up, ~0.3 % of one core at rest |
+| **Dependencies** | one system library (libxkbcommon); everything else optional, found at run time |
+| **Configuration** | a Settings app, or one commented TOML file, reloaded live |
+| **Licence** | GPL-3.0-or-later |
 
-- [The look](#the-look)
-- [The bar](#the-bar)
-- [Finding things](#finding-things): launcher, overview, clipboard, shortcuts
-- [Your desktop](#your-desktop): wallpaper, widgets, night light
-- [Day to day](#day-to-day): control centre, notifications, settings, dashboard, timers, weather
+## Contents
+
+- [Highlights](#highlights)
+- [Look and feel](#look-and-feel)
+- [The bar and its menus](#the-bar-and-its-menus)
+- [Control centre](#control-centre) · [Your day](#your-day) · [Launcher](#launcher) · [Window overview](#window-overview)
+- [The desktop](#the-desktop): wallpapers, widgets, desktop menu, app colours, night light
+- [Pets](#pets)
+- [Notifications and on-screen cards](#notifications-and-on-screen-cards)
+- [Settings](#settings) · [Dashboard](#dashboard) · [Clipboard and shortcuts](#clipboard-and-shortcuts) · [Timers and weather](#timers-and-weather)
 - [Security and devices](#security-and-devices): lock screen, polkit, Wi-Fi, Bluetooth
-- [Screenshots and recording](#screenshots-and-recording)
-- [What leaves your machine](#what-leaves-your-machine)
-- [Requirements](#requirements) · [Install](#install) · [Keybinds](#keybinds) · [Configure](#configure) · [Hacking](#hacking)
+- [Screenshots, recording and text capture](#screenshots-recording-and-text-capture)
+- [Privacy](#privacy) · [Performance](#performance)
+- [Requirements](#requirements) · [Installation](#installation) · [Keybindings](#keybindings) · [Configuration](#configuration) · [Command reference](#command-reference)
+- [Troubleshooting and known limits](#troubleshooting-and-known-limits) · [Development](#development) · [Credits and licence](#credits-and-licence)
 
-## The look
+## Highlights
 
-- **Colour from your wallpaper.** The whole scheme (a dark Material 3 one) grows from the colour
-  that stands out most in your wallpaper, and grows again when you change it. Or pick the colour
-  yourself with `[colors] accent`. The bar's icons and the desktop's widgets take it on too, and
-  change with every new wallpaper: tinted toward it (the default), in its accent, a colour per
-  group of icons, or plain (`[colors] bar_icons` and `widgets`, or Settings → Look). Your
-  terminal and GTK apps can follow it as well (below).
-- **Flat surfaces with a hairline.** The bar is a solid strip; menus, panels and pop-ups are
-  cards with a 1 px outline and a soft shadow. Pointing at something in the bar draws a short
-  accent underline under it.
-- **Workspaces, three ways.** An *asterism* is a small pattern of stars, and that's the default:
-  a dot per workspace, the busy ones joined by a thin line, the one you're on ringed in the
-  accent. Or plain numbers. Or kanji — 一 二 三 … — with the one you're on in the accent and a
-  *bōten* (傍点), the emphasis dot Japanese type sets over a character. Choose in Settings → Look
-  → Workspaces, or with `page_style` in the config.
+| | |
+|---|---|
+| 🎨 **Colour from your wallpaper** | A Material 3 scheme grown from each new wallpaper, applied to the bar, menus, widgets — and, if you like, your terminal and GTK apps |
+| 🧭 **Everything in reach** | App launcher with maths, emoji and SSH; window overview; workspace previews on hover; clipboard history; keyboard-shortcut sheet |
+| 🗓️ **Your day** | Calendar, timers, a to-do list and notes, kept as plain Markdown files |
+| 🖼️ **A living desktop** | Wallpaper changer with animated transitions, desktop widgets you arrange by hand, a music visualizer |
+| 🔒 **The serious parts** | Lock screen (with fingerprint), polkit agent, Wi-Fi password prompts, Bluetooth pairing, notification daemon |
+| 🐈 **A little life** | Optional pets — a cat, a fox or a bird — that live on the screen and react to you |
+| ⚙️ **Scriptable** | Every panel and action through `asterism msg …`, for keybindings and scripts |
 
-  ![Workspaces as joined dots, and as kanji](screenshots/readme/bar.png)
+## Look and feel
 
-  The picture shows six workspaces, several with windows. niri keeps only the workspaces you use
-  plus one empty one after them, so with windows on one workspace the dots are just a ringed dot
-  and a hollow one; the line joining them appears once two or more workspaces have windows.
+Asterism's look is called *hairline*: flat surfaces edged with a 1-pixel outline, cards with a
+soft shadow, and the accent colour used sparingly to mark state.
 
-- **Five styles.** `line` (the default), `frame` (a thin frame round the screen with rounded
-  inner corners, menus hanging from the bar like drawers), `floating`, `islands` and
-  `transparent`.
+**Colour comes from the wallpaper.** The whole scheme is grown from the colour that stands out
+most in your picture and regrown at every change. Set `[colors] accent` to choose it yourself.
+Bar icons and widgets follow it too: *tinted* (default), *accent*, *colourful* or *plain*.
 
-  ![The frame style, calendar open](screenshots/readme/frame.png)
+<p align="center"><img src="screenshots/readme/colours.png" alt="The same desktop in four colour schemes, each grown from a different wallpaper"></p>
 
-## The bar
+**Five bar styles**: `line` (default), `floating`, `islands`, `transparent`, and `frame`, which
+runs a thin frame round the whole screen and hangs menus from the bar like drawers.
+
+<p align="center"><img src="screenshots/readme/bars.png" alt="The bar in the line, floating, islands, transparent and frame styles"></p>
+
+<p align="center"><img src="screenshots/readme/frame.png" alt="The frame style with the calendar open as a drawer" width="80%"></p>
+
+**Three ways to show workspaces.** An *asterism* is a small pattern of stars, and that is the
+default: a dot per workspace, busy ones joined by a line, the current one ringed. Or numbers. Or
+kanji, the current one marked with a *bōten* (傍点), the emphasis dot of Japanese type.
+
+<p align="center"><img src="screenshots/readme/workspaces.png" alt="Workspaces as joined dots, as numbers and as kanji"></p>
+
+Type is Google Sans Flex (bundled), icons are thin Material outlines (or rounded Material, or
+Phosphor), and motion is kept quick.
+
+## The bar and its menus
 
 | Module | Shows | Click | Right click | Scroll |
 |---|---|---|---|---|
-| `launcher` | An apps button | The launcher | | |
-| `pages` | Workspaces as joined dots, numbers or kanji. Point at one to see what's open there. | Go there | The window overview | Next / previous workspace |
-| `clock` | Time and date | Calendar with the moon's phase | | |
-| `weather` | The weather where you are | Now, sunrise and sunset, the next five days | | |
-| `media` | What's playing (MPRIS), sliding by when long | Cover, progress, controls, other players | Play / pause | |
-| `resources` | CPU and memory rings, temperature, network speed | The dashboard, or traffic | | |
-| `tray` | Background apps (StatusNotifierItem) | Activate | The app's menu | Scroll the app |
-| `tools` | Screenshot and recording, colour picker, clipboard history, microphone, stay awake | Their menu, run, or toggle | | |
-| `status` | Timers, notifications, keyboard layout, network, Bluetooth, volume, battery, control centre, settings, session; a red dot and the time while recording | Their menus | Mute, Bluetooth on/off, do not disturb | Volume |
+| `launcher` | An apps button | Launcher | | |
+| `pages` | Workspaces; hover one for a card of its windows | Go there | Window overview | Next / previous |
+| `clock` | Time and date | [Your day](#your-day) | Calendar | |
+| `weather` | Current weather | Forecast | | |
+| `media` | What's playing (MPRIS) | Player menu | Play / pause | |
+| `resources` | CPU and memory rings, temperature, network speed | Dashboard, traffic | | |
+| `tray` | Background apps (StatusNotifierItem) | Activate | App menu | Scroll the app |
+| `tools` | Screenshot and recording, colour picker, clipboard, microphone, stay awake | Menu, run or toggle | | |
+| `status` | Timers, notifications, keyboard layout, network, Bluetooth, volume, battery, control centre, settings, session | Their menus | Mute, Bluetooth, do not disturb | Volume |
 
-The menus: calendar, music, sound (volume, brightness, output device, microphone, per-app
-volume), network (Wi-Fi on/off, networks nearby, your saved VPNs with a switch each),
-Bluetooth (your devices with their charge, devices nearby; a device running low says so),
-battery (level, time left, power profiles), timers, weather, screenshot, session (lock, sleep,
-log out, restart, shut down; the last three ask for a second click), traffic, keyboard layouts,
-notifications, and every tray app's own menu.
+The top-right corner of the screen opens the control centre; the top-left corner opens your day.
 
-![The music menu](screenshots/readme/menu.png)
+<p align="center"><img src="screenshots/readme/menus-1.png" alt="The music, sound, network and weather menus"></p>
+<p align="center"><img src="screenshots/readme/menus-2.png" alt="The calendar, timers, notification centre and battery menus"></p>
 
-Menus taller than the screen scroll. They also work from the keyboard:
+**Menus:**
+- calendar, with the moon's phase
+- music: cover, seek bar, controls and other players
+- sound: volume, brightness, output device, microphone, per-app volume
+- network: Wi-Fi, nearby networks, saved VPNs
+- Bluetooth: devices with battery levels, pairing
+- battery and power profiles
+- timers, weather, screenshots
+- session: lock, sleep, log out, restart, shut down; the last three ask twice
+- network traffic, keyboard layouts, notifications
+- every tray app's own menu
 
-| Key | Does |
+Long menus scroll, and every menu works from the keyboard:
+
+| Key | Action |
 |---|---|
-| Up / Down, Tab / Shift+Tab | Move between items (the menu scrolls to follow) |
-| Home / End, Page Up / Page Down | Jump to the ends, or a page at a time |
-| Enter / Space | Activate |
-| Left / Right | Nudge a slider (5%, or 5 s on a track), change month in the calendar, open or leave a tray submenu |
-| Esc | Close, or step out of a tray submenu |
+| ↑ ↓ · Tab · Shift+Tab | Move between items |
+| Home · End · Page Up · Page Down | Jump to the ends, or by a page |
+| Enter · Space | Activate |
+| ← → | Nudge a slider (5 % or 5 s), change month, enter or leave a tray submenu |
+| Esc | Close, or leave a submenu |
 
-## Finding things
+## Control centre
 
-**The launcher** — the apps button, or `asterism msg launcher`. The whole screen: a search field
-over a grid of your apps spanning 80% of the width, in alphabetical order so each keeps its
-place, with a dot per page at the bottom. Typing narrows it to the best matches (names, initials
-like `vsc` for Visual Studio Code, keywords, descriptions), the apps you use most first. Apps
-start in their own systemd scope, so restarting the shell never takes them down. It also does:
+The power-icon button, the top-right corner, Mod+A, or `asterism msg control` (pictured at the
+top of this page).
 
-| Type | Gets you |
+- **Quick tiles:** Wi-Fi, VPN, Bluetooth, do not disturb, stay awake, microphone, power profile,
+  night light, wallpaper, settings.
+- **Sliders:** volume and brightness.
+- **Now playing**, and **notifications** grouped by app.
+- **Session row:** lock, sleep, log out, restart, shut down.
+
+Esc or a click beside the card closes it.
+
+## Your day
+
+A click on the clock, the top-left corner, Mod+Shift+D, or `asterism msg day`. It opens in the
+middle, under the clock.
+
+<p align="center"><img src="screenshots/readme/day.png" alt="The day panel: date, month calendar, timers, a to-do list and notes"></p>
+
+- **Today and the month**: the weekday, date and ISO week; a calendar you page with the arrows or the wheel.
+- **Timers**: start a focus session or a 5 / 10 / 25-minute countdown; running timers show here with Pause and Stop.
+- **To do**: click *Add a task* (or just start typing) and press Enter. Click a task to tick it, × to remove it, *Clear done* to sweep ticked ones away.
+- **Notes**: click and write. Tab moves between the task field and the notes; Esc leaves a field, then closes.
+
+Both live as plain files you can edit anywhere: `~/Documents/Asterism/todo.md`, a Markdown
+checklist (`- [ ] to do`, `- [x] done`), and `notes.md`. Changes are saved a second after you
+stop typing. The files are read again each time the panel opens, so edits made elsewhere show
+up. Move them with `[day] folder`.
+
+## Launcher
+
+The apps button, Mod+Space, or `asterism msg launcher`. A full-screen grid of your apps in
+alphabetical order (so each keeps its place), paged with dots, and a search field.
+
+<p align="center"><img src="screenshots/readme/launcher.png" alt="The launcher: a search field over a grid of apps"></p>
+
+Search matches names, initials (`vsc` → Visual Studio Code), keywords and descriptions, and puts
+the apps you use most first. Apps start in their own systemd scope, so restarting the shell never
+takes them down. It also understands:
+
+| Type | Result |
 |---|---|
-| `2*pi`, `= sqrt(2)` | The result; Enter copies it |
-| `> command` | Runs it |
-| `>ssh name` | The hosts in `~/.ssh/config`; Enter connects in your terminal |
+| `2*pi`, `= sqrt(2)` | The answer; Enter copies it |
+| `> command` | Runs the command |
+| `>ssh name` | Hosts from `~/.ssh/config`; Enter connects in your terminal |
 | `:heart` | Emoji by name; Enter copies one |
 | `? question` | A web search |
 
-Arrows move round the grid, Tab steps, Page Up/Down or the wheel turn the page, Enter opens,
-Backspace / Ctrl+W / Ctrl+U erase a letter, a word, everything, Esc closes.
+Arrows move through the grid, Page Up/Down or the wheel turn pages, Enter opens, and Esc closes.
+Backspace, Ctrl+W and Ctrl+U erase a letter, a word, or everything.
 
-**The window overview** — Mod+O (below), `asterism msg overview`, or a right-click on the
-workspaces. Every workspace as a card, with a map of its windows in their real columns and sizes,
-each with its app's icon and title. Click a window to go to it, a card to go to that workspace;
-drag a window onto another card to move it there; middle-click (or Delete) closes one. Type to
-find a window by title or app; the arrows and Enter work too. (There are no live thumbnails:
-niri doesn't let other programs capture single windows.)
+## Window overview
 
-**Clipboard history** — the tools' clipboard button, Mod+Ctrl+V, or `asterism msg clipboard`.
-What you've copied, text and pictures, newest first: type to search, Enter puts one back on the
-clipboard, Delete forgets it. It's kept in memory only (never written to disk), the last 50 with
-at most 8 pictures, and anything a password manager marks as secret is never read.
+Mod+O, `asterism msg overview`, or a right-click on the workspaces. Every workspace as a card,
+holding a map of its windows in their real columns and sizes, with each app's icon and title.
 
-**Keyboard shortcuts** — Mod+Shift+/ or `asterism msg shortcuts`: a sheet of your compositor's
-binds (niri's `binds { }`, Hyprland's `bind =` lines), grouped, with keycaps. Type to narrow it.
+<p align="center"><img src="screenshots/readme/overview.png" alt="The window overview: workspaces as cards with their windows laid out"></p>
 
-## Your desktop
+- **Click** a window to focus it, or a card to switch to that workspace.
+- **Drag** a window onto another card to move it there.
+- **Middle-click** or Delete closes a window.
+- **Type** to find a window by title or app.
 
-**The wallpaper, and changing it.** On every output: your picture (`cover`, `contain` or
-`stretch`), else a quiet gradient in the scheme's colours, or a painted landscape (`world =
-true`). The changer — Mod+W, the control centre's Wallpaper tile, or `asterism msg wallpaper` —
-shows your wallpaper folder as a full-screen grid of thumbnails, the one up now ringed. Click one
-(or the arrows and Enter) and it's up at once, colours and all; Shuffle (or R, or Mod+Shift+W)
-picks one at random, and `interval` (Settings → Wallpaper → Change by itself) changes it on its
-own every so many minutes. Your choice is remembered without rewriting your config.
-`enabled = false` leaves the wallpaper to another program.
+Resting the pointer on a workspace dot in the bar shows a smaller version of its card. niri
+offers no per-window capture, so these are maps rather than live thumbnails.
 
-Pictures change with an animation, a different one each time: a fade, a wipe from any side or
-corner, a circle growing from the middle, a corner or somewhere at random, blinds, ink spreading
-in soft blots, pixels turning over, or the new picture sliding in. Pick one, or none, with
-`[wallpaper] transition` (Settings → Wallpaper → Animation), and its length with
-`transition_ms`. Both pictures are painted afresh for the change and let go of after it, so the
-animation costs no memory the rest of the time.
+## The desktop
 
-**Widgets on the desktop.** On the wallpaper, under your windows: a big clock, the weather, what's
-playing (cover, progress, and the song's words line by line, from LRCLIB), a visualizer whose bars
-move with the music while something plays (in a card, or along the foot of the screen), a month
-calendar, the machine's load, a photo frame (a picture from a folder, a new one every few
-minutes) and a sticky note. Drag one to move it; it stays where you leave it, on any screen size.
+### Wallpapers
 
-**The desktop's menu.** Right-click the wallpaper for: arrange widgets, change the wallpaper (or
-take another at random), settings. Right-click a widget and the menu starts with that widget:
-take it off, write the note, show the next picture.
+Your picture on every output (`cover`, `contain` or `stretch`). Without one, Asterism draws a
+quiet gradient in the scheme's colours, or, with `world = true`, a painted landscape. The
+changer (Mod+W, the control centre's Wallpaper tile, or `asterism msg wallpaper`) shows your
+folder as a grid of thumbnails.
 
-To arrange them, choose Arrange widgets there, press Arrange in Settings → Desktop, or run
-`asterism msg widgets edit`. The screen dims and the widgets come up above your windows, each in
-a frame with a × to take it off; a strip at the top puts the others on. Drag to move (they snap
-to an 8 px grid), and turn the wheel on one to make it bigger or smaller (60% to 200%). Widgets
-with nothing to show yet (what's playing, the visualizers) stand in as placeholders so you can
-place them anyway. Esc, Enter or Done finishes. The list is `[widgets] show` in the config.
+<p align="center"><img src="screenshots/readme/wallpapers.png" alt="The wallpaper changer: a grid of thumbnails, the current one ringed"></p>
 
-The visualizers listen to what your speakers play (`parec` on the default output's monitor, or
-`pw-record`), only while one is on the desktop (or the new-song card shows) and a player is
-playing; the sound never leaves the shell, and it isn't counted as a microphone in use.
+- **Pick one**: click it, or use the arrows and Enter. It applies at once, colours and all.
+- **Random**: Shuffle, R, or Mod+Shift+W picks one at random.
+- **Rotation**: `[wallpaper] interval` changes it by itself every few minutes.
 
-**Colours for your apps.** With `[colors] apps` (or the switches in Settings → Look), the
-scheme is written for kitty, foot, Alacritty and GTK as files of their own, next to their
-configs: `asterism-colors.conf`, `.ini`, `.toml` or `.css`. Your own config files are never
-touched; include the file once (Settings shows the line for each) and the app follows every
-wallpaper change. The sixteen terminal colours keep their meaning, red still red, leaning a
-little toward the wallpaper's colour. kitty takes the change at once, Alacritty when the file
-changes, foot and GTK apps at their next start.
+Your choice is remembered without touching your config.
 
-**Night light.** Warmer colours in the evening, through the compositor's gamma control (no extra
-program). A tile in the control centre turns it on or off until the schedule next turns over;
-`[night_light] mode = "schedule"` warms the screen from sunset to sunrise (or set times), easing
-in and out over 20 minutes.
+**Every change animates**, a different way each time: fade, wipe, a growing circle, blinds,
+spreading ink, pixels turning over, or a slide. Choose one (or none) with
+`[wallpaper] transition`, and the length with `transition_ms`.
 
-## Day to day
+<p align="center"><img src="screenshots/readme/transitions.png" alt="Three wallpaper transitions caught halfway: ink, circle and blinds"></p>
 
-**The control centre** — the button beside the power icon, the bar's top-right corner, Mod+A,
-or `asterism msg control`. The time; quick tiles (Wi-Fi, VPN when one's saved, Bluetooth, do not disturb, stay awake,
-microphone, power profile, night light, wallpaper, settings); volume and brightness; what's
-playing; notifications grouped by app; and lock, sleep, log out, restart, shut down (the last
-three ask twice). Esc or a click beside it closes it.
+### Widgets
 
-**A pet.** A cat, a fox or a bird lives on your screen, above the windows. The cat and the fox
-walk along the foot of the screen; the bird flies about, hops, and perches on the bar. Each has
-a real coat to choose from (a tabby, ginger, black, white, tuxedo or Siamese cat; a red or arctic
-fox; a sparrow, robin or bluebird) or the wallpaper's colours, blinks, and follows things with
-its eyes.
+Small cards on the wallpaper, under your windows:
 
-It behaves like a pet: it has energy (it naps when tired), hunger (it asks to be fed) and wants
-attention (ignored a while, it comes to find you). It loafs, grooms, lies about, stretches and
-yawns when it wakes; falls asleep after a minute without input; gets the zoomies when the
-machine is busy; sways to music; perks up when a notification comes. Where the shell can see your
-pointer (over the desktop and the bar) it runs over to it, and when it's low and near, crouches,
-wiggles and pounces.
+- a big clock, the weather, and a month calendar
+- what's playing, with synced lyrics (from LRCLIB)
+- a music visualizer, in a card or along the foot of the screen
+- the machine's load
+- a photo frame, from a folder
+- a sticky note
 
-Click it to stroke it: it purrs, eyes shut, a heart over it. Drag it to pick it up: it dangles,
-and lands on its feet when you let go (complaining if you dropped it from high). Right-click it to
-**feed** it (a bowl appears and it goes to eat) or **play** (a ball it chases and bats about;
-click the ball to kick it), for another animal, or to put it away. It speaks now and then with a
-small bubble and a sound: meows, trills and purrs for the cat, yips for the fox, chirps for the
-bird, made by Asterism itself (no recordings), played quietly, and never in do-not-disturb or
-while the screen is locked. Clicks anywhere else pass straight through.
+<p align="center"><img src="screenshots/readme/desktop.png" alt="Widgets on the desktop: clock, weather, music, visualizer, note, calendar and system load"></p>
 
-A **second pet** (`[pet] friend`) keeps the first company: they go over to say hello, start a
-game of chase (one runs at the other, which runs off), lie down beside each other when one's
-asleep, and bat the same toys. **Yarn** is a second toy, softer than the ball, trailing a
-thread. Give them a **bed** from the menu and they go to it to nap, and when you're away; it
-stays where it was put. While a pet sits still its picture steps (six times a second, four
-asleep) rather than gliding, so most of the time nothing needs painting at all.
+**To arrange them**, right-click the desktop and choose *Arrange widgets*, press Arrange in
+Settings → Desktop, or run `asterism msg widgets edit`. The screen dims and each widget gets a
+frame:
 
-Settings → Desktop → Pet (animal, coat, a second pet, sounds, volume, size), or `[pet]` in the
-config; `asterism msg pet feed|play|yarn|bed|nobed|next|away` and `pet friend next|away` for
-keybinds.
+- Drag a widget to move it (it snaps to an 8 px grid).
+- Scroll on it to resize it (60–200 %).
+- × takes it off; the strip at the top adds the others.
+- Esc, Enter or Done finishes.
 
-**A workspace at a glance.** Rest the pointer on a workspace dot for a moment and a small card
-shows its windows where they sit, each with its app's icon, the focused one outlined.
+<p align="center"><img src="screenshots/readme/arrange.png" alt="Arranging widgets: frames with close buttons and a strip to add more"></p>
 
-**A new song** shows a small card under the bar for a few seconds: its cover, its name and its
-singer, the music moving under them. Not while the music's menu or the control centre is open;
-`song_popup = false` turns it off.
+The visualizer listens to what your speakers play (`parec` or `pw-record`), only while it's shown
+and music is playing. The sound never leaves the shell, and it doesn't show as a microphone in use.
 
-**Notifications.** Asterism is the notification daemon when no other one runs: pop-ups with
-pictures and action buttons, a centre on the bell (Mod+N) with do not disturb and clear all,
-critical ones that stay until you answer; point at a pop-up and it waits. Noisy apps can be told
-to stay quiet (kept in the centre, no pop-up) or be dropped, in `[notifications.apps]` or in
-Settings. The battery says so when it runs low, and again, urgently, when it's nearly empty. If
-another daemon already runs (mako, swaync, another shell), Asterism leaves it be.
+### Desktop menu
 
-**Settings** — the control centre's Settings tile, the gear in the bar, or `asterism msg
-settings`: the look, the bar, wallpaper, desktop widgets, night light, lock, notifications
-(with a rule for each app that has notified), weather and timers, as switches, choices and
-steppers. It's a window like any app's: the compositor tiles it, moves it and closes it (hold
-the sidebar or the page's title to move it; Ctrl+W, Ctrl+Q or the × close it). Its app id is
-`asterism-settings`, for window rules — say, to open it floating on niri:
+Right-click the wallpaper for *Arrange widgets*, *Change wallpaper*, *Another wallpaper* and
+*Settings*. Right-click a widget and the menu starts with that widget's own items: remove it,
+write the note, or show the next photo. (Pictured under
+[Notifications and on-screen cards](#notifications-and-on-screen-cards).)
+
+### Colours for your apps
+
+With `[colors] apps` (or the switches in Settings → Look), the scheme is written for **kitty**,
+**foot**, **Alacritty** and **GTK** as files of their own (`asterism-colors.conf`, `.ini`,
+`.toml`, `.css`). Your own configs are never edited: include the file once (Settings shows the
+exact line) and the app follows every wallpaper change. The sixteen terminal colours keep their
+meaning (red stays red), leaning gently toward the wallpaper.
+
+### Night light
+
+Warmer colours in the evening through the compositor's gamma control, with no extra program.
+Toggle it from the control centre, or set `[night_light] mode = "schedule"` to warm the screen
+from sunset to sunrise (or set times), easing over 20 minutes. Asterism holds the gamma control
+only while warming, so calibration tools keep working the rest of the time.
+
+## Pets
+
+An optional companion that lives on the screen above your windows: a **cat**, a **fox** or a
+**bird**, drawn by Asterism itself. Each has real coats to choose from (tabby, ginger, black,
+white, tuxedo or Siamese cat; red or arctic fox; sparrow, robin or bluebird) or the wallpaper's
+colours.
+
+<p align="center">
+  <img src="screenshots/readme/pet-fox.png" alt="The red fox in every pose" width="49%">
+  <img src="screenshots/readme/pet-cat.png" alt="The tabby cat in every pose" width="49%">
+  <img src="screenshots/readme/pet-bird.png" alt="The sparrow in every pose" width="49%">
+</p>
+
+**It behaves like a pet:**
+- **Moods:** it has energy, hunger and a need for company. It naps when tired, asks to be fed,
+  and comes looking for you when ignored.
+- **Everyday life:** it loafs, grooms, stretches and yawns. It falls asleep while you're away,
+  gets the zoomies when the machine is busy, sways to music, and perks up at notifications.
+- **Your pointer:** over the desktop and the bar, it chases the pointer, and crouches and
+  pounces when it's near.
+
+**What you can do with it:**
+- **Click** it to stroke it: it purrs.
+- **Drag** it to pick it up: it dangles and lands on its feet.
+- **Right-click** it to *feed* it, *play* (a ball or yarn), give it a *bed*, choose *another
+  animal*, or *put it away*.
+
+It speaks now and then with synthesized meows, trills, purrs, yips or chirps. They're quiet, and
+silent in do-not-disturb and while the screen is locked.
+
+A **second pet** (`[pet] friend`) keeps the first company: hellos, games of chase, naps side by
+side. While the pets sit still their frames step rather than glide, so they cost almost nothing.
+
+Set them up in Settings → Desktop → Pet or in `[pet]`; the commands are in the
+[Command reference](#command-reference).
+
+## Notifications and on-screen cards
+
+Asterism is the **notification daemon** when no other one is running. Pop-ups show pictures and
+action buttons, critical ones stay until answered, and pointing at a pop-up holds it.
+
+The centre (the bell, Mod+N) has *do not disturb* and *clear all*. Per-app rules
+(`[notifications.apps]`, or Settings) can keep an app quiet or drop its notifications. If
+another daemon is running (mako, swaync, another shell), Asterism leaves notifications to it.
+
+<p align="center"><img src="screenshots/readme/cards.png" alt="Notification pop-ups, the new-song card, a workspace preview and the desktop menu"></p>
+
+Other cards, from left to right after the pop-ups:
+- **New song:** its cover and name for a few seconds when the track changes (`song_popup = false` turns it off).
+- **Workspace preview:** shown when you rest the pointer on a workspace dot.
+- **Desktop menu:** from a right-click on the wallpaper.
+- **Levels:** volume, brightness and keyboard-layout changes show a small level from any source.
+
+<p align="center"><img src="screenshots/readme/osd.png" alt="The volume level"></p>
+
+## Settings
+
+The control centre's Settings tile, the gear in the bar, or `asterism msg settings`. Settings is
+an ordinary window, tiled and moved like any app. Its pages: Look, Bar, Wallpaper, Desktop,
+Night light, Lock, Notifications, Weather and Timers.
+
+<p align="center"><img src="screenshots/readme/settings.png" alt="The Settings window on its Look page"></p>
+
+- **Search:** type anywhere in the window to search every page.
+- **Saving:** each change is written to `config.toml` at once, keeping your comments and order.
+- **Window rules:** the app id is `asterism-settings`. For example, to open it floating on niri:
 
 ```kdl
 window-rule {
@@ -247,121 +331,173 @@ window-rule {
 }
 ```
 
-Type anywhere in the window (when you're not typing into a value) to search every page; Esc
-clears it. Each change is written to `config.toml` at once, keeping your comments and order. Every option is
-also in [config.example.toml](config.example.toml) for editing by hand.
+## Dashboard
 
-**The dashboard** — the CPU and memory rings, or `asterism msg dashboard`. Graphs of the
-processor, memory, graphics card and network over the last two minutes, how full each disk is,
-and what's running, by CPU or by memory. End stops one of yours (it asks twice, and never offers
-to end the session itself: niri, systemd, Asterism, PipeWire…).
+Click the CPU or memory ring, or run `asterism msg dashboard`.
 
-**Timers.** The timer in the bar: a countdown (1 min to 2 h, +1 min, pause), a focus timer (25
-minutes of focus, 5 off, 15 after every fourth round; all in `[timers]`) and a stopwatch with
-laps. While one runs, the bar shows a ring and the time left; a notification says when time's
-up. Also `asterism msg timer 25`, `msg focus`, `msg stopwatch`.
+- **Graphs** of processor, memory, graphics and network over the last two minutes.
+- **Disks:** how full each one is.
+- **What's running,** sorted by CPU or memory. *End* stops one of your processes; it asks twice,
+  and never offers to end the session itself (niri, systemd, PipeWire…).
 
-**Weather.** In the bar beside the clock, from Open-Meteo, for `[weather] city` (or
-`latitude`/`longitude`), else the city your time zone is named after. Its menu has the feel,
-humidity, wind, sunrise and sunset, and the next five days.
+<p align="center"><img src="screenshots/readme/dashboard.png" alt="The dashboard: graphs, disks and running processes"></p>
 
-**The level.** Volume, brightness and keyboard layout changes show a small level at the bottom of
-the screen, whatever made the change. Brightness goes through logind, no root needed.
+## Clipboard and shortcuts
+
+**Clipboard history:** the tools' clipboard button, Mod+Ctrl+V, or `asterism msg clipboard`.
+
+- **What it keeps:** text and pictures, newest first. Type to search, Enter puts one back, Delete
+  forgets it.
+- **Privacy:** it lives in memory only (never written to disk), up to 50 entries with at most 8
+  pictures. Anything a password manager marks as secret is never read.
+
+<p align="center"><img src="screenshots/readme/clipboard.png" alt="The clipboard history picker" width="60%"></p>
+
+**Keyboard shortcuts:** Mod+Shift+/ or `asterism msg shortcuts`. A sheet of your compositor's
+own bindings (niri's `binds { }`, Hyprland's `bind =` lines), grouped and drawn as keycaps.
+Type to narrow it down.
+
+<p align="center"><img src="screenshots/readme/shortcuts.png" alt="The keyboard shortcuts sheet"></p>
+
+## Timers and weather
+
+**Timers:**
+- **Countdown:** 1 minute to 2 hours, add a minute, pause.
+- **Focus:** 25 minutes on, 5 off, 15 after every fourth round; all set in `[timers]`.
+- **Stopwatch,** with laps.
+
+A running timer shows as a ring in the bar, and a notification says when time is up. Start them
+from the bar's timer menu, the day panel, or `asterism msg timer 25`, `focus` or `stopwatch`.
+
+**Weather** comes from Open-Meteo, for `[weather] city` (or `latitude`/`longitude`), else the city
+your time zone is named after. The bar shows the temperature. Its menu adds the feel, humidity,
+wind, sunrise and sunset, and five days ahead.
 
 ## Security and devices
 
-**The lock screen.** Your wallpaper, dimmed; the time; your name; a password field (a dot for
-each character). It locks on Mod+Alt+L or `asterism msg lock`, when logind is asked to (the
-session menu's Lock, `loginctl lock-session`), before the machine sleeps — so closing the lid
-locks too — and after `[lock] idle` minutes without input ("Stay awake" holds that off).
+<p align="center"><img src="screenshots/readme/dialogs.png" alt="The polkit password card, the Wi-Fi password card and a Bluetooth pairing confirmation"></p>
 
-- It's a process of its own, `asterism-lock`, so nothing that happens to the bar can unlock the
-  screen or lock you out.
-- Your password is checked by the system's `unix_chkpwd`, the helper every PAM screen locker
-  ends up asking; Asterism never reads `/etc/shadow` and links no PAM.
-- With a fingerprint reader fprintd supports and a finger enrolled (`fprintd-enroll`), touching
-  the reader unlocks it too (`[lock] fingerprint`).
-- **If it ever won't take your password:** press Ctrl+Alt+F3, log in there, run `asterism
-  unlock`, then switch back to your session (often Ctrl+Alt+F2 or F1).
+### Lock screen
 
-**Polkit.** When an app needs an administrator's say, Asterism asks for the password on a card
-(each character a dot). It's checked by polkit's own helper, never by Asterism, and wiped from
-memory once used. If another agent already serves your session, Asterism leaves it be
-(`polkit_agent = false` turns this off).
+The lock screen shows your wallpaper dimmed, the time, your name and a password field.
 
-**Wi-Fi passwords.** A secured network you haven't joined before asks for its password on the same
-kind of card. It goes to NetworkManager directly, never on a command line, and is kept only if it
-works; a wrong one says so and lets you try again. Networks that need more than a password
-(802.1X) are marked in the menu.
+**When it locks:**
+- on Mod+Alt+L or `asterism msg lock`
+- when logind asks (`loginctl lock-session`)
+- before the machine sleeps, so closing the lid locks too
+- after `[lock] idle` minutes without input ("Stay awake" holds that off)
 
-**Bluetooth pairing.** Opening the Bluetooth menu looks around for half a minute; devices in reach
-show under Nearby, and a click pairs, trusts and connects one. Asterism is BlueZ's pairing agent,
-so whatever the device asks comes up on a card: a number to check on both, a PIN or passkey to
-type, a code to type on the device, or whether to let it in (when a phone starts the pairing, or
-a device wants a service). Right-click a paired device twice to forget it.
+**How it's protected:**
+- It runs as a **separate process** (`asterism-lock`), so nothing that happens to the bar can
+  unlock the screen or lock you out.
+- Your password is checked by the system's **`unix_chkpwd`** helper, the one PAM screen lockers
+  rely on. Asterism never reads `/etc/shadow` and links no PAM.
+- **Fingerprint** unlock works through fprintd when a supported reader has a finger enrolled.
+- **Recovery:** if it ever won't take your password, switch to a console (Ctrl+Alt+F3), log in,
+  and run `asterism unlock`.
 
-## Screenshots and recording
+### Polkit
 
-The tools' screenshot button opens a menu: a region you choose, the whole screen, or the window
-in focus (niri's own screenshot UI; grim and slurp on Hyprland). A notification shows each with a
-thumbnail. Recording the screen, with or without sound, needs `wf-recorder`; while it runs the bar
-shows a red dot and the time, and a click stops it. Recordings go to `~/Videos/Recordings`. Also
-`asterism msg screenshot [region|screen|window]` and `msg record [audio]`.
+When an app needs administrator rights, Asterism asks for the password on a card. The password
+is checked by polkit's own helper, never by Asterism, and wiped from memory once used. If another
+agent already serves your session, Asterism leaves it be; `polkit_agent = false` turns this off.
 
-**Text off the screen**: "Copy text from a region" in the same menu (or `msg screen-text`): choose
-a region and the text in it is read and copied, with a notification showing what was found.
-It needs `slurp`, `grim` and `tesseract`; the picture goes straight from one to the next through
-a pipe, never to disk, and nothing leaves your machine.
+### Wi-Fi
 
-## What leaves your machine
+A secured network you haven't joined before asks for its password on a card. The password goes
+to NetworkManager over D-Bus, never on a command line, and is kept only if it works. A wrong one
+lets you try again. Saved VPNs get a switch in the network menu and a control-centre tile.
 
-Only these, and only when you use them:
+### Bluetooth
+
+Opening the Bluetooth menu scans for 30 seconds. Click a nearby device to pair, trust and
+connect it in one go.
+
+Asterism is BlueZ's pairing agent, so whatever a device asks comes up on a card: a number to
+compare, a PIN to type, or whether to let it in. Paired devices show their battery level and warn
+when it runs low. Right-click a device twice to forget it.
+
+## Screenshots, recording and text capture
+
+The tools' screenshot button opens a menu:
+
+- **Screenshot** of a region you choose, the whole screen, or the focused window. On niri this
+  uses niri's own screenshot UI; on Hyprland, grim and slurp. A notification shows each one with
+  a thumbnail.
+- **Record** the screen, with or without sound (needs `wf-recorder`). The bar shows a red dot
+  and the time; click it to stop. Recordings go to `~/Videos/Recordings`.
+- **Copy text from a region:** select an area and its text is recognised and copied (needs
+  `slurp`, `grim` and `tesseract`). The image goes through a pipe, never to disk.
+
+From the command line: `asterism msg screenshot [region|screen|window]`, `record [audio]` and
+`screen-text`.
+
+## Privacy
+
+Only these leave your machine, and only when you use the feature:
 
 | What | Sent to | Contains |
 |---|---|---|
-| Weather | [Open-Meteo](https://open-meteo.com) | The place: the city name you set (or your time zone's), then its coordinates |
-| Song words | [LRCLIB](https://lrclib.net) | The song playing: artist, title, album, length (`[widgets] lyrics = false` stops it) |
-| Album covers | The player's own cover address | Whatever the player points at |
-| `?` in the launcher | Your search engine (`[launcher] search`) | Your question |
+| Weather | [Open-Meteo](https://open-meteo.com) | The city you set (or your time zone's), then its coordinates |
+| Synced lyrics | [LRCLIB](https://lrclib.net) | The playing song's artist, title, album and length (`[widgets] lyrics = false` stops it) |
+| Album covers | The address the player gives | Whatever the player points at |
+| `?` searches in the launcher | Your search engine (`[launcher] search`) | Your question |
 
-Nothing looks you up by your IP address, and nothing else is sent anywhere.
+Nothing looks you up by IP address, and nothing else is sent anywhere. Clipboard history is
+never written to disk; passwords are zeroed in memory after use and never logged.
+
+## Performance
+
+Measured on a 1920×1200 laptop with the wallpaper, three widgets and a pet:
+
+| | |
+|---|---|
+| Memory | ~32 MB resident, of which ~21 MB is the program and its fonts (file-backed, shared) |
+| CPU at rest | ~0.3 % of one core |
+| CPU with a pet about | +1–2 % (less while it sits or sleeps) |
+| Wallpaper transition | 2–6 ms per frame at 1920×1200 |
+
+How it stays light:
+- **Damage tracking:** pieces of the UI are cached and only changed rectangles are redrawn and
+  sent.
+- **Buffers:** large surfaces get buffers of their own, which are freed when the surface goes.
+- **Pictures:** decoded wallpapers are handed back to the system as soon as they've been painted.
 
 ## Requirements
 
-- **niri**, or **Hyprland** (0.55+ with the Lua config, or older hyprlang versions — Asterism
-  sends dispatchers in whichever form your Hyprland answers to).
-- Rust 1.88 or newer to build.
-- At run time, all optional — the shell shows what it can find:
-  - `pactl` (PipeWire's pulse server or PulseAudio) for sound
-  - NetworkManager, UPower and power-profiles-daemon over D-Bus; BlueZ (`bluetooth.service`
-    running) for Bluetooth and pairing
-  - `unix_chkpwd` (part of Linux-PAM, on every desktop system) for the lock screen; fprintd for
-    fingerprint unlock
-  - `curl` for the weather, lyrics and album covers; `wl-copy` to copy from the launcher
-  - `parec` (PulseAudio's or pipewire-pulse's tools) or `pw-record` for the music visualizer
-  - a CJK font such as Noto Sans CJK for kanji workspaces; Noto Color Emoji (or another colour
-    emoji font) for emoji in the launcher
-  - `wf-recorder` to record the screen; on Hyprland, `grim` and `slurp` for screenshots
+**Compositor:** niri, or Hyprland. On Hyprland 0.55+ dispatchers use the Lua form, older versions
+the plain form; Asterism detects which one works.
 
-The only system library it links is libxkbcommon (for typing with your keyboard layout), which
-every Wayland desktop already has.
+**To build:** Rust 1.88 or newer. The only system library linked is **libxkbcommon**, which every
+Wayland desktop already has.
 
-## Install
+**At run time**, all optional; features appear when their tools are found:
+
+| For | Needs |
+|---|---|
+| Sound, per-app volume | `pactl` (PipeWire's pulse server or PulseAudio) |
+| Network, VPN, battery, power profiles | NetworkManager, UPower, power-profiles-daemon (D-Bus) |
+| Bluetooth and pairing | BlueZ, with `bluetooth.service` running |
+| Lock screen · fingerprint | `unix_chkpwd` (part of Linux-PAM) · fprintd |
+| Weather, lyrics, album covers | `curl` |
+| Copying from the launcher | `wl-copy` |
+| Music visualizer · pet sounds | `parec` or `pw-record` · `pw-play` or `paplay` |
+| Recording · Hyprland screenshots · text capture | `wf-recorder` · `grim`, `slurp` · plus `tesseract` |
+| Kanji workspaces · emoji | a CJK font (e.g. Noto Sans CJK) · a colour emoji font (e.g. Noto Color Emoji) |
+
+## Installation
 
 ```sh
+git clone https://github.com/sanjay-np/asterism.git && cd asterism
 cargo build --release
 install -Dm755 target/release/asterism ~/.local/bin/asterism
 mkdir -p ~/.config/asterism && cp config.example.toml ~/.config/asterism/config.toml
 ```
 
-After a rebuild, run the `install` line again and restart the shell (`pkill -x asterism`, then
-start it again, or log out and in): the running one keeps the old binary. Restarting never touches
-an open lock screen, which runs as `asterism-lock`.
+### Starting with your session
 
-Then start it with your session.
-
-**niri** — in `~/.config/niri/config.kdl`. niri may not have `~/.local/bin` on its `PATH`, so the
-full path is the safe choice (in the binds below too):
+**niri** (`~/.config/niri/config.kdl`). niri may not have `~/.local/bin` on its `PATH`, so use
+the full path:
 
 ```kdl
 spawn-at-startup "/home/you/.local/bin/asterism"
@@ -375,13 +511,13 @@ hl.on("hyprland.start", function()
 end)
 ```
 
-**Hyprland, hyprlang config (before 0.55)**:
+**Hyprland, hyprlang (before 0.55)**:
 
 ```ini
 exec-once = asterism
 ```
 
-**Or with systemd**, for either compositor when your session starts `graphical-session.target`
+**systemd**, for either compositor when your session reaches `graphical-session.target`
 (niri-session, uwsm):
 
 ```sh
@@ -389,10 +525,23 @@ install -Dm644 contrib/asterism.service ~/.config/systemd/user/asterism.service
 systemctl --user enable --now asterism.service
 ```
 
-**Coming from another shell?** Stop it from starting with your session (comment out its
-`spawn-at-startup` line), and move the keybinds that called it over to `asterism msg …` (below).
-Look at your lid switch too: one that asked the old shell to lock and suspend does nothing once
-it's gone. Asterism locks before any sleep by itself, so plain suspend is enough:
+### Updating
+
+After a rebuild, run the `install` line again, then restart the shell:
+
+```sh
+pkill -x asterism; setsid -f ~/.local/bin/asterism
+```
+
+Restarting never touches an open lock screen, which runs as its own process. Apps started from
+the launcher keep running.
+
+### Coming from another shell
+
+1. **Stop it starting:** comment out the other shell's startup line.
+2. **Move your keybindings** to `asterism msg …` (next section).
+3. **Check the lid switch.** If it used to ask the old shell to lock and suspend, it now does
+   nothing. Asterism locks before any sleep by itself, so plain suspend is enough:
 
 ```kdl
 switch-events {
@@ -400,21 +549,19 @@ switch-events {
 }
 ```
 
-Another bar can also run alongside: if one already owns the tray, Asterism joins it as a second
-host; if another shell is the notification daemon, Asterism leaves notifications to it.
+Other bars can run alongside. If one already owns the tray, Asterism joins as a second host; if
+another program is the notification daemon, Asterism leaves notifications to it.
 
-## Keybinds
+## Keybindings
 
-`asterism msg …` drives the running shell; `asterism msg help` lists every command.
-
-**niri** (`~/.config/niri/config.kdl`, inside `binds { }`; use the full path to `asterism` if it
-isn't on niri's `PATH`). These keys are free in niri's default config — Mod+C there centres a
-column, so the control centre goes on Mod+A:
+**niri** (inside `binds { }`; use the full path to `asterism` if it isn't on niri's `PATH`).
+These keys are free in niri's default config:
 
 ```kdl
 Mod+Space hotkey-overlay-title="Apps" { spawn "asterism" "msg" "launcher"; }
 Mod+O hotkey-overlay-title="Window overview" { spawn "asterism" "msg" "overview"; }
 Mod+A hotkey-overlay-title="Control centre" { spawn "asterism" "msg" "control"; }
+Mod+Shift+D hotkey-overlay-title="Your day" { spawn "asterism" "msg" "day"; }
 Mod+N hotkey-overlay-title="Notifications" { spawn "asterism" "msg" "notifications"; }
 Mod+Ctrl+V hotkey-overlay-title="Clipboard history" { spawn "asterism" "msg" "clipboard"; }
 Mod+W hotkey-overlay-title="Change the wallpaper" { spawn "asterism" "msg" "wallpaper"; }
@@ -424,8 +571,8 @@ Mod+Alt+L hotkey-overlay-title="Lock the screen" { spawn "asterism" "msg" "lock"
 Mod+Shift+Escape { spawn "asterism" "msg" "menu" "session"; }
 ```
 
-The volume, brightness and media keys can stay on `wpctl`, `brightnessctl` and `playerctl`:
-Asterism shows its level for changes from anywhere. Or route them through it:
+Volume, brightness and media keys can stay on `wpctl`, `brightnessctl` and `playerctl`, since
+Asterism shows the level for changes from any source. Or route them through it:
 
 ```kdl
 XF86AudioRaiseVolume allow-when-locked=true { spawn "asterism" "msg" "volume" "up"; }
@@ -439,25 +586,40 @@ XF86AudioNext allow-when-locked=true { spawn "asterism" "msg" "media" "next"; }
 XF86AudioPrev allow-when-locked=true { spawn "asterism" "msg" "media" "previous"; }
 ```
 
-**Hyprland**: the same commands with an exec bind, for example in hyprlang
+**Hyprland**: the same commands through `exec`, for example in hyprlang:
 
 ```ini
 bind = SUPER, SPACE, exec, asterism msg launcher
 bind = SUPER, O, exec, asterism msg overview
 bind = SUPER, A, exec, asterism msg control
+bind = SUPER SHIFT, D, exec, asterism msg day
 bind = SUPER ALT, L, exec, asterism msg lock
 bindel = , XF86AudioRaiseVolume, exec, asterism msg volume up
 bindel = , XF86MonBrightnessUp, exec, asterism msg brightness up
 ```
 
-and with the Lua config's exec dispatcher the same way. A menu opened by a key takes the
-keyboard: arrows, Enter, and Esc or the same key again to close it.
+A menu opened by a key takes the keyboard: use the arrows and Enter, and close it with Esc or
+the same key again.
 
-## Configure
+## Configuration
 
-Everything lives in `~/.config/asterism/config.toml`, and the Settings app writes there too;
-[config.example.toml](config.example.toml) documents every option. Changes apply within a couple
-of seconds, no restart needed. The ones you'll likely touch first:
+Everything lives in `~/.config/asterism/config.toml`, and the Settings app writes there too.
+[config.example.toml](config.example.toml) documents every option with comments. Changes apply
+within two seconds, with no restart.
+
+| Section | Covers |
+|---|---|
+| *(top level)* | `style`, `size`, `position`, `page_style`, `font`, `icons`, `hot_corner`, `outputs`, `song_popup` |
+| `[clock]` · `[layout]` | Clock format; which modules sit left, centre and right |
+| `[commands]` | Commands for settings, lock, suspend, log out, reboot, power off |
+| `[notifications]` · `[notifications.apps]` | Daemon, timeouts, battery warnings; per-app rules |
+| `[wallpaper]` | Image, fit, folder, rotation interval, transitions |
+| `[colors]` | Accent, role overrides, icon and widget tinting, app colour files |
+| `[launcher]` · `[weather]` · `[timers]` | Terminal and search engine; place and units; focus lengths |
+| `[lock]` · `[night_light]` | Idle minutes, before sleep, fingerprint; schedule and temperature |
+| `[widgets]` · `[day]` · `[pet]` | Desktop widgets; the to-do folder and corner; the pets |
+
+The settings you're most likely to change first:
 
 ```toml
 style = "line"            # line, frame, floating, islands or transparent
@@ -470,69 +632,134 @@ right = ["tools", "tray", "status"]
 
 [wallpaper]
 image = "~/Pictures/Wallpapers/sea.jpg"   # the colours come from it
-interval = 0                              # minutes between changes on its own; 0 never
+interval = 0                              # minutes between automatic changes; 0 = never
 
 [lock]
-idle = 10                 # minutes without input before it locks; 0 never
+idle = 10                 # minutes without input before locking; 0 = never
 
 [widgets]
 show = ["clock", "weather", "media"]
 
 [colors]
-# accent = "#4a6fd9"      # grow the scheme from this instead of the wallpaper
+# accent = "#4a6fd9"      # grow the scheme from this colour instead of the wallpaper
 ```
 
-## Hacking
+## Command reference
+
+`asterism msg COMMAND` drives the running shell (one per Wayland display), for keybindings and
+scripts. `asterism msg help` prints this list.
+
+| Command | Does |
+|---|---|
+| `launcher`, `control`, `day`, `overview`, `dashboard`, `settings`, `clipboard`, `shortcuts` `[open\|close]` | Toggle (or open / close) that panel |
+| `menu NAME` | Toggle a bar menu: `calendar`, `media`, `sound`, `network`, `bluetooth`, `power`, `session`, `machine`, `traffic`, `keyboard`, `notifications` |
+| `notifications [clear]` · `dnd` | Notification centre, or clear it · toggle do not disturb |
+| `volume up\|down [PERCENT]` · `volume mute` · `mic mute` | Change volume (and show it) · mute · mute the microphone |
+| `brightness up\|down [PERCENT]` · `osd volume\|brightness` | Change brightness · show a level without changing it |
+| `media play-pause\|next\|previous` | Control the player the bar follows |
+| `wallpaper [open\|close]` · `wallpaper next\|previous\|random` · `wallpaper set PATH` | The changer · step · set a picture |
+| `widgets [edit\|done]` | Arrange the desktop's widgets, or finish |
+| `night-light [on\|off]` · `awake` | Night light · keep the screen awake |
+| `lock` | Lock the screen |
+| `screenshot [region\|screen\|window]` · `screen-text` · `record [audio]` | Capture · copy text from a region · start or stop recording |
+| `timer MINUTES` · `timer pause\|cancel` · `focus` · `stopwatch [lap\|reset]` | Timers |
+| `pet feed\|play\|yarn\|bed\|nobed` · `pet [friend] next\|away` | Pets and their things |
+| `reload` · `ping` | Re-read the config · check the shell is running |
+
+Other entry points: `asterism lock` runs the lock screen alone, `asterism unlock` releases it
+(the recovery path), and `asterism --snapshot` renders the UI to a PNG (see Development).
+
+## Troubleshooting and known limits
+
+**Locked out?** Switch to a console with Ctrl+Alt+F3, log in, run `asterism unlock`, then switch
+back to your session (often Ctrl+Alt+F1 or F2).
+
+**Asterism won't start, saying it's already running.** Only one shell per display is allowed;
+`asterism msg ping` answers if one is up. Use `pkill -x asterism` to stop it.
+
+**No notification pop-ups.** Another daemon owns the notification name (mako, swaync, dunst,
+another shell); Asterism steps aside on purpose. Stop the other one and restart Asterism.
+
+**Something is missing from the bar.** Run with `RUST_LOG=debug asterism` to see which services
+and tools were found.
+
+**Known limits:**
+- No 802.1X (enterprise) Wi-Fi.
+- Notification bodies are plain text, with no inline reply.
+- The overview and workspace previews are window maps, not live thumbnails (niri has no
+  per-window capture).
+- Clipboard history is empty after a restart, by design.
+- The wallpaper changer lists one folder (PNG and JPEG). There is one picture for all outputs.
+- Pets see the pointer only over the shell's own surfaces, since Wayland keeps the pointer's
+  position over other windows private.
+- The day panel's notes are typed at the end only. For heavier editing, open `notes.md`.
+- Hyprland support is tested against its IPC, less in daily use than niri.
+
+## Development
 
 ```sh
-cargo run --release                     # run it (refuses to start twice)
-cargo test                              # 62 tests (and 2 opt-in): compositor IPC, the Bluetooth agent, settings writes, the visualizer's FFT…
-cargo run --example fixtures -- 60      # a fake player and a fake tray app for a minute
-asterism --snapshot bar.png             # draw the bar with live data into a PNG
-asterism --snapshot m.png --menu sound  # or one of its menus
-asterism --snapshot p.png --panel overview      # or a panel: launcher, control, overview, dashboard,
-                                                # settings, wallpapers, clipboard, shortcuts, toasts,
-                                                # osd, auth, wifi, pair ([--query TEXT])
-asterism --snapshot d.png --panel wallpaper [--menu control]   # the whole desktop, widgets, a menu open
-asterism --snapshot e.png --panel widgets [--hover widget.media] # the desktop while arranging its widgets
-asterism --snapshot m.png --panel deskmenu [--query note]         # the desktop's menu (for a widget)
-asterism --snapshot s.png --panel song                           # the new-song card
-asterism --snapshot t.png --panel transition [--query ink@0.3]   # a frame of the wallpaper changing
-asterism --snapshot p.png --panel pet --query cat:ginger --scale 2  # an animal in every pose
-asterism --snapshot s.png --demo        # made-up workspaces, windows and networks, for sharing
-RUST_LOG=asterism::app=trace asterism   # frame timings
+cargo run --release                       # run it (refuses to start twice)
+cargo test --release                      # 69 tests, plus 3 opt-in timing/sample tests (--ignored)
+cargo clippy --release                    # kept warning-free
+cargo run --example fixtures -- 60        # a fake music player and tray app for a minute
+RUST_LOG=asterism::app=trace asterism     # per-frame timings
 ```
 
-Layout of the code (more in [AGENTS.md](AGENTS.md)):
+**Snapshot mode** renders the real UI with live data and no compositor, which is how every
+picture in this README was made:
 
-| | |
+```sh
+asterism --snapshot bar.png                                     # the bar
+asterism --snapshot m.png --menu sound                          # a menu
+asterism --snapshot p.png --panel overview --demo               # a panel: launcher, control, day, overview,
+                                                                # dashboard, settings, wallpapers, clipboard,
+                                                                # shortcuts, toasts, osd, auth, wifi, pair,
+                                                                # song, peek, deskmenu ([--query TEXT])
+asterism --snapshot d.png --panel wallpaper --menu control      # the whole desktop with a menu or panel in place
+asterism --snapshot e.png --panel widgets --hover widget.media  # arranging widgets
+asterism --snapshot t.png --panel transition --query ink@0.3    # a frame of a wallpaper transition
+asterism --snapshot f.png --panel pet --query fox:red --scale 2 # a pet in every pose
+```
+
+`--demo` replaces your workspaces, windows, networks, processes and to-do list with made-up ones,
+for screenshots you can share.
+
+### Code map
+
+More detail on architecture and conventions is in [AGENTS.md](AGENTS.md).
+
+| Path | What's there |
 |---|---|
-| `src/app/` | Wayland: a bar per output, menus, panels, desktop widgets, wallpaper, idle, clipboard, night light, damage tracking |
-| `src/bar.rs`, `src/popups.rs` | The bar's modules; the menus and the control centre |
+| `src/app/` | Wayland: bars per output, menus, panels, widgets, wallpaper and transitions, pets, idle, clipboard, night light, damage tracking, buffers |
+| `src/bar.rs`, `src/popups.rs` | Bar modules; menus, the control centre and the day panel |
 | `src/launcher.rs`, `src/overview.rs` | App search, maths, emoji, the grid; the window overview |
-| `src/cards.rs` | Toasts, the level, the password cards (polkit, Wi-Fi) and the pairing card |
-| `src/lock.rs` | The lock screen, a process of its own (`asterism lock` / `asterism unlock`) |
-| `src/clipboard.rs`, `src/shortcuts.rs` | Clipboard history and its picker; the keyboard shortcuts sheet |
-| `src/dashboard.rs`, `src/widgets.rs`, `src/settings.rs` | The dashboard; desktop widgets and lyrics; the settings app and its config writer |
-| `src/wallpapers.rs`, `src/palette.rs` | The wallpaper changer; the colour scheme from the wallpaper |
-| `src/timers.rs`, `src/weather.rs`, `src/night.rs` | Timers, the weather, night light's curves and schedule |
-| `src/services/` | niri and Hyprland IPC, MPRIS, tray, UPower, NetworkManager, BlueZ (and its agent), pactl, notifications, polkit, logind, weather, lyrics, capture, /proc |
+| `src/cards.rs` | Notification pop-ups, levels, password and pairing cards, song and workspace cards |
+| `src/lock.rs` | The lock screen, a process of its own |
+| `src/services/` | niri and Hyprland IPC, MPRIS, tray, UPower, NetworkManager, BlueZ, pactl, notifications, polkit, logind, weather, lyrics, capture, /proc |
+| `src/widgets.rs`, `src/dashboard.rs`, `src/settings.rs` | Desktop widgets; the dashboard; the Settings app and its comment-preserving config writer |
+| `src/day.rs`, `src/clipboard.rs`, `src/shortcuts.rs` | To-do and notes files; clipboard history; the shortcuts sheet |
+| `src/wallpapers.rs`, `src/transition.rs`, `src/palette.rs`, `src/appcolors.rs` | The changer; transitions; the scheme from the wallpaper; colour files for apps |
+| `src/pet/` | The pets: behaviour, drawing, synthesized voices |
 | `src/ui.rs`, `src/render/` | Pieces, primitives, actions, animation; tiny-skia drawing, text, icons |
-| `src/theme.rs`, `src/config.rs` | Colour roles, sizes, settings |
-
-It stays light: about 60 MB of memory with the wallpaper and widgets up, around 0.1% of a core
-while idle, and around 2% while a long song title slides by.
+| `src/theme.rs`, `src/config.rs` | Colour roles and sizes; the configuration |
 
 ## Credits and licence
 
-Asterism began as a rewrite of [ETEA Shell](https://github.com/SDcold/etea-shell)'s top bar by
-SDcold, and its layout and much of its feature list still owe a lot to it; the frame style and
+Asterism began as a rewrite of the top bar of [ETEA Shell](https://github.com/SDcold/etea-shell)
+by SDcold, and its layout and much of its feature list still owe a lot to it. The frame style and
 several features took cues from [cykler-caelestia](https://github.com/cykler01/cykler-caelestia).
-It is under the same licence as ETEA, the GNU GPL v3 (see `LICENSE`).
 
-Bundled assets keep their own licences: Google Sans Flex and Poppins (SIL Open Font License,
-`assets/fonts/GoogleSansFlex-OFL.txt`, `assets/fonts/OFL.txt`), Material outline icons and
-Material Symbols (Apache 2.0, `assets/icons/outline/LICENSE.txt`,
-`assets/icons/material/LICENSE.txt`), Phosphor icons (MIT, `assets/icons/phosphor-fill/LICENSE.txt`),
-and emoji names from Unicode's emoji-test.txt (Unicode License v3, `assets/emoji-LICENSE.txt`).
-Weather by [Open-Meteo](https://open-meteo.com), lyrics by [LRCLIB](https://lrclib.net).
+Asterism is free software under the **GNU General Public License v3.0 or later**, the same as
+ETEA (see `LICENSE`).
+
+Bundled assets keep their own licences:
+- **Fonts:** Google Sans Flex and Poppins, under the SIL Open Font License
+  (`assets/fonts/GoogleSansFlex-OFL.txt`, `assets/fonts/OFL.txt`).
+- **Icons:** Material outline icons and Material Symbols, under Apache 2.0
+  (`assets/icons/outline/LICENSE.txt`, `assets/icons/material/LICENSE.txt`); Phosphor, under MIT
+  (`assets/icons/phosphor-fill/LICENSE.txt`).
+- **Emoji names:** from Unicode's emoji-test.txt, under the Unicode License v3
+  (`assets/emoji-LICENSE.txt`).
+
+Weather data by [Open-Meteo](https://open-meteo.com); lyrics by [LRCLIB](https://lrclib.net).
+The wallpapers in these screenshots are abstract gradients made for this README.

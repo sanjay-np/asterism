@@ -218,6 +218,17 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
                     }
                 });
             }
+            DayLoad(dir) => {
+                let out = out.clone();
+                tokio::task::spawn_blocking(move || out.send(Update::Day(crate::day::load(&dir))));
+            }
+            DaySave(dir, day) => {
+                tokio::task::spawn_blocking(move || {
+                    if let Err(error) = crate::day::save(&dir, &day) {
+                        log::warn!("couldn't save the day panel's files in {}: {error}", dir.display());
+                    }
+                });
+            }
             ListPhotos(dir) => {
                 let out = out.clone();
                 tokio::task::spawn_blocking(move || {

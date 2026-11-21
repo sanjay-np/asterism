@@ -41,7 +41,7 @@ impl App {
             Err(error) => log::error!("couldn't start the lock screen: {error}"),
         }
         self.close_menu();
-        for kind in [PanelKind::Launcher, PanelKind::Control, PanelKind::Wallpapers, PanelKind::Shortcuts, PanelKind::Clipboard] {
+        for kind in [PanelKind::Launcher, PanelKind::Control, PanelKind::Day, PanelKind::Wallpapers, PanelKind::Shortcuts, PanelKind::Clipboard] {
             self.close_panel(kind);
         }
     }

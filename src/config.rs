@@ -278,6 +278,21 @@ impl WidgetSettings {
     }
 }
 
+/// The day panel on the left: where its files go, and whether the top-left corner opens it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DaySettings {
+    /// Where todo.md and notes.md live; empty takes ~/Documents/Asterism.
+    pub folder: String,
+    pub corner: bool,
+}
+
+impl Default for DaySettings {
+    fn default() -> Self {
+        Self { folder: String::new(), corner: true }
+    }
+}
+
 /// The pet on the screen.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -457,6 +472,7 @@ pub struct Config {
     pub widgets: WidgetSettings,
     pub wallpaper: WallpaperSettings,
     pub pet: PetSettings,
+    pub day: DaySettings,
 }
 
 impl Default for Config {
@@ -499,6 +515,7 @@ impl Default for Config {
             widgets: WidgetSettings::default(),
             wallpaper: WallpaperSettings::default(),
             pet: PetSettings::default(),
+            day: DaySettings::default(),
         }
     }
 }

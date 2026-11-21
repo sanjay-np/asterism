@@ -104,6 +104,8 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
             row(&["clock", "seconds"], "Seconds", "", Control::Switch(c.clock.seconds)),
             row(&["clock", "date"], "Date beside the time", "", choice(&[("Saturday, November 21", "%A, %B %-d"), ("Sat 21 Nov", "%a %-d %b"), ("21/11/2026", "%d/%m/%Y"), ("None", "")], &c.clock.date)),
             row(&["hot_corner"], "Hot corner", "The top-right corner opens the control centre", Control::Switch(c.hot_corner)),
+            row(&["day", "corner"], "Day panel corner", "The top-left corner opens your day: calendar, timers, to-do, notes (so does clicking the clock)", Control::Switch(c.day.corner)),
+            row(&["day", "folder"], "To-do and notes folder", "todo.md and notes.md live here; empty takes ~/Documents/Asterism", Control::Text(c.day.folder.clone())),
             row(&["song_popup"], "New song card", "Its cover and name for a moment, when the song changes", Control::Switch(c.song_popup)),
         ],
         2 => vec![

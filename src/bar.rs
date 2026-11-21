@@ -235,7 +235,10 @@ impl Ctx<'_> {
         }
         piece.glow = true;
         piece.lift = true;
-        piece.actions.left = menu(Kind::Calendar);
+        // A click opens the day panel (the month, timers, to-do, notes); a right click the
+        // calendar alone
+        piece.actions.left = Some(Action::ToggleDay);
+        piece.actions.right = menu(Kind::Calendar);
         Module { pieces: vec![piece], spacing: 0.0 }
     }
 
@@ -704,6 +707,16 @@ fn region(&mut self, names: &[String]) -> (Vec<Module>, f32) {
             corner.lift = true;
             corner.label = Some("Control centre".into());
             corner.actions.left = Some(Action::ToggleControl);
+            layout.pieces.push(corner);
+        }
+        // And the top-left one, the day panel
+        if self.config.day.corner {
+            let mut corner = Piece::new("corner.day", t.bar_side, t.bar_height);
+            corner.x = 0.0;
+            corner.y = t.line();
+            corner.lift = true;
+            corner.label = Some("Your day".into());
+            corner.actions.left = Some(Action::ToggleDay);
             layout.pieces.push(corner);
         }
         layout

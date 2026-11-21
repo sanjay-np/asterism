@@ -32,6 +32,7 @@ asterism msg COMMAND
     lock                           Lock the screen
     dashboard [open|close]         Toggle the dashboard (graphs, disks, processes)
     settings [open|close]          Toggle the settings app
+    day [open|close]               Toggle the day panel (calendar, timers, to-do, notes)
     overview [open|close]          Toggle the window overview
     widgets [edit|done]            Arrange the desktop's widgets (add, remove, move), or finish
     pet feed|play|yarn             Put down food, a ball or yarn for the pets
@@ -86,6 +87,9 @@ pub fn parse(words: &[&str]) -> Result<Request, String> {
         ["overview"] => Request::Overview(None),
         ["overview", "open"] => Request::Overview(Some(true)),
         ["overview", "close"] => Request::Overview(Some(false)),
+        ["day"] => Request::Day(None),
+        ["day", "open"] => Request::Day(Some(true)),
+        ["day", "close"] => Request::Day(Some(false)),
         ["settings"] => Request::Settings(None),
         ["settings", "open"] => Request::Settings(Some(true)),
         ["settings", "close"] => Request::Settings(Some(false)),
@@ -216,6 +220,7 @@ mod tests {
         assert_eq!(parse(&["screenshot", "window"]), Ok(Request::Screenshot(Capture::Window)));
         assert_eq!(parse(&["record", "audio"]), Ok(Request::Record { audio: true }));
         assert_eq!(parse(&["screen-text"]), Ok(Request::ScreenText));
+        assert_eq!(parse(&["day", "open"]), Ok(Request::Day(Some(true))));
         assert_eq!(parse(&["clipboard"]), Ok(Request::Clipboard(None)));
         assert_eq!(parse(&["shortcuts", "open"]), Ok(Request::Shortcuts(Some(true))));
         assert_eq!(parse(&["night-light", "off"]), Ok(Request::NightLight(Some(false))));

@@ -8,6 +8,7 @@ mod cards;
 mod clipboard;
 mod config;
 mod dashboard;
+mod day;
 mod images;
 mod ipc;
 mod launcher;

@@ -10,7 +10,7 @@ Asterism began as a rewrite of the top bar of [ETEA Shell](https://github.com/SD
 **Hyprland**, and is now a **complete desktop shell**, and the user's only one (it replaced
 Noctalia on 2026-11-21): bar and menus, launcher, window overview, control centre,
 notifications, lock screen (with fingerprint), polkit/Wi-Fi/Bluetooth prompts, wallpaper and
-its changer, desktop widgets, settings app, dashboard, clipboard history, screenshots and
+its changer, desktop widgets, settings app, dashboard, a day panel (to-do, notes), clipboard history, screenshots and
 recording, timers, weather, night light, keyboard-shortcut sheet. README.md is the user-facing
 tour, grouped by what you're doing; this file is how it works and where it stands.
 
@@ -60,7 +60,7 @@ and Poppins (OFL), Material outline icons and Material Symbols (Apache 2.0), Pho
 Asterism **is** the user's shell now: niri starts `/home/uncore/.local/bin/asterism`
 (`spawn-at-startup`; Noctalia's line is commented out; the original config is saved as
 `~/.config/niri/config.kdl.before-asterism`). Binds (all `asterism msg …`): Mod+Space launcher,
-Mod+A control centre, Mod+N notifications, Mod+W wallpaper changer, Mod+Shift+W random
+Mod+A control centre, Mod+Shift+D day panel, Mod+N notifications, Mod+W wallpaper changer, Mod+Shift+W random
 wallpaper, Mod+Shift+Escape session menu, Mod+Alt+L lock, Mod+Ctrl+V clipboard,
 Mod+Shift+Slash shortcuts sheet, Mod+O overview; volume/brightness/media keys stay on
 wpctl/brightnessctl/playerctl. The lock is Asterism's own (`[lock] idle = 10`, `before_sleep =
@@ -74,8 +74,9 @@ pipewire-pulse (`parec`, `pactl`, `pw-record` present). kitty (its kitty.conf st
 through adw-gtk3-dark (gtk.css is a symlink to the theme). The user's config has
 `[wallpaper] interval = 5` (asked for 2026-11-21) with the default random animation, and
 widgets clock, media and visualizer (placed by hand in the editor), and a pet: `[pet] animal =
-"fox"` (switched from the cat by the user), its other settings at their defaults (sounds on,
-volume 40). Measured on their screen after the optimization round: ~34 MB RSS (21 MB of it the
+"fox"` (switched from the cat by the user), `coat = "red"`, `size = 70` (both set by the user in
+Settings), no second pet, no bed yet, sounds on at volume 40. One VPN saved in NetworkManager
+("client"); BlueZ off; no slurp/grim/tesseract. Measured on their screen after the optimization round: ~34 MB RSS (21 MB of it the
 binary and fonts, file-backed), 1.9 MB shm, ~2.3 % CPU with the fox out (it was 79 MB, ~3 %).
 
 How the user works: short requests, picks from offered options; after each round they want
@@ -91,7 +92,7 @@ history (etea-bar) was removed on request; keep the ETEA Shell credit in the REA
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 66 tests (+3 opt-in, --ignored), see below
+cargo test --release                            # 69 tests (+3 opt-in, --ignored), see below
 ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
 cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
 cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
@@ -112,7 +113,8 @@ visual change and look at the result:
 asterism --snapshot out.png [--width 1920] [--scale 2] [--hover KEY] [--wait 3]
 asterism --snapshot out.png --menu NAME [--focus KEY] [--room PX --scroll PX]
 asterism --snapshot out.png --panel launcher|toasts|osd|control|auth|wallpaper [--query TEXT]
-asterism --snapshot out.png --panel wallpaper --menu NAME|control   # whole desktop, menu in place
+asterism --snapshot out.png --panel day [--query typing|notes]            # the day panel (reads [day] folder)
+asterism --snapshot out.png --panel wallpaper --menu NAME|control|day   # whole desktop, menu in place
 asterism --snapshot out.png --panel widgets [--hover widget.KIND]  # the desktop while arranging widgets
 asterism --snapshot out.png --panel deskmenu [--query KIND]        # the desktop's right-click menu
 asterism --snapshot out.png --panel song                           # the new-song card (needs a player)
@@ -150,6 +152,29 @@ windows; the file was deleted). Move or delete such screenshots from ~/Pictures/
 afterwards (they're named by the time; check the newest is yours).
 
 Things a script can't do (real clicks, key presses, grabs) must be listed for the user to try.
+
+**README screenshots** (`screenshots/readme/`, remade 2026-11-21; the README is public, so
+nothing of the user's may show). How they were made, to redo after visual changes:
+
+- Wallpapers: original abstract gradients, never the user's (their folder is mostly third-party
+  art). Each one `magick -size 960x600 xc: -sparse-color Shepards "<5 dark points>" -blur 0x40`,
+  screened with a blurred bezier stroke of a lighter colour at 55 % (`-strokewidth 70 … -blur
+  0x45`), resized to 1920×1200: dusk, lagoon, bloom, amber, night, moss.
+- A scratch config: those pictures as `image`/`directory`, `grain = 0.0`, `[weather] city =
+  "Lisbon"` (the default would show the user's city; the old widgets.png did), `lyrics = false`,
+  `[day] folder = ""`. `XDG_STATE_HOME` scratch, with a hand-written `widgets.json` per layout
+  (places are screen fractions `[x, y]`).
+- Everything inside `dbus-run-session` with `examples/fixtures` started there, so the fake
+  player and tray never reach the user's session. `--demo` on every shot that shows the
+  compositor, networks, processes or the to-do list (it fakes workspaces, windows, Wi-Fi and
+  VPN names, the network list capped at six, processes, `day::sample()`). The polkit card shows
+  `$USER`: run it with `USER=alex`. The wallpaper picker shows its folder: run it with
+  `HOME=<scratch>` and the pictures under `~/Pictures/Wallpapers`.
+- Width 1440 (16:10). Composites with `magick montage … -depth 8` (montage writes 16-bit PNGs
+  otherwise, 2+ MB each); everything `-strip -define png:compression-level=9`: 3.5 MB in all.
+- `--panel wallpaper --menu day` draws the day panel in place (added for this), like `control`.
+- A downscaled contact sheet can show false banding on these gradients; check a full-size crop.
+- The older top-level `screenshots/*.png` are not referenced by the README.
 
 **Pitfalls met while testing on the user's machine** (each cost a wrong result or a side effect
 once):
@@ -191,6 +216,8 @@ main.rs ── CLI: run | msg … | --snapshot …
    │     night.rs   wlr-gamma-control per output, schedule, the control-centre switch
    │     idle.rs    ext-idle-notify → lock; start_lock() spawns `asterism lock` detached
    │     timer.rs   timer actions and the once-a-second tick
+   │     day.rs     the day panel: open/close (a card centred under the bar), its keys
+   │               (task field, notes), tick/remove/clear, a save 1 s after the last change
    │     pet.rs     the pets (`Vec<PetSurface>`, slot 0/1): 240×180 Overlay surfaces moved by
    │               margins, one timer, idle watch, drag, sounds; props (bowl, ball, yarn, bed) on Top
    │     peek.rs    the workspace card under a hovered page dot
@@ -211,6 +238,7 @@ main.rs ── CLI: run | msg … | --snapshot …
    ├── wallpapers.rs  the changer: folder listing, remembered choice, cached thumbnails, picker grid
    ├── lock.rs      the lock screen: its OWN process (`asterism lock`), ext-session-lock, unix_chkpwd
    ├── clipboard.rs history (memory only) + picker; app/clipboard.rs does ext-data-control
+   ├── day.rs       the day panel's files: todo.md (Markdown checklist) + notes.md, parse/write/load/save
    ├── shortcuts.rs niri/Hyprland bind parsing + the sheet; timers.rs, weather.rs, night.rs: pure logic
    ├── dashboard.rs graphs (Prim::Area), disks, process list; the machine service samples processes
    │               only while it's open (Command::WatchProcesses)
@@ -364,7 +392,9 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (66, +3 opt-in)
+### Tests (69, +3 opt-in)
+
+`day` (reads a Markdown checklist, writes what it reads, keeps its files in a folder).
 
 `pet` also: runs off when a friend chases it, sleeps on its bed (away and tired), naps beside a
 sleeping friend, a calm pet repeats its picture; `ipc`: pet friend commands, screen-text.
@@ -391,11 +421,51 @@ ranking, desktop file parsing). Add tests for any new parsing or protocol logic.
 
 ## Current progress (as of 2026-11-21: the first and second rounds from ETEA / caelestia, then
 fingerprint, Wi-Fi passwords, Bluetooth pairing, the window overview, the desktop rounds, the
-pet, and an optimization round; newest first)
+pets, an optimization round, the drag fix, the small everyday round, and the day panel;
+newest first)
 
-**State of the tree**: f539ecf (the user's commit) holds everything up to the icon tinting.
-After it, uncommitted: the pet (both rounds), the optimization round and the drag fix below,
-with their README/AGENTS updates. All installed and running on the user's machine.
+**State of the tree**: the user's commits ba1abd7 (pets, friend) on top of b2b5815 and f539ecf
+hold everything up to the small everyday round. After it, uncommitted: the day panel below,
+with its README/AGENTS updates.
+
+### The day panel (2026-11-21, the user: "proceed with the day panel")
+
+A card **centred under the bar** (under the clock, where it usually sits; first built on the
+left, moved to the middle at the user's request the same day) (`PanelKind::Day`, namespace
+`asterism-day`, full-output Top layer, exclusive zone 0, Exclusive keyboard, a click beside the
+card or Esc closes it; framed: hung from the bar like a menu, `card(…, 1)` (4 with the bar at
+the bottom), not stretched; with the bar at the bottom it sits just above it).
+Opens from a click on the clock (its right click keeps the calendar menu), a new top-left hot
+corner (`corner.day`, `[day] corner`, default on), `msg day [open|close]`. Opening it closes
+menus, the control centre and the launcher; opening the control centre closes it.
+
+- Built by `popups::day` (`DAY_WIDTH` 380): weekday big + date and ISO week; `calendar()` (its
+  `Action::Month` goes to `App::day_state` when no menu is open); timers (running focus /
+  countdown with `big_time` + Pause/Stop, else Focus / 5 / 10 / 25 min buttons through
+  `Action::Timer`); to-do (rows `day.task.N` → `DayToggle`, × `DayRemove`, "Clear done"
+  `DayClearDone`, at most 8 shown then "N more in todo.md", an "Add a task" field
+  `DayFocus(1)`); notes (`DayFocus(2)`, wrapped, the last lines when long, a caret); where the
+  files are.
+- Typing (`app/day.rs` `day_key`): `State.day_field` (0 none, 1 task, 2 notes) and
+  `day_typed`; Enter adds a task / a newline in notes; Backspace, Ctrl+Backspace (clear / a
+  word); Tab switches; Esc lets go of a field, then closes; a letter with no field starts a
+  task.
+- Files (`day.rs`): `[day] folder` (empty → ~/Documents/Asterism), `todo.md` as a Markdown
+  checklist (reads `- [ ]`, `- [x]`/`[X]`, `*`, plain `- item`; writes `# To do` + boxes) and
+  `notes.md`. `Command::DayLoad` on every opening (skipped while one of our changes is still
+  unsaved: ours is newer) → `Update::Day`; `Command::DaySave` 1 s after the last change
+  (`App::day_dirty`, checked in `tick`) and on close; nothing is written before the files were
+  read once (`Day::loaded`), so an early key can't empty them. Both on the services thread
+  (`spawn_blocking`).
+- The panel redraws on every model update and timer tick (`redraw_day`).
+- Settings → Bar: "Day panel corner" and "To-do and notes folder".
+
+Verified: 69 tests (3 new in `day`); snapshots (`--panel day`, `--query typing|notes`); nested
+niri with `[day] folder` in scratch: `msg day open` maps `asterism-day` (Top, exclusive
+keyboard), `msg day` toggles, `close` closes; the panel showed the scratch todo.md (one open,
+one done) and wrote nothing without a change. **Not verified (needs the user)**: clicking the
+clock and the top-left corner, ticking/removing/adding by pointer and keys, writing notes, the
+save landing in ~/Documents/Asterism.
 
 ### Pet round three and small everyday things (2026-11-21, the user: "proceed with the pet first
 and small and useful everyday option")
@@ -857,6 +927,8 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 - The polkit dialog with a real password (success, a wrong password then a retry, Cancel).
 - Control centre by pointer: the hot corner, tiles, dragging its sliders, click beside the card
   to close, the session row's second click. Live checks so far were `msg control` open/close.
+- The day panel by pointer and keys: the clock and top-left corner, adding/ticking/removing
+  tasks, writing notes, Mod+Shift+D; the files landing in ~/Documents/Asterism.
 - Day-to-day use as the only shell (since 2026-11-21): the user hasn't reported back yet.
 
 ### Known limits
@@ -870,10 +942,24 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 - Clipboard history is in memory only: empty after a restart (on purpose).
 - The changer lists one folder (no subfolders) and PNG/JPEG only (no WebP); one picture for
   all outputs (no per-output wallpapers yet).
+- The pets see the pointer only over the shell's own surfaces (wallpaper, widgets, bar, the
+  pets): Wayland doesn't tell an app where the pointer is over other windows. They live on one
+  output (the working one when they first appear).
+- Dragging the pets and the widgets needs relative-pointer (niri and Hyprland have it); without
+  it they fall back to surface positions, which can drift while the surface moves.
+- The workspace card is a map of the windows, not pictures of them (the same as the overview).
+- The day panel's notes are typed at the end only (no cursor to move, no selection); for real
+  editing open notes.md. Tasks can't be reordered or edited in place (remove and add, or edit
+  todo.md).
+- Copying text off the screen needs slurp, grim and tesseract (not installed on the user's
+  machine); it reads with tesseract's default language.
 
 ## Next progress (immediate)
 
-0. The user to try the new round: hover a workspace dot, a second pet and the bed/yarn (menu),
+0. The user to try the day panel: click the clock (or the top-left corner), add a task, tick
+   it, write a note, and look at ~/Documents/Asterism/todo.md; Mod+Shift+D opens it (added to
+   their niri config, previous copy at config.kdl.before-day-bind).
+0. The user to try the previous round: hover a workspace dot, a second pet and the bed/yarn (menu),
    settings search, the VPN switch (their "client"); install slurp/grim/tesseract to try
    copying text off the screen.
 1. **User test pass**, above all the lock screen with the real password (Mod+Alt+L), then the
@@ -887,14 +973,14 @@ Not yet seen by the user live: everything in the new look — ask for their impr
    Mod+Shift+W) and say how it feels; then the desktop's round two (right-click menus, resizing, photo frame, note,
    edge bars, song card) and the app colours (include the file in kitty.conf, gtk.css).
 5. Next from the ETEA/caelestia list (offered 2026-11-21, not chosen yet): a phone link (KDE
-   Connect), workspace window previews on hover (could reuse `overview::layout` in a small
-   popup), a left day panel (calendar, to-do, notes as files), OCR of a screen region
-   (tesseract), Bluetooth device battery, a VPN tile, settings search. Declined as off-theme
+   Connect). Done since: workspace previews on hover, the day panel, OCR, Bluetooth battery,
+   the VPN tile, settings search. Day panel follow-ups, if asked: due dates or several lists,
+   calendar events (an .ics file). Declined as off-theme
    or out of reach: AI chat, Google Lens, stocks/GitHub widgets, a music library, SDDM theme,
    ETEA's planet/orbit and lock scenes.
 
-Control centre follow-ups: keyboard navigation (only Esc today), a night light tile once night
-light exists, a hot corner on the left for a calendar/day panel like ETEA's.
+Control centre follow-ups: keyboard navigation (only Esc today). (The night light tile and the
+left hot corner, now the day panel's, exist.)
 
 Wallpaper follow-ups (small, any time): per-output pictures, WebP.
 

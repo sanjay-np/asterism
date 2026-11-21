@@ -163,6 +163,11 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
             })
             .collect();
         model.compositor.active_on.insert(output, 101);
+        // Nor your to-do list
+        model.day = crate::day::sample();
+        // Nor what you're running
+        let running = [("firefox", 0.062, 1_240_000), ("code", 0.031, 820_000), ("spotify", 0.018, 410_000), ("kitty", 0.004, 160_000), ("pipewire", 0.003, 42_000), ("nautilus", 0.0, 210_000), ("asterism", 0.004, 34_000), ("niri", 0.006, 96_000)];
+        model.processes = running.iter().enumerate().map(|(i, (name, cpu, kib))| crate::model::Process { pid: 1200 + i as u32 * 37, name: (*name).into(), cpu: *cpu, memory_kib: *kib, own: !matches!(*name, "niri" | "pipewire" | "asterism") }).collect();
         // Nor your screen's brightness right now
         if model.brightness.available {
             model.brightness.value = 0.6;
@@ -175,9 +180,20 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
         if !network.address.is_empty() {
             network.address = "192.168.1.20".into();
         }
-        let names = ["Home", "Neighbours", "Café", "Studio-5G", "Guest"];
+        let names = ["Home", "Neighbours", "Café", "Studio-5G", "Guest", "Library"];
+        network.access_points.truncate(names.len());
         for (n, ap) in network.access_points.iter_mut().enumerate() {
             ap.ssid = names.get(n).map_or_else(|| format!("Network {n}"), |s| s.to_string());
+        }
+        for (n, vpn) in network.vpns.iter_mut().enumerate() {
+            vpn.name = ["Office", "Travel"].get(n).map_or_else(|| format!("VPN {n}"), |s| s.to_string());
+        }
+    }
+    // The day panel's files; a made-up day when there's nothing in them yet
+    if !model.day.loaded {
+        model.day = crate::day::load(&crate::day::folder(&config.day.folder));
+        if model.day.tasks.is_empty() && model.day.notes.is_empty() {
+            model.day = crate::day::sample();
         }
     }
     // Notifications to show, when the bar isn't the daemon here
@@ -329,6 +345,12 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
                     built.stretch(room);
                 }
                 let x = if theme.framed() { fw - f - built.w } else { fw - built.w - 12.0 };
+                let y = if theme.framed() { reserve } else { reserve + 10.0 };
+                (built, x, y)
+            } else if name == "day" {
+                // In the middle, by the bar
+                let built = popups::day(&mut ctx, if theme.framed() { room } else { room - 24.0 });
+                let x = ((fw - built.w) / 2.0).round();
                 let y = if theme.framed() { reserve } else { reserve + 10.0 };
                 (built, x, y)
             } else {

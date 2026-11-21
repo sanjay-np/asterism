@@ -532,6 +532,8 @@ pub enum Request {
     Pet(String),
     /// The text in a region of the screen onto the clipboard.
     ScreenText,
+    /// The day panel, open or closed (None toggles).
+    Day(Option<bool>),
 }
 
 /// Something done to a timer, from its menu or from `asterism msg`.
@@ -613,6 +615,8 @@ pub struct Model {
     pub spectrum: Vec<f32>,
     /// The photo frame's folder, and the pictures in it.
     pub photos: Option<(std::path::PathBuf, Vec<std::path::PathBuf>)>,
+    /// The day panel's tasks and notes.
+    pub day: crate::day::Day,
 }
 
 /// What a screenshot takes.
@@ -668,6 +672,8 @@ pub enum Update {
     Spectrum(Vec<f32>),
     /// The pictures in a folder, for the photo frame.
     Photos(std::path::PathBuf, Vec<std::path::PathBuf>),
+    /// The day panel's files, as read.
+    Day(crate::day::Day),
 }
 
 impl Model {
@@ -717,6 +723,7 @@ impl Model {
             Update::Awake(on) => self.awake = on,
             Update::Spectrum(levels) => self.spectrum = levels,
             Update::Photos(dir, list) => self.photos = Some((dir, list)),
+            Update::Day(day) => self.day = day,
         }
     }
 }
@@ -767,6 +774,9 @@ pub enum Command {
     SetVpn(String, bool),
     /// The text in a region of the screen, chosen now, onto the clipboard.
     ScreenText,
+    /// The day panel's files: read them from this folder, or write these into it.
+    DayLoad(std::path::PathBuf),
+    DaySave(std::path::PathBuf, crate::day::Day),
     /// The pet speaks: this sound, this take of it, this loud (0 to 1).
     PetSound(crate::pet::Voice, u32, f32),
     /// List a folder's pictures, for the photo frame.

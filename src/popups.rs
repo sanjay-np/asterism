@@ -52,6 +52,10 @@ pub struct State {
     pub armed: Option<String>,
     /// A slider being dragged keeps the value under the pointer, not the one last reported.
     pub dragging: Option<(String, f32)>,
+    /// The day panel: what's being typed into (1 a new task, 2 the notes, 0 nothing), and the
+    /// new task so far.
+    pub day_field: u8,
+    pub day_typed: String,
 }
 
 pub struct Ctx<'a> {
@@ -1235,6 +1239,184 @@ fn now_playing(col: &mut Col) {
 
 /// The control centre: the time, quick tiles, levels, music, notifications and the session,
 /// as tall as `room` allows (older notifications give way first).
+/// How wide the day panel is.
+pub const DAY_WIDTH: f32 = 380.0;
+
+/// The day panel, on the left: the day, the month, timers, the to-do list and notes. `room` is
+/// the height it may take; the notes get what's left of it.
+pub fn day(ctx: &mut Ctx<'_>, room: f32) -> Built {
+    use crate::model::TimerAction as T;
+    use crate::timers::clock_text;
+    let w = DAY_WIDTH;
+    let mut col = Col { ctx, pieces: Vec::new(), y: PAD, w: w - PAD * 2.0 };
+    let t = col.theme();
+
+    // The day, big, and the date with its week
+    let now = col.ctx.now;
+    let big = Font::new(t.text + 14.0).weight(500);
+    let small = Font::new(t.text - 1.0);
+    let name = now.format("%A").to_string();
+    let date = now.format("%-d %B %Y · week %V").to_string();
+    let (_, bh) = col.ctx.text.measure(&name, big);
+    let (_, sh) = col.ctx.text.measure(&date, small);
+    let mut header = Piece::new("day.today", col.w, bh + sh);
+    header.prims.push(Prim::Text { x: 0.0, y: 0.0, text: name, font: big, color: t.color_text });
+    header.prims.push(Prim::Text { x: 1.0, y: bh - 4.0, text: date, font: small, color: t.color_soft });
+    col.push(header, bh + sh + 10.0);
+    col.separator();
+    col.gap(6.0);
+
+    // The month
+    calendar(&mut col);
+    col.separator();
+    col.gap(4.0);
+
+    // Timers: what's running, or a start
+    col.label("Timers");
+    let timers = col.ctx.model.timers.clone();
+    let instant = std::time::Instant::now();
+    let act = |a: T| Some(Action::Timer(a));
+    let mut running = false;
+    if let Some(f) = timers.focus {
+        running = true;
+        let left = f.clock.left(instant);
+        let about = if !f.clock.running() { "focus, paused".to_string() } else if f.phase == crate::timers::Phase::Work { "focus".into() } else { "break".into() };
+        col.big_time("day.focus", &clock_text(left), &about, Some(1.0 - left.as_secs_f32() / f.total.as_secs_f32().max(1.0)), t.primary);
+        col.buttons("day.focus.do", vec![(if f.clock.running() { "Pause" } else { "Go on" }.into(), true, act(T::FocusPause)), ("Stop".into(), false, act(T::Focus))]);
+    }
+    if let Some(c) = timers.countdown {
+        running = true;
+        let left = c.clock.left(instant);
+        col.big_time("day.countdown", &clock_text(left), if c.clock.running() { "countdown" } else { "countdown, paused" }, Some(1.0 - left.as_secs_f32() / c.total.as_secs_f32().max(1.0)), t.palette.tertiary);
+        col.buttons("day.countdown.do", vec![(if c.clock.running() { "Pause" } else { "Go on" }.into(), true, act(T::CountdownPause)), ("Cancel".into(), false, act(T::CountdownCancel))]);
+    }
+    if !running {
+        col.buttons("day.start", vec![("Focus".into(), true, act(T::Focus)), ("5 min".into(), false, act(T::Countdown(300))), ("10 min".into(), false, act(T::Countdown(600))), ("25 min".into(), false, act(T::Countdown(1500)))]);
+    }
+    col.separator();
+    col.gap(4.0);
+
+    // To do: tasks with their boxes, a field to add one
+    let tasks = col.ctx.model.day.tasks.clone();
+    let label_y = col.y;
+    col.label("To do");
+    if tasks.iter().any(|task| task.done) {
+        let font = Font::new(t.text - 2.0).weight(500);
+        let (cw, ch) = col.ctx.text.measure("Clear done", font);
+        let mut clear = Piece::new("day.clear", cw, ch);
+        clear.prims.push(Prim::Text { x: 0.0, y: 0.0, text: "Clear done".into(), font, color: t.color_soft });
+        clear.actions.left = Some(Action::DayClearDone);
+        clear.lift = true;
+        clear.x = PAD + col.w - cw;
+        clear.y = label_y - 1.0;
+        col.pieces.push(clear);
+    }
+    let shown = 8;
+    let font = Font::new(t.text);
+    let (_, fh) = col.ctx.text.measure("Ag", font);
+    for (i, task) in tasks.iter().enumerate().take(shown) {
+        let h = 30.0;
+        let mut row = Piece::new(format!("day.task.{i}"), col.w - 28.0, h);
+        let (bx, by, b) = (4.0, (h - 18.0) / 2.0, 18.0);
+        if task.done {
+            row.prims.push(Prim::Rect { x: bx, y: by, w: b, h: b, radius: 6.0, color: t.primary });
+            row.prims.push(Prim::Icon { x: bx + 2.0, y: by + 2.0, size: 14.0, name: "check".into(), color: t.on_primary });
+        } else {
+            row.prims.push(Prim::Rect { x: bx, y: by, w: b, h: b, radius: 6.0, color: t.outline });
+            row.prims.push(Prim::Rect { x: bx + 1.5, y: by + 1.5, w: b - 3.0, h: b - 3.0, radius: 4.5, color: t.card_deep });
+        }
+        let text = crate::bar::Ctx::ellipsize_with(col.ctx.text, &task.text, font, col.w - 28.0 - 36.0);
+        row.prims.push(Prim::Text { x: 32.0, y: ((h - fh) / 2.0).round(), text, font, color: if task.done { t.color_soft.alpha(0.7) } else { t.color_text } });
+        row.highlight = true;
+        row.actions.left = Some(Action::DayToggle(i));
+        row.x = PAD;
+        row.y = col.y;
+        col.pieces.push(row);
+        let mut remove = Piece::new(format!("day.task.{i}.x"), 24.0, h);
+        remove.prims.push(Prim::Icon { x: 4.0, y: (h - 16.0) / 2.0, size: 16.0, name: "close".into(), color: t.color_soft.alpha(0.8) });
+        remove.label = Some("Remove".into());
+        remove.actions.left = Some(Action::DayRemove(i));
+        remove.lift = true;
+        remove.x = PAD + col.w - 24.0;
+        remove.y = col.y;
+        col.pieces.push(remove);
+        col.gap(h + 2.0);
+    }
+    if tasks.len() > shown {
+        col.note(&format!("{} more in todo.md", tasks.len() - shown));
+    }
+    let field = col.ctx.state.day_field;
+    let typed = col.ctx.state.day_typed.clone();
+    let (fw, fh2) = (col.w, 34.0);
+    let mut add = Piece::new("day.add", fw, fh2);
+    let typing = field == 1;
+    add.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: fw, h: fh2, radius: fh2 / 2.0, color: if typing { t.primary } else { t.hairline() } });
+    add.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: fw - 2.0, h: fh2 - 2.0, radius: fh2 / 2.0 - 1.0, color: t.card_deep });
+    add.prims.push(Prim::Icon { x: 12.0, y: (fh2 - 16.0) / 2.0, size: 16.0, name: "add".into(), color: t.primary });
+    let words = if typed.is_empty() && !typing { "Add a task".to_string() } else { crate::bar::Ctx::ellipsize_with(col.ctx.text, &typed, font, fw - 60.0) };
+    let (ww, _) = col.ctx.text.measure(&words, font);
+    add.prims.push(Prim::Text { x: 36.0, y: ((fh2 - fh) / 2.0).round(), text: words, font, color: if typed.is_empty() { t.color_soft } else { t.color_text } });
+    if typing {
+        let at = if typed.is_empty() { 36.0 } else { 37.0 + ww };
+        add.prims.push(Prim::Rect { x: at, y: 9.0, w: 2.0, h: fh2 - 18.0, radius: 1.0, color: t.primary });
+    }
+    add.highlight = true;
+    add.actions.left = Some(Action::DayFocus(1));
+    col.push(add, fh2 + 10.0);
+    col.separator();
+    col.gap(4.0);
+
+    // Notes: as many lines as there's room for, the end of them when they run longer
+    col.label("Notes");
+    let notes = col.ctx.model.day.notes.clone();
+    let note_font = Font::new(t.text - 1.0);
+    let (_, lh) = col.ctx.text.measure("Ag", note_font);
+    let lines_room = (((room - col.y - PAD - 24.0) / lh).floor() as usize).clamp(3, 14);
+    let mut lines: Vec<String> = Vec::new();
+    for paragraph in notes.split('\n') {
+        if paragraph.trim().is_empty() {
+            lines.push(String::new());
+        } else {
+            lines.extend(col.ctx.text.wrap(paragraph, note_font, col.w - 28.0, 40));
+        }
+    }
+    let writing = field == 2;
+    let empty = notes.trim().is_empty();
+    if empty {
+        lines = vec![if writing { String::new() } else { "Click to write…".into() }];
+    }
+    if lines.len() > lines_room {
+        lines.drain(..lines.len() - lines_room);
+    }
+    let ah = lines.len().max(3) as f32 * lh + 20.0;
+    let mut area = Piece::new("day.notes", col.w, ah);
+    // Edged in the accent while it has the keyboard
+    area.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: col.w, h: ah, radius: 12.0, color: if writing { t.primary } else { t.hairline() } });
+    area.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: col.w - 2.0, h: ah - 2.0, radius: 11.0, color: t.card_deep });
+    let last = lines.len().saturating_sub(1);
+    for (i, line) in lines.iter().enumerate() {
+        area.prims.push(Prim::Text { x: 14.0, y: 10.0 + i as f32 * lh, text: line.clone(), font: note_font, color: if empty { t.color_soft } else { t.color_text } });
+        if writing && i == last {
+            let (lw, _) = col.ctx.text.measure(line, note_font);
+            area.prims.push(Prim::Rect { x: 15.0 + lw, y: 12.0 + i as f32 * lh, w: 2.0, h: lh - 4.0, radius: 1.0, color: t.primary });
+        }
+    }
+    area.actions.left = Some(Action::DayFocus(2));
+    area.blocks = true;
+    col.push(area, ah + 8.0);
+    let folder = crate::day::folder(&col.ctx.config.day.folder);
+    let home = crate::config::home();
+    let shown_folder = folder.strip_prefix(&home).map(|p| format!("~/{}", p.display())).unwrap_or_else(|_| folder.display().to_string());
+    col.note(&format!("Kept in {shown_folder}"));
+
+    let h = (col.y + PAD - 6.0).round();
+    let mut pieces = Vec::with_capacity(col.pieces.len() + 1);
+    // Under the clock in the middle; with the frame, hung from the bar like a menu
+    pieces.push(card(t, w, h, if t.on_top { 1 } else { 4 }));
+    pieces.extend(col.pieces);
+    Built { w, h, pieces }
+}
+
 pub fn control(ctx: &mut Ctx<'_>, room: f32) -> Built {
     let w = CONTROL_WIDTH;
     let mut col = Col { ctx, pieces: Vec::new(), y: PAD, w: w - PAD * 2.0 };

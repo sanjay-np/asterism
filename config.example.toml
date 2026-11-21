@@ -182,6 +182,14 @@ city = ""                 # empty: the city your time zone is named after
 # longitude = 85.3
 units = "metric"          # metric (°C, km/h) or imperial (°F, mph)
 
+[day]
+# The day panel, in the middle under the clock: the month, timers, a to-do list and notes. Opens from the bar's
+# top-left corner, a click on the clock (a right click shows the calendar alone), or
+# `asterism msg day`. The list and notes are plain files you can edit anywhere: todo.md (a
+# Markdown checklist, "- [ ] task" / "- [x] done") and notes.md.
+folder = ""               # where they live; empty takes ~/Documents/Asterism
+corner = true             # the top-left corner opens it
+
 [timers]
 focus = 25                # minutes of focus in the focus timer
 short_break = 5

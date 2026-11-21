@@ -192,6 +192,13 @@ pub enum Action {
     /// The sticky note, to be written (in Settings); the photo frame's next picture.
     EditNote,
     NextPhoto,
+    /// The day panel: open or close it; type into the new task (1) or the notes (2), or neither
+    /// (0); a task done or not; a task gone; the done ones gone.
+    ToggleDay,
+    DayFocus(u8),
+    DayToggle(usize),
+    DayRemove(usize),
+    DayClearDone,
     /// A pet (0 the first, 1 the second): another animal, put away. For them both: a bowl of
     /// food, a ball or yarn to play with, a bed (put down or taken away).
     PetNext(u8),

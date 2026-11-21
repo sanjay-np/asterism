@@ -55,6 +55,7 @@ impl App {
         if let Some(popup) = self.popup.as_mut() {
             popup.surf.dirty = true;
         }
+        self.redraw_day();
     }
 
     /// Once a second: what ran out rings, and what's running moves on.

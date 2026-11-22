@@ -293,6 +293,44 @@ impl Default for DaySettings {
     }
 }
 
+/// The dock at the foot of the screen: hidden until the pointer touches the edge under it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DockSettings {
+    pub enabled: bool,
+    /// Apps kept on it, by desktop file id ("firefox", "org.gnome.Nautilus"), in order.
+    pub pinned: Vec<String>,
+    /// Icon size, logical pixels.
+    pub size: u32,
+    /// Icons grow under the pointer.
+    pub magnify: bool,
+    /// An apps button at its start, and the trash at its end.
+    pub launcher: bool,
+    pub trash: bool,
+    /// Down out of sight until the pointer touches the edge; off: always up, windows kept clear of it.
+    pub autohide: bool,
+    /// Milliseconds it stays after the pointer leaves.
+    pub hide_delay: u32,
+    /// Open apps that aren't pinned join the pinned ones.
+    pub running: bool,
+    /// Its look: corners (rounded, small, square, pill), background (card, flat, glass, none),
+    /// sitting on the screen's edge rather than just off it, the windows' marks (dots, line,
+    /// none), and thin lines between its groups.
+    pub corners: String,
+    pub background: String,
+    /// Which edge of the screen it sits on: bottom, top, left or right.
+    pub position: String,
+    pub attached: bool,
+    pub indicator: String,
+    pub separators: bool,
+}
+
+impl Default for DockSettings {
+    fn default() -> Self {
+        Self { enabled: true, pinned: Vec::new(), size: 44, magnify: true, launcher: true, trash: true, autohide: true, hide_delay: 450, running: true, corners: "rounded".into(), background: "card".into(), position: "bottom".into(), attached: false, indicator: "dots".into(), separators: true }
+    }
+}
+
 /// The pet on the screen.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -473,6 +511,7 @@ pub struct Config {
     pub wallpaper: WallpaperSettings,
     pub pet: PetSettings,
     pub day: DaySettings,
+    pub dock: DockSettings,
 }
 
 impl Default for Config {
@@ -502,7 +541,7 @@ impl Default for Config {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
-            resources: vec!["cpu".into(), "memory".into(), "network".into()],
+            resources: vec!["cpu".into(), "memory".into(), "temperature".into(), "network".into()],
             tools: None,
             commands: Commands::default(),
             colors: Colors::default(),
@@ -516,6 +555,7 @@ impl Default for Config {
             wallpaper: WallpaperSettings::default(),
             pet: PetSettings::default(),
             day: DaySettings::default(),
+            dock: DockSettings::default(),
         }
     }
 }

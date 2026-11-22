@@ -9,6 +9,7 @@ mod clipboard;
 mod config;
 mod dashboard;
 mod day;
+mod dock;
 mod images;
 mod ipc;
 mod launcher;

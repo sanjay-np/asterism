@@ -301,14 +301,22 @@ impl Ctx<'_> {
         let mut pieces = Vec::new();
         for name in self.config.resources.clone() {
             match name.as_str() {
-                "cpu" | "memory" => {
-                    let value = if name == "cpu" { machine.cpu } else { machine.memory };
-                    let tint = if value > 0.85 { t.warn } else { t.color_text };
-                    let icon_tint = if value > 0.85 { t.warn } else { t.icon_tint(Icons::Machine) };
-                    let accent = if value > 0.85 { t.warn } else { t.primary };
+                "cpu" | "memory" | "temperature" => {
+                    if name == "temperature" && machine.temperature <= 0.0 {
+                        continue;
+                    }
+                    // The heat fills its ring from a cool 30 °C to 100 °C, and turns to the warning colour past 85
+                    let (value, hot) = match name.as_str() {
+                        "cpu" => (machine.cpu, machine.cpu > 0.85),
+                        "memory" => (machine.memory, machine.memory > 0.85),
+                        _ => (((machine.temperature - 30.0) / 70.0).clamp(0.0, 1.0), machine.temperature > 85.0),
+                    };
+                    let tint = if hot { t.warn } else { t.color_text };
+                    let icon_tint = if hot { t.warn } else { t.icon_tint(Icons::Machine) };
+                    let accent = if hot { t.warn } else { t.primary };
                     let ring = t.icon + 6.0;
                     let font = Font::new(t.text).tnum();
-                    let label = format!("{}%", (value * 100.0).round());
+                    let label = if name == "temperature" { format!("{}°", machine.temperature.round()) } else { format!("{}%", (value * 100.0).round()) };
                     let (tw, th) = if self.config.percent { self.text.measure(&label, font) } else { (0.0, 0.0) };
                     let w = ring + if self.config.percent { 6.0 + tw } else { 0.0 };
                     let h = ring.max(th);
@@ -316,25 +324,22 @@ impl Ctx<'_> {
                     let c = ring / 2.0;
                     piece.prims.push(Prim::Ring { cx: c, cy: h / 2.0, r: c - 2.0, width: 3.0, value, color: accent });
                     let inner = t.icon - 7.0;
-                    let icon = if name == "cpu" { "cpu" } else { "ram" };
+                    let icon = match name.as_str() {
+                        "cpu" => "cpu",
+                        "memory" => "ram",
+                        _ => "thermometer",
+                    };
                     piece.prims.push(Prim::Icon { x: c - inner / 2.0, y: (h - inner) / 2.0, size: inner, name: icon.into(), color: icon_tint });
                     if self.config.percent {
                         piece.prims.push(Prim::Text { x: ring + 6.0, y: (h - th) / 2.0, text: label, font, color: tint });
                     }
-                    piece.label = Some(if name == "cpu" {
-                        format!("Processor · {} cores", machine.cores.len().max(1))
-                    } else {
-                        format!("Memory · {:.1} of {:.1} GB", machine.memory_used_kib as f64 / 1_048_576.0, machine.memory_total_kib as f64 / 1_048_576.0)
+                    piece.label = Some(match name.as_str() {
+                        "cpu" => format!("Processor · {} cores", machine.cores.len().max(1)),
+                        "memory" => format!("Memory · {:.1} of {:.1} GB", machine.memory_used_kib as f64 / 1_048_576.0, machine.memory_total_kib as f64 / 1_048_576.0),
+                        _ => format!("Processor temperature · {:.0} °C", machine.temperature),
                     });
                     piece.glow = true;
                     piece.lift = true;
-                    piece.actions.left = Some(Action::ToggleDashboard);
-                    pieces.push(piece);
-                }
-                "temperature" if machine.temperature > 0.0 => {
-                    let hot = machine.temperature > 85.0;
-                    let (tint, value) = if hot { (t.warn, t.warn) } else { (t.icon_tint(Icons::Machine), t.color_text) };
-                    let mut piece = self.icon_text("res.temperature", "sun", &format!("{}°", machine.temperature.round()), tint, value);
                     piece.actions.left = Some(Action::ToggleDashboard);
                     pieces.push(piece);
                 }

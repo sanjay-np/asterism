@@ -25,6 +25,7 @@ pub(super) enum PanelKind {
     DeskMenu,
     Song,
     Day,
+    Dock,
 }
 
 pub(super) struct Panel {
@@ -109,6 +110,7 @@ impl App {
             PanelKind::DeskMenu => "asterism-desktop-menu",
             PanelKind::Song => "asterism-song",
             PanelKind::Day => "asterism-day",
+            PanelKind::Dock => "asterism-dock",
         };
         let surface = self.layer_shell.create_layer_surface(&self.qh, wl, layer, Some(namespace), Some(&output));
         surface.set_anchor(anchor);
@@ -195,13 +197,20 @@ impl App {
         if kind == PanelKind::Launcher {
             // Every app's icon was loaded for the grid: only those with windows open stay (the
             // overview and the bar's labels use them); the rest come back with the launcher
-            let open: HashSet<String> = self.model.compositor.workspaces.iter().flat_map(|w| &w.windows).map(|w| w.app_id.clone()).collect();
+            let mut open: HashSet<String> = self.model.compositor.workspaces.iter().flat_map(|w| &w.windows).map(|w| w.app_id.clone()).collect();
+            // and the dock's
+            if self.panel_index(PanelKind::Dock).is_some() {
+                open.extend(self.dock_items().into_iter().map(|i| i.key));
+            }
             self.model.app_icons.retain(|app, _| open.contains(app));
             self.requested.retain(|key| key.strip_prefix("icon:").is_none_or(|app| open.contains(app)));
             crate::images::give_back_memory();
         }
         if kind == PanelKind::DeskMenu {
-            self.desk_menu = None;
+            // The dock stays up while its menu is open; down again once it's gone
+            if self.desk_menu.take().is_some_and(|m| m.widget.is_some_and(|w| w.starts_with("dock:"))) {
+                self.dock_menu_closed();
+            }
         }
         if kind == PanelKind::Song {
             self.watch_spectrum();
@@ -212,7 +221,7 @@ impl App {
     }
 
     /// Lets only these rectangles of a panel take the pointer (none: clicks go through).
-    fn panel_input(&self, index: usize, rects: &[(f32, f32, f32, f32)]) {
+    pub(super) fn panel_input(&self, index: usize, rects: &[(f32, f32, f32, f32)]) {
         let panel = &self.panels[index];
         let Some(wl) = &panel.surf.wl else { return };
         if let Ok(region) = Region::new(&self.compositor) {
@@ -262,6 +271,7 @@ impl App {
                 let Some(pieces) = self.desk_menu_pieces(index, w, h) else { return };
                 (pieces, None, -6.0)
             }
+            PanelKind::Dock => (self.dock_pieces(index, w, h), None, 0.0),
             PanelKind::Song => {
                 let Some(player) = self.model.media.player() else { return };
                 let art = self.model.art.get(&player.art_url).cloned();
@@ -1049,6 +1059,7 @@ impl App {
             Request::Record { audio } => self.send(if self.model.recording.is_some() { Command::RecordStop } else { Command::RecordStart { audio } }),
             Request::Control(open) => self.toggle_control(open),
             Request::Day(open) => self.toggle_day(open),
+            Request::Dock(show) => self.toggle_dock(show),
             Request::Menu(name) => self.menu_from_keys(&name),
             Request::Notifications => self.menu_from_keys("notifications"),
             Request::Quiet => self.send(Command::NotificationsQuiet),
@@ -1394,6 +1405,57 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
                 piece.y += m;
             }
             (Surf::offscreen(cw + m * 2.0, ch + m * 2.0, scale), pieces, None)
+        }
+        "dock" => {
+            // Up, settled, with the piece named in the query under the pointer ("drag" carries
+            // the first app half a place along; "sample" pins a few common apps; an edge's
+            // name puts it there)
+            let mut settings = config.dock.clone();
+            settings.pinned = crate::dock::sample_pins(&settings.pinned, query);
+            if let Some(edge) = query.split(',').find(|w| matches!(*w, "bottom" | "top" | "left" | "right")) {
+                settings.position = edge.to_string();
+            }
+            let items = crate::dock::items(&settings.pinned, &model.compositor.workspaces, &model.apps);
+            let g = crate::dock::Geometry::of(&settings);
+            let (sw, sh) = crate::dock::surface_size(&items, &settings, &g);
+            let (sw, sh) = (sw as f32, sh as f32);
+            let along = g.along(sw, sh);
+            let word = query.split(',').find(|w| !matches!(*w, "sample" | "drag" | "bottom" | "top" | "left" | "right" | "")).unwrap_or("");
+            let hovered = match word {
+                "apps" => Some("dock.launcher".to_string()),
+                "trash" => Some("dock.trash".to_string()),
+                "" => None,
+                app => Some(format!("dock.app.{app}")),
+            };
+            let carry = query.split(',').any(|w| w == "drag").then(|| {
+                let (_, _, placed) = crate::dock::layout(&crate::dock::slots(&items, &settings, None), &g, along);
+                let x = placed.iter().find(|(s, _)| matches!(s, crate::dock::Slot::App(_))).map_or(along / 2.0, |(_, x)| x + g.cell * 1.6);
+                let y = g.room + g.card_h / 2.0 - 10.0;
+                crate::dock::Carry { item: 0, hole: crate::dock::hole(&items, &settings, &g, along, 0, x, y), x, y }
+            });
+            let mut surf = Surf::offscreen(sw, sh, scale);
+            for _ in 0..3 {
+                surf.begin_frame();
+                let mut view = crate::dock::View {
+                    theme,
+                    text: &mut painter.text,
+                    anim: &mut surf.anim,
+                    items: &items,
+                    settings: &settings,
+                    icons: &model.app_icons,
+                    hovered: hovered.as_deref(),
+                    pressed: None,
+                    shown: true,
+                    carry: carry.filter(|_| !items.is_empty()),
+                    trash: model.trash,
+                    w: along,
+                    wanted: Vec::new(),
+                };
+                let pieces = crate::dock::build(&mut view);
+                render_panel(&mut surf, pieces, painter, theme, None, 0.0);
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            return surf.canvas();
         }
         "deskmenu" => {
             let state = popups::State::default();

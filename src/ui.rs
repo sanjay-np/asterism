@@ -230,6 +230,16 @@ pub enum Action {
     Wallpaper(usize),
     WallpaperMove(i32),
     RandomWallpaper,
+    /// The dock, for an app by its key: go to it (or start it), start another, its menu, pin
+    /// or unpin it, close its windows. The trash: open it, ask to be sure, empty it.
+    DockClick(String),
+    DockLaunch(String),
+    DockMenu(String),
+    DockPin(String, bool),
+    DockClose(String),
+    DockTrash,
+    DockTrashArm,
+    DockTrashEmpty,
 }
 
 #[derive(Clone, Copy, Debug)]

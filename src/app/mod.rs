@@ -88,6 +88,7 @@ mod backdrop;
 mod clipboard;
 mod day;
 mod desk;
+mod dock;
 mod idle;
 mod night;
 mod overview;
@@ -439,6 +440,7 @@ pub struct App {
     /// The workspace card under a page dot, and the dot it's waiting on (workspace, bar, x).
     peek: Option<peek::Peek>,
     peek_wait: Option<(i64, usize, f32)>,
+    dock: dock::DockState,
     /// Bluetooth devices already warned about running low (by path).
     bt_warned: HashSet<String>,
     pet_timer: bool,
@@ -658,6 +660,7 @@ impl App {
         let notifications = matches!(update, Update::Notifications(_));
         let auth = matches!(update, Update::Auth(_));
         let icons = matches!(update, Update::AppIcon(..));
+        let dock = matches!(update, Update::Compositor(_) | Update::AppIcon(..) | Update::Trash(_) | Update::Apps(_));
         let thumbnails = matches!(update, Update::Thumbnail(..));
         let media = matches!(update, Update::Media(_));
         // With the picker closed, a thumbnail is the photo frame's: only the newest is kept
@@ -707,6 +710,9 @@ impl App {
             self.panels[index].surf.dirty = true;
         }
         self.redraw_day();
+        if dock {
+            self.redraw_dock();
+        }
         if let Some(index) = self.panel_index(PanelKind::Dashboard) {
             self.panels[index].surf.dirty = true;
         }
@@ -763,6 +769,9 @@ impl App {
         self.watch_spectrum();
         // The pet, when it's wanted and not up yet (or its idle watch couldn't be made before
         // the seat was known)
+        if self.config.dock.enabled && self.panel_index(PanelKind::Dock).is_none() {
+            self.sync_dock();
+        }
         let wanted = [&self.config.pet.animal, &self.config.pet.friend].iter().filter(|a| crate::pet::Species::from_name(a).is_some()).count();
         if wanted > 0 && (self.pets.len() < wanted || self.pet_idle_watch.is_none()) {
             self.sync_pet();
@@ -831,6 +840,7 @@ impl App {
         self.close_menu();
         self.send_app_colors();
         self.sync_pet();
+        self.sync_dock();
     }
 
     // ---------------------------------------------------------------- menus
@@ -972,6 +982,7 @@ impl App {
 
     fn act(&mut self, action: Action, origin: Option<(u32, (f32, f32))>, serial: u32) {
         match action {
+            Action::DockClick(_) | Action::DockLaunch(_) | Action::DockMenu(_) | Action::DockPin(..) | Action::DockClose(_) | Action::DockTrash | Action::DockTrashArm | Action::DockTrashEmpty => self.dock_act(action),
             Action::Send(Command::ToggleAwake) if self.idle_inhibit.is_some() => self.toggle_awake(),
             Action::Send(command) => self.send(command),
             Action::Menu(kind) => {
@@ -1461,6 +1472,9 @@ impl App {
         }
         if let Some(index) = self.props.iter().position(|p| p.surf.is(&event.surface)) {
             return self.prop_pointer_event(index, event);
+        }
+        if self.dock_pointer(event) {
+            return;
         }
         // Where the pointer is, for the pet: on the desktop, its widgets or the bar
         if matches!(event.kind, PointerEventKind::Motion { .. } | PointerEventKind::Enter { .. }) {
@@ -2269,6 +2283,10 @@ impl LayerShellHandler for App {
             surf.configured = true;
             surf.dirty = true;
             surf.frame_pending = false;
+            // The dock's pointer region follows its size
+            if panel.kind == PanelKind::Dock {
+                self.dock_region();
+            }
             return;
         }
         let Some(index) = self.bars.iter().position(|b| &b.layer == layer) else { return };
@@ -2559,6 +2577,7 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         pets: Vec::new(),
         peek: None,
         peek_wait: None,
+        dock: dock::DockState::default(),
         bt_warned: HashSet::new(),
         pet_timer: false,
         pet_idle: false,

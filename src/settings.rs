@@ -50,8 +50,8 @@ fn choice(options: &[(&str, &str)], current: &str) -> Control {
     Control::Choice(list, at)
 }
 
-pub const PAGES: [&str; 9] = ["Look", "Bar", "Wallpaper", "Desktop", "Night light", "Lock", "Notifications", "Weather", "Timers"];
-const PAGE_ICONS: [&str; 9] = ["picker", "layout", "image", "apps", "nightlight", "lock", "bell", "cloud-sun", "timer"];
+pub const PAGES: [&str; 10] = ["Look", "Bar", "Wallpaper", "Desktop", "Dock", "Night light", "Lock", "Notifications", "Weather", "Timers"];
+const PAGE_ICONS: [&str; 10] = ["picker", "layout", "image", "apps", "dock", "nightlight", "lock", "bell", "cloud-sun", "timer"];
 
 /// What a typed value says now, to start editing from.
 pub fn text_value(c: &Config, keys: &[String]) -> String {
@@ -73,6 +73,61 @@ fn in_list(keys: &[&str], list: &[String], item: &str, label: &str, about: &str)
         next.push(item.to_string());
     }
     row(keys, label, about, Control::SwitchTo(on, Value::List(next)))
+}
+
+/// A switch for one of the bar's resources, which keeps them in their usual order when turned on.
+fn resource(list: &[String], item: &str, label: &str, about: &str) -> Row {
+    const ORDER: [&str; 4] = ["cpu", "memory", "temperature", "network"];
+    let on = list.iter().any(|k| k == item);
+    let mut next: Vec<String> = list.iter().filter(|k| *k != item).cloned().collect();
+    if !on {
+        let rank = |k: &str| ORDER.iter().position(|o| *o == k).unwrap_or(ORDER.len());
+        let at = next.iter().position(|k| rank(k) > rank(item)).unwrap_or(next.len());
+        next.insert(at, item.to_string());
+    }
+    row(&["resources"], label, about, Control::SwitchTo(on, Value::List(next)))
+}
+
+/// The dock's page: how it behaves and looks, then its apps (pinned ones to unpin, open ones
+/// to pin; the order is changed by dragging on the dock itself).
+fn dock_rows(c: &Config, model: &Model) -> Vec<Row> {
+    let d = &c.dock;
+    let mut list = vec![row(&["dock", "enabled"], "Dock", "Your apps on a card along an edge of the screen", Control::Switch(d.enabled))];
+    if !d.enabled {
+        return list;
+    }
+    list.push(row(&["dock", "position"], "Position", "The edge of the screen it sits on", choice(&[("Bottom", "bottom"), ("Top", "top"), ("Left", "left"), ("Right", "right")], &d.position)));
+    list.push(row(&["dock", "autohide"], "Hide it", "Out of sight until the pointer touches the edge by it, or Mod+D; off: always out, windows kept clear of it", Control::Switch(d.autohide)));
+    if d.autohide {
+        list.push(row(&["dock", "hide_delay"], "Stays after the pointer leaves", "", Control::Stepper { value: d.hide_delay as i64, min: 100, max: 2000, step: 50, unit: "ms" }));
+    }
+    list.push(row(&["dock", "running"], "Open apps", "Apps with windows open join the pinned ones, a dot for each window", Control::Switch(d.running)));
+    list.push(row(&["dock", "launcher"], "Apps button", "At the start: opens the launcher", Control::Switch(d.launcher)));
+    list.push(row(&["dock", "trash"], "Trash", "At the end: click opens it, right click empties it", Control::Switch(d.trash)));
+    list.push(row(&["dock", "size"], "Icon size", "", Control::Stepper { value: d.size as i64, min: 32, max: 72, step: 4, unit: "px" }));
+    list.push(row(&["dock", "magnify"], "Grow under the pointer", "The icon you point at, and a little its neighbours", Control::Switch(d.magnify)));
+    list.push(row(&["dock", "corners"], "Corners", "", choice(&[("Rounded", "rounded"), ("Small", "small"), ("Square", "square"), ("Pill", "pill")], &d.corners)));
+    list.push(row(&["dock", "background"], "Background", "Card: edged, with a soft shadow; glass: the wallpaper shows through", choice(&[("Card", "card"), ("Flat", "flat"), ("Glass", "glass"), ("None", "none")], &d.background)));
+    list.push(row(&["dock", "attached"], "On the screen's edge", "Sits on the edge, its lower corners square, rather than floating just above it", Control::Switch(d.attached)));
+    list.push(row(&["dock", "indicator"], "Open windows", "How an open app is marked", choice(&[("Dots", "dots"), ("Line", "line"), ("None", "none")], &d.indicator)));
+    list.push(row(&["dock", "separators"], "Separators", "Thin lines between the apps button, pinned apps, open apps and the trash", Control::Switch(d.separators)));
+    for item in crate::dock::items(&d.pinned, &model.compositor.workspaces, &model.apps) {
+        let windows = match item.windows.len() {
+            0 => String::new(),
+            1 => "open".into(),
+            n => format!("{n} windows"),
+        };
+        let (about, control) = if item.pinned {
+            let about = if windows.is_empty() { "Pinned; drag it along the dock to move it".to_string() } else { format!("Pinned · {windows}") };
+            (about, Control::Button("Unpin", Action::DockPin(item.key.clone(), false)))
+        } else {
+            let mut about = format!("{windows}, not pinned");
+            about[..1].make_ascii_uppercase();
+            (about, Control::Button("Pin", Action::DockPin(item.key.clone(), true)))
+        };
+        list.push(Row { keys: Vec::new(), label: item.name, about, control });
+    }
+    list
 }
 
 /// What a page holds, from the config as it is now.
@@ -99,6 +154,7 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
         ],
         1 => vec![
             row(&["percent"], "Numbers beside icons", "Volume, battery and the machine's load as percentages", Control::Switch(c.percent)),
+            resource(&c.resources, "temperature", "Temperature gauge", "The processor's heat as a ring beside the load (needs \"resources\" in the bar)"),
             row(&["media_title"], "The song's title", "Slides by when long, or is cut short", choice(&[("Slide", "scroll"), ("Short", "short"), ("Off", "off")], &lower(&format!("{:?}", c.media_title)))),
             row(&["clock", "hours24"], "24-hour clock", "", Control::Switch(c.clock.hours24)),
             row(&["clock", "seconds"], "Seconds", "", Control::Switch(c.clock.seconds)),
@@ -172,18 +228,19 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
             list.push(row(&["widgets", "photo_minutes"], "Each picture stays", "", Control::Stepper { value: c.widgets.photo_minutes as i64, min: 1, max: 120, step: 1, unit: "min" }));
             list
         }
-        4 => vec![
+        4 => dock_rows(c, model),
+        5 => vec![
             row(&["night_light", "mode"], "Night light", "Warmer colours: always, or from evening to morning", choice(&[("Off", "off"), ("On", "on"), ("Schedule", "schedule")], &c.night_light.mode)),
             row(&["night_light", "temperature"], "Warmth", "6500 K is the screen as it is", Control::Stepper { value: c.night_light.temperature as i64, min: 2500, max: 6000, step: 250, unit: "K" }),
             row(&["night_light", "start"], "From", "", choice(&[("Sunset", "sunset"), ("19:00", "19:00"), ("20:00", "20:00"), ("21:00", "21:00"), ("22:00", "22:00")], &c.night_light.start)),
             row(&["night_light", "end"], "Until", "", choice(&[("Sunrise", "sunrise"), ("06:00", "06:00"), ("07:00", "07:00"), ("08:00", "08:00")], &c.night_light.end)),
         ],
-        5 => vec![
+        6 => vec![
             row(&["lock", "idle"], "Lock when idle", "Minutes without input, 0 never; Stay awake holds it off", Control::Stepper { value: c.lock.idle as i64, min: 0, max: 120, step: 5, unit: "min" }),
             row(&["lock", "before_sleep"], "Lock before sleep", "Closing the lid, or suspend from anywhere", Control::Switch(c.lock.before_sleep)),
             row(&[], "Lock now", "", Control::Button("Lock", Action::LockNow)),
         ],
-        6 => {
+        7 => {
             let mut list = vec![
                 row(&["notifications", "timeout"], "Pop-ups stay", "Seconds, when the app doesn't say", Control::Stepper { value: c.notifications.timeout as i64, min: 2, max: 30, step: 1, unit: "s" }),
                 row(&["notifications", "max_popups"], "Pop-ups at once", "", Control::Stepper { value: c.notifications.max_popups as i64, min: 1, max: 8, step: 1, unit: "" }),
@@ -214,7 +271,7 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
             }
             list
         }
-        7 => vec![
+        8 => vec![
             row(&["weather", "enabled"], "Weather", "From Open-Meteo: only the place is sent", Control::Switch(c.weather.enabled)),
             row(&["weather", "city"], "Place", "Empty takes your time zone's city", Control::Text(c.weather.city.clone())),
             row(&["weather", "units"], "Units", "", choice(&[("°C, km/h", "metric"), ("°F, mph", "imperial")], &c.weather.units)),

@@ -534,6 +534,8 @@ pub enum Request {
     ScreenText,
     /// The day panel, open or closed (None toggles).
     Day(Option<bool>),
+    /// The dock up (Some(true)), down, or the other way round.
+    Dock(Option<bool>),
 }
 
 /// Something done to a timer, from its menu or from `asterism msg`.
@@ -617,6 +619,10 @@ pub struct Model {
     pub photos: Option<(std::path::PathBuf, Vec<std::path::PathBuf>)>,
     /// The day panel's tasks and notes.
     pub day: crate::day::Day,
+    /// How many things are in the trash (the dock's can shows it full or empty).
+    pub trash: usize,
+    /// The installed apps (desktop files), for the dock's names and for starting them.
+    pub apps: Vec<crate::launcher::Entry>,
 }
 
 /// What a screenshot takes.
@@ -674,6 +680,9 @@ pub enum Update {
     Photos(std::path::PathBuf, Vec<std::path::PathBuf>),
     /// The day panel's files, as read.
     Day(crate::day::Day),
+    /// How many things are in the trash.
+    Trash(usize),
+    Apps(Vec<crate::launcher::Entry>),
 }
 
 impl Model {
@@ -724,6 +733,8 @@ impl Model {
             Update::Spectrum(levels) => self.spectrum = levels,
             Update::Photos(dir, list) => self.photos = Some((dir, list)),
             Update::Day(day) => self.day = day,
+            Update::Trash(count) => self.trash = count,
+            Update::Apps(apps) => self.apps = apps,
         }
     }
 }
@@ -781,6 +792,11 @@ pub enum Command {
     PetSound(crate::pet::Voice, u32, f32),
     /// List a folder's pictures, for the photo frame.
     ListPhotos(std::path::PathBuf),
+    /// Count what's in the trash, or empty it (then count again).
+    CountTrash,
+    EmptyTrash,
+    /// Read the installed apps' desktop files.
+    LoadApps,
     /// Write the scheme's files for these apps (`appcolors`).
     AppColors(Box<crate::palette::Palette>, Vec<String>),
     /// Asks a program to end (SIGTERM).

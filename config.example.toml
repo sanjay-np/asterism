@@ -42,7 +42,7 @@ right = ["tools", "tray", "status"]
 # status = ["notifications", "keyboard", "network", "bluetooth", "volume", "battery", "control", "session"]
 
 # The resources: cpu, memory, temperature, network
-# resources = ["cpu", "memory", "network"]
+# resources = ["cpu", "memory", "temperature", "network"]
 
 # Tools: leave them out to get ones that suit your compositor (screenshot and colour
 # picker, the microphone, staying awake). Tools whose programs aren't installed are hidden.
@@ -189,6 +189,28 @@ units = "metric"          # metric (°C, km/h) or imperial (°F, mph)
 # Markdown checklist, "- [ ] task" / "- [x] done") and notes.md.
 folder = ""               # where they live; empty takes ~/Documents/Asterism
 corner = true             # the top-left corner opens it
+
+[dock]
+# The dock on an edge of the screen (the foot by default), hidden until the pointer touches the
+# edge by it (or `asterism msg dock`). Pinned apps stay; open apps join them with a dot per
+# window. Click: go to the app (again: its next window), or start it; middle click: a new one;
+# right click: its windows, pin or unpin, close. Drag an icon along to reorder (dropping an open
+# app among the pinned pins it), or off the dock, away from the edge, to unpin it.
+enabled = true
+pinned = []               # desktop file ids, e.g. ["firefox", "kitty", "org.gnome.Nautilus"]
+position = "bottom"       # the edge it sits on: bottom, top, left or right
+autohide = true           # false: always up, and windows are kept clear of it
+hide_delay = 450          # milliseconds it stays after the pointer leaves
+running = true            # open apps that aren't pinned show too
+size = 44                 # icon size
+magnify = true            # icons grow under the pointer
+launcher = true           # an apps button at its start
+trash = true              # the trash at its end: click opens it, right click empties it
+corners = "rounded"       # rounded, small, square or pill
+background = "card"       # card (edged, with a soft shadow), flat, glass (see-through) or none
+attached = false          # true: sits on the screen's edge, its lower corners square
+indicator = "dots"        # the open windows' marks: dots, line or none
+separators = true         # thin lines between the apps button, pinned, open apps and the trash
 
 [timers]
 focus = 25                # minutes of focus in the focus timer

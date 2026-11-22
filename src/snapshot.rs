@@ -112,6 +112,18 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
                     let _ = commands.send(crate::model::Command::AppIcon(app));
                 }
             }
+            // The dock: the apps' names, and the icons of what's on it
+            if options.panel.as_deref() == Some("deskmenu") {
+                let _ = commands.send(crate::model::Command::CountTrash);
+            }
+            if options.panel.as_deref() == Some("dock") {
+                let _ = commands.send(crate::model::Command::LoadApps);
+                let _ = commands.send(crate::model::Command::CountTrash);
+                let apps = crate::launcher::Apps::load().entries;
+                for item in crate::dock::items(&crate::dock::sample_pins(&config.dock.pinned, &options.query), &model.compositor.workspaces, &apps) {
+                    let _ = commands.send(crate::model::Command::AppIcon(item.key));
+                }
+            }
             if options.panel.as_deref() == Some("dashboard") {
                 let _ = commands.send(crate::model::Command::WatchProcesses(true));
             }

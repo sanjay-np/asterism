@@ -705,6 +705,9 @@ pub const DESKTOP_WIDTH: f32 = 252.0;
 /// The desktop's own menu, from a right click on the wallpaper or on a widget (`widget`): what
 /// that widget can do, then the desktop's things. Each closes the menu once done.
 pub fn desktop(ctx: &mut Ctx<'_>, widget: Option<&str>) -> Built {
+    if let Some(key) = widget.and_then(|w| w.strip_prefix("dock:")) {
+        return dock(ctx, key);
+    }
     let w = DESKTOP_WIDTH;
     let theme = ctx.theme;
     let mut col = Col { ctx, pieces: Vec::new(), y: PAD - 6.0, w: w - PAD * 2.0 };
@@ -737,6 +740,57 @@ pub fn desktop(ctx: &mut Ctx<'_>, widget: Option<&str>) -> Built {
     col.row("desk.wallpaper", Some("image"), "Change wallpaper", "", Mark::None, true, then(Action::ToggleWallpapers));
     col.row("desk.random", Some("refresh"), "Another wallpaper", "", Mark::None, true, then(Action::RandomWallpaper));
     col.row("desk.settings", Some("gear-six"), "Settings", "", Mark::None, true, then(Action::ToggleSettings));
+    let h = (col.y - 10.0 + PAD).round();
+    let mut card = Piece::new("card", w, h);
+    card.prims.push(Prim::Card { x: 0.0, y: 0.0, w, h, radius: theme.radius });
+    card.pad = 14.0;
+    card.blocks = true;
+    let mut pieces = vec![card];
+    pieces.extend(col.pieces);
+    Built { w, h, pieces }
+}
+
+/// An app's menu on the dock: its windows, another one, pinned or not, close. For the trash:
+/// open it, or empty it (a second click to be sure; "@trash!" is the armed one).
+fn dock(ctx: &mut Ctx<'_>, key: &str) -> Built {
+    let w = DESKTOP_WIDTH;
+    let theme = ctx.theme;
+    let mut col = Col { ctx, pieces: Vec::new(), y: PAD - 6.0, w: w - PAD * 2.0 };
+    let then = |action: Action| Some(Action::Both(Box::new(action), Box::new(Action::CloseMenu)));
+    if let Some(armed) = key.strip_prefix(crate::dock::TRASH) {
+        let count = col.ctx.model.trash;
+        col.label("Trash");
+        col.row("dock.trash.open", Some("trash"), "Open the trash", "", Mark::None, true, then(Action::DockTrash));
+        let many = if count == 1 { "1 item".to_string() } else { format!("{count} items") };
+        if count == 0 {
+            col.row("dock.trash.empty", Some("check"), "Nothing in it", "", Mark::None, false, None);
+        } else if armed == "!" {
+            col.row("dock.trash.empty", Some("trash-full"), "Sure? Click again", &many, Mark::None, true, then(Action::DockTrashEmpty));
+        } else {
+            col.row("dock.trash.empty", Some("trash-full"), "Empty the trash", &many, Mark::None, true, Some(Action::DockTrashArm));
+        }
+    } else {
+        let items = crate::dock::items(&col.ctx.config.dock.pinned, &col.ctx.model.compositor.workspaces, &col.ctx.model.apps);
+        if let Some(item) = items.into_iter().find(|i| i.key == key) {
+            col.label(&item.name);
+            for (n, win) in item.windows.iter().take(8).enumerate() {
+                let title = if win.title.is_empty() { item.name.clone() } else { win.title.clone() };
+                col.row(&format!("dock.win.{n}"), None, &title, "", Mark::Radio(win.focused), true, then(Action::Send(Command::FocusWindow(win.id))));
+            }
+            if !item.windows.is_empty() {
+                col.separator();
+                col.gap(4.0);
+            }
+            let open = !item.windows.is_empty();
+            col.row("dock.new", Some("add"), if open { "New window" } else { "Open" }, "", Mark::None, true, then(Action::DockLaunch(item.key.clone())));
+            let (icon, label) = if item.pinned { ("close", "Unpin from the dock") } else { ("check", "Keep in the dock") };
+            col.row("dock.pin", Some(icon), label, "", Mark::None, true, then(Action::DockPin(item.key.clone(), !item.pinned)));
+            if open {
+                let label = if item.windows.len() > 1 { format!("Close all {}", item.windows.len()) } else { "Close".into() };
+                col.row("dock.close", Some("close"), &label, "", Mark::None, true, then(Action::DockClose(item.key.clone())));
+            }
+        }
+    }
     let h = (col.y - 10.0 + PAD).round();
     let mut card = Piece::new("card", w, h);
     card.prims.push(Prim::Card { x: 0.0, y: 0.0, w, h, radius: theme.radius });

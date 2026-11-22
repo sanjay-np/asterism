@@ -27,7 +27,7 @@ no GTK, Qt or QML.
 - [Highlights](#highlights)
 - [Look and feel](#look-and-feel)
 - [The bar and its menus](#the-bar-and-its-menus)
-- [Control centre](#control-centre) · [Your day](#your-day) · [Launcher](#launcher) · [Window overview](#window-overview)
+- [Control centre](#control-centre) · [Your day](#your-day) · [Launcher](#launcher) · [Dock](#dock) · [Window overview](#window-overview)
 - [The desktop](#the-desktop): wallpapers, widgets, desktop menu, app colours, night light
 - [Pets](#pets)
 - [Notifications and on-screen cards](#notifications-and-on-screen-cards)
@@ -43,7 +43,7 @@ no GTK, Qt or QML.
 | | |
 |---|---|
 | 🎨 **Colour from your wallpaper** | A Material 3 scheme grown from each new wallpaper, applied to the bar, menus, widgets — and, if you like, your terminal and GTK apps |
-| 🧭 **Everything in reach** | App launcher with maths, emoji and SSH; window overview; workspace previews on hover; clipboard history; keyboard-shortcut sheet |
+| 🧭 **Everything in reach** | App launcher with maths, emoji and SSH; a dock that hides until you want it; window overview; workspace previews on hover; clipboard history; keyboard-shortcut sheet |
 | 🗓️ **Your day** | Calendar, timers, a to-do list and notes, kept as plain Markdown files |
 | 🖼️ **A living desktop** | Wallpaper changer with animated transitions, desktop widgets you arrange by hand, a music visualizer |
 | 🔒 **The serious parts** | Lock screen (with fingerprint), polkit agent, Wi-Fi password prompts, Bluetooth pairing, notification daemon |
@@ -86,7 +86,7 @@ Phosphor), and motion is kept quick.
 | `clock` | Time and date | [Your day](#your-day) | Calendar | |
 | `weather` | Current weather | Forecast | | |
 | `media` | What's playing (MPRIS) | Player menu | Play / pause | |
-| `resources` | CPU and memory rings, temperature, network speed | Dashboard, traffic | | |
+| `resources` | CPU, memory and temperature rings (the heat fills from 30 to 100 °C, warns past 85), network speed | Dashboard, traffic | | |
 | `tray` | Background apps (StatusNotifierItem) | Activate | App menu | Scroll the app |
 | `tools` | Screenshot and recording, colour picker, clipboard, microphone, stay awake | Menu, run or toggle | | |
 | `status` | Timers, notifications, keyboard layout, network, Bluetooth, volume, battery, control centre, settings, session | Their menus | Mute, Bluetooth, do not disturb | Volume |
@@ -169,6 +169,35 @@ takes them down. It also understands:
 
 Arrows move through the grid, Page Up/Down or the wheel turn pages, Enter opens, and Esc closes.
 Backspace, Ctrl+W and Ctrl+U erase a letter, a word, or everything.
+
+## Dock
+
+Your apps on a card at the foot of the screen, or the top, left or right edge. It stays out of
+sight, and takes no room from your windows, until the pointer touches the edge by it (or
+`asterism msg dock`); it slides away a moment after the pointer leaves.
+
+- **Pinned apps** keep their places; **open apps** join them after a thin line. A dot by an
+  app for each of its windows (up to three, between the icon and the screen's edge); the
+  focused app's dots are a pill in the accent.
+- **Click** an app to go to it, again for its next window; if it isn't open, it starts.
+  **Middle-click** starts another one. **Right-click** lists its windows, and offers a new
+  window, pin or unpin, and close.
+- **Drag** an icon along the dock to reorder; drop an open app among the pinned ones to pin it,
+  or pull a pinned one off the dock, away from the edge, to unpin it. The order is saved as
+  `[dock] pinned`.
+- Icons grow a little under the pointer (`magnify`). An **apps button** at the start opens the
+  launcher; the **trash** at the end shows whether it's empty, opens on a click, and empties
+  from its right-click menu (a second click to be sure).
+
+Mod+D (see [Keybindings](#keybindings)) brings it out, and again puts it away. On the same edge
+as the bar (the top, usually), the dock sits just inside the bar.
+
+**Settings → Dock** has the rest: its edge, hiding (off keeps it out, and windows clear of it), how long
+it stays after the pointer leaves, whether open apps join the pinned ones, the apps button and
+the trash; its look (icon size, growing under the pointer, corners rounded, small, square or
+pill, a card, flat, glass or no background, floating or sitting on the screen's edge, windows
+marked by dots, a line or nothing, separators); and every app on it with a Pin or Unpin
+button. Pins are desktop file ids, like `["firefox", "kitty", "org.gnome.Nautilus"]`.
 
 ## Window overview
 
@@ -462,6 +491,8 @@ How it stays light:
   sent.
 - **Buffers:** large surfaces get buffers of their own, which are freed when the surface goes.
 - **Pictures:** decoded wallpapers are handed back to the system as soon as they've been painted.
+- **Out of sight, out of work:** the dock draws and sends nothing while it's down, and wakes
+  only for news it shows (windows, icons, the trash).
 
 ## Requirements
 
@@ -562,6 +593,7 @@ Mod+Space hotkey-overlay-title="Apps" { spawn "asterism" "msg" "launcher"; }
 Mod+O hotkey-overlay-title="Window overview" { spawn "asterism" "msg" "overview"; }
 Mod+A hotkey-overlay-title="Control centre" { spawn "asterism" "msg" "control"; }
 Mod+Shift+D hotkey-overlay-title="Your day" { spawn "asterism" "msg" "day"; }
+Mod+D hotkey-overlay-title="Dock" { spawn "asterism" "msg" "dock"; }
 Mod+N hotkey-overlay-title="Notifications" { spawn "asterism" "msg" "notifications"; }
 Mod+Ctrl+V hotkey-overlay-title="Clipboard history" { spawn "asterism" "msg" "clipboard"; }
 Mod+W hotkey-overlay-title="Change the wallpaper" { spawn "asterism" "msg" "wallpaper"; }
@@ -593,6 +625,7 @@ bind = SUPER, SPACE, exec, asterism msg launcher
 bind = SUPER, O, exec, asterism msg overview
 bind = SUPER, A, exec, asterism msg control
 bind = SUPER SHIFT, D, exec, asterism msg day
+bind = SUPER, D, exec, asterism msg dock
 bind = SUPER ALT, L, exec, asterism msg lock
 bindel = , XF86AudioRaiseVolume, exec, asterism msg volume up
 bindel = , XF86MonBrightnessUp, exec, asterism msg brightness up
@@ -618,6 +651,7 @@ within two seconds, with no restart.
 | `[launcher]` · `[weather]` · `[timers]` | Terminal and search engine; place and units; focus lengths |
 | `[lock]` · `[night_light]` | Idle minutes, before sleep, fingerprint; schedule and temperature |
 | `[widgets]` · `[day]` · `[pet]` | Desktop widgets; the to-do folder and corner; the pets |
+| `[dock]` | On or off, pinned apps, position, hiding and its delay, open apps, the apps button and the trash; icon size, magnify, corners, background, attached, indicator, separators |
 
 The settings you're most likely to change first:
 
@@ -640,6 +674,9 @@ idle = 10                 # minutes without input before locking; 0 = never
 [widgets]
 show = ["clock", "weather", "media"]
 
+[dock]
+pinned = ["firefox", "kitty", "org.gnome.Nautilus"]   # desktop file ids, in order
+
 [colors]
 # accent = "#4a6fd9"      # grow the scheme from this colour instead of the wallpaper
 ```
@@ -659,6 +696,7 @@ scripts. `asterism msg help` prints this list.
 | `media play-pause\|next\|previous` | Control the player the bar follows |
 | `wallpaper [open\|close]` · `wallpaper next\|previous\|random` · `wallpaper set PATH` | The changer · step · set a picture |
 | `widgets [edit\|done]` | Arrange the desktop's widgets, or finish |
+| `dock [show\|hide]` | Bring the dock up for a moment, put it away, or toggle it |
 | `night-light [on\|off]` · `awake` | Night light · keep the screen awake |
 | `lock` | Lock the screen |
 | `screenshot [region\|screen\|window]` · `screen-text` · `record [audio]` | Capture · copy text from a region · start or stop recording |
@@ -693,6 +731,10 @@ and tools were found.
 - Pets see the pointer only over the shell's own surfaces, since Wayland keeps the pointer's
   position over other windows private.
 - The day panel's notes are typed at the end only. For heavier editing, open `notes.md`.
+- The dock lives on one output (the one in use when it first appears), and, hidden, comes out
+  from the part of the edge right by it, not the whole edge. On the same edge as the bar it
+  sits just inside the bar, and comes out from the bar's inner edge. Its trash counts your home
+  trash only.
 - Hyprland support is tested against its IPC, less in daily use than niri.
 
 ## Development
@@ -732,7 +774,7 @@ More detail on architecture and conventions is in [AGENTS.md](AGENTS.md).
 |---|---|
 | `src/app/` | Wayland: bars per output, menus, panels, widgets, wallpaper and transitions, pets, idle, clipboard, night light, damage tracking, buffers |
 | `src/bar.rs`, `src/popups.rs` | Bar modules; menus, the control centre and the day panel |
-| `src/launcher.rs`, `src/overview.rs` | App search, maths, emoji, the grid; the window overview |
+| `src/launcher.rs`, `src/overview.rs`, `src/dock.rs` | App search, maths, emoji, the grid; the window overview; the dock |
 | `src/cards.rs` | Notification pop-ups, levels, password and pairing cards, song and workspace cards |
 | `src/lock.rs` | The lock screen, a process of its own |
 | `src/services/` | niri and Hyprland IPC, MPRIS, tray, UPower, NetworkManager, BlueZ, pactl, notifications, polkit, logind, weather, lyrics, capture, /proc |

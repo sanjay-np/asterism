@@ -8,7 +8,7 @@ rules it follows, where it stands, and what comes next. Read this before changin
 Asterism began as a rewrite of the top bar of [ETEA Shell](https://github.com/SDcold/etea-shell)
 (a Quickshell/QML desktop shell) as a standalone **pure-Rust** program for **niri** and
 **Hyprland**, and is now a **complete desktop shell**, and the user's only one (it replaced
-Noctalia on 2026-11-21): bar and menus, launcher, window overview, control centre,
+Noctalia on 2026-11-21): bar and menus, launcher, dock, window overview, control centre,
 notifications, lock screen (with fingerprint), polkit/Wi-Fi/Bluetooth prompts, wallpaper and
 its changer, desktop widgets, settings app, dashboard, a day panel (to-do, notes), clipboard history, screenshots and
 recording, timers, weather, night light, keyboard-shortcut sheet. README.md is the user-facing
@@ -47,7 +47,8 @@ and Poppins (OFL), Material outline icons and Material Symbols (Apache 2.0), Pho
   in the launcher with real layouts). It's present on every Wayland desktop. Don't add other C
   libraries (no libpulse, no libpam bindings, no image libraries with C code) without asking.
 - **Spawning standard CLI tools is fine** where a protocol is impractical: `pactl` for sound,
-  `curl` for web album art, `nmcli` to join wifi, `systemd-run` to start apps, `wl-copy`.
+  `curl` for web album art, `nmcli` to join wifi, `systemd-run` to start apps, `wl-copy`,
+  `gio` to open and empty the trash (with a plain-file fallback).
 - **zbus is pinned to 5.x** on purpose (6.x reorganised its API). Don't bump it casually.
 - Must work on **both niri and Hyprland**. Hyprland 0.55+ uses a Lua config where `dispatch`
   takes Lua (`hl.dsp.focus({ workspace = 3 })`); older versions take `workspace 3`. The Hyprland
@@ -60,7 +61,7 @@ and Poppins (OFL), Material outline icons and Material Symbols (Apache 2.0), Pho
 Asterism **is** the user's shell now: niri starts `/home/uncore/.local/bin/asterism`
 (`spawn-at-startup`; Noctalia's line is commented out; the original config is saved as
 `~/.config/niri/config.kdl.before-asterism`). Binds (all `asterism msg …`): Mod+Space launcher,
-Mod+A control centre, Mod+Shift+D day panel, Mod+N notifications, Mod+W wallpaper changer, Mod+Shift+W random
+Mod+A control centre, Mod+Shift+D day panel, Mod+D dock, Mod+N notifications, Mod+W wallpaper changer, Mod+Shift+W random
 wallpaper, Mod+Shift+Escape session menu, Mod+Alt+L lock, Mod+Ctrl+V clipboard,
 Mod+Shift+Slash shortcuts sheet, Mod+O overview; volume/brightness/media keys stay on
 wpctl/brightnessctl/playerctl. The lock is Asterism's own (`[lock] idle = 10`, `before_sleep =
@@ -76,7 +77,9 @@ through adw-gtk3-dark (gtk.css is a symlink to the theme). The user's config has
 widgets clock, media and visualizer (placed by hand in the editor), and a pet: `[pet] animal =
 "fox"` (switched from the cat by the user), `coat = "red"`, `size = 70` (both set by the user in
 Settings), no second pet, no bed yet, sounds on at volume 40. One VPN saved in NetworkManager
-("client"); BlueZ off; no slurp/grim/tesseract. Measured on their screen after the optimization round: ~34 MB RSS (21 MB of it the
+("client"); BlueZ off; no slurp/grim/tesseract. The dock (since 2026-11-22), set by the user in
+Settings: `pinned = ["kitty", "com.microsoft.VSCode"]`, `magnify = false`, `corners =
+"small"`, `background = "glass"`, `attached = true` (on the bottom edge, hiding). Measured on their screen after the optimization round: ~34 MB RSS (21 MB of it the
 binary and fonts, file-backed), 1.9 MB shm, ~2.3 % CPU with the fox out (it was 79 MB, ~3 %).
 
 How the user works: short requests, picks from offered options; after each round they want
@@ -92,7 +95,7 @@ history (etea-bar) was removed on request; keep the ETEA Shell credit in the REA
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 69 tests (+3 opt-in, --ignored), see below
+cargo test --release                            # 79 tests (+3 opt-in, --ignored), see below
 ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
 cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
 cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
@@ -118,6 +121,8 @@ asterism --snapshot out.png --panel wallpaper --menu NAME|control|day   # whole 
 asterism --snapshot out.png --panel widgets [--hover widget.KIND]  # the desktop while arranging widgets
 asterism --snapshot out.png --panel deskmenu [--query KIND]        # the desktop's right-click menu
 asterism --snapshot out.png --panel song                           # the new-song card (needs a player)
+asterism --snapshot out.png --panel dock [--query sample,APP|apps|trash,drag,left|top|right] --demo  # the dock, out
+asterism --snapshot out.png --panel deskmenu --query dock:APP|dock:@trash|dock:@trash!  # its menus
 asterism --snapshot out.png --panel transition [--query KIND@0.3]  # a frame of the wallpaper changing
 asterism --snapshot out.png --panel pet --query cat[:coat]|fox|bird --scale 2  # every pose
 asterism --snapshot out.png --demo      # made-up workspaces, windows, networks (use for anything shared)
@@ -221,7 +226,9 @@ main.rs ── CLI: run | msg … | --snapshot …
    │     pet.rs     the pets (`Vec<PetSurface>`, slot 0/1): 240×180 Overlay surfaces moved by
    │               margins, one timer, idle watch, drag, sounds; props (bowl, ball, yarn, bed) on Top
    │     peek.rs    the workspace card under a hovered page dot
-   │     desk.rs    desktop widgets: per output a `Desk` of small `Part`s, one Layer::Bottom
+   │     dock.rs    the dock's surface: Top layer on its edge (PanelKind::Dock), out/in
+│               by an edge strip input region, press → click or carry, its menu via the desk menu
+│     desk.rs    desktop widgets: per output a `Desk` of small `Part`s, one Layer::Bottom
    │               surface per widget placed by margins (laid out on the whole output, then each
    │               group of pieces shifted into its part); arranging: a 1-pixel dim stretched by
    │               the viewporter, parts remade on Overlay above it; drag to move; starts and
@@ -238,7 +245,9 @@ main.rs ── CLI: run | msg … | --snapshot …
    ├── wallpapers.rs  the changer: folder listing, remembered choice, cached thumbnails, picker grid
    ├── lock.rs      the lock screen: its OWN process (`asterism lock`), ext-session-lock, unix_chkpwd
    ├── clipboard.rs history (memory only) + picker; app/clipboard.rs does ext-data-control
-   ├── day.rs       the day panel's files: todo.md (Markdown checklist) + notes.md, parse/write/load/save
+   ├── dock.rs      the dock, pure: items (pinned + open apps matched to desktop files), slots,
+│               layout, `hole` for carrying, `build` (slide, magnify, dots, names), the trash
+├── day.rs       the day panel's files: todo.md (Markdown checklist) + notes.md, parse/write/load/save
    ├── shortcuts.rs niri/Hyprland bind parsing + the sheet; timers.rs, weather.rs, night.rs: pure logic
    ├── dashboard.rs graphs (Prim::Area), disks, process list; the machine service samples processes
    │               only while it's open (Command::WatchProcesses)
@@ -320,7 +329,7 @@ main.rs ── CLI: run | msg … | --snapshot …
 | `polkit.rs` | org.freedesktop.PolicyKit1 agent; password checked by `polkit-agent-helper-1` via `/run/polkit/agent-helper.socket` (polkit ≥ 126) or the setuid helper | registers for the session (XDG_SESSION_ID, else logind's display session); queue of requests; retries on failure |
 | `notifications.rs` | org.freedesktop.Notifications daemon, else swaync-client | yields if another daemon owns the name |
 | `xkb.rs` | evdev.lst | layout names ↔ codes |
-| (mod.rs) | `ListPhotos(dir)` → `Update::Photos`; `AppColors(palette, apps)` → `appcolors::write` on a blocking thread, then `pkill -USR1 -x kitty` if kitty's file changed | |
+| (mod.rs) | `LoadApps` → `Update::Apps` (desktop files, for the dock); `CountTrash`/`EmptyTrash` → `Update::Trash`; `ListPhotos(dir)` → `Update::Photos`; `AppColors(palette, apps)` → `appcolors::write` on a blocking thread, then `pkill -USR1 -x kitty` if kitty's file changed | |
 | `spectrum.rs` | `parec --device=@DEFAULT_MONITOR@` (else `pw-record` capturing the sink), s16le mono 44.1 kHz | only on `WatchSpectrum(true)`: visualizer shown + a player playing; 30 `Update::Spectrum`/s, none while silent; `App::update` redraws only desks for it |
 | `dbus.rs` | helpers: get_all/get/set/call, value conversions, `watch()` match rules | |
 
@@ -392,7 +401,11 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (69, +3 opt-in)
+### Tests (79, +3 opt-in)
+
+`dock` (app ids match desktop ids loosely, pinned then open apps with their windows, a click
+starts / focuses / cycles, repinning, slots in groups and while carrying, where a carried app
+lands, builds and stays empty while hidden, nothing grows at rest, the look's measures, frames on every edge, upright sizes).
 
 `day` (reads a Markdown checklist, writes what it reads, keeps its files in a folder).
 
@@ -419,14 +432,112 @@ bus: yes, Rejected, passkey; names vs addresses), `services::niri` window rects,
 (stream parsing, following changes), `ipc` (request parsing), `launcher` (maths, Exec cleaning,
 ranking, desktop file parsing). Add tests for any new parsing or protocol logic.
 
-## Current progress (as of 2026-11-21: the first and second rounds from ETEA / caelestia, then
+## Current progress (as of 2026-11-22: the first and second rounds from ETEA / caelestia, then
 fingerprint, Wi-Fi passwords, Bluetooth pairing, the window overview, the desktop rounds, the
-pets, an optimization round, the drag fix, the small everyday round, and the day panel;
-newest first)
+pets, an optimization round, the drag fix, the small everyday round, the day panel, the
+temperature gauge and the dock; newest first)
 
-**State of the tree**: the user's commits ba1abd7 (pets, friend) on top of b2b5815 and f539ecf
-hold everything up to the small everyday round. After it, uncommitted: the day panel below,
-with its README/AGENTS updates.
+**State of the tree**: the user's commits up to cdfe23f (the day panel) hold everything up to
+it. After it, uncommitted: the temperature gauge and the dock below.
+
+### The dock (2026-11-22, the user: "add new dock feature"; picked auto-hide, pinned + running,
+apps button, drag to reorder, magnify, and "Trash/recent", read as a trash can, recent left out)
+
+- **Surface** (`app/dock.rs`): `PanelKind::Dock`, namespace `asterism-dock`, Layer::Top,
+  anchored to its one edge only (so the compositor centres it; see Position below), exclusive
+  zone 0 (inside a bar on the same edge) or the card's depth when always out, keyboard none,
+  sized to the card + room for names (`dock::surface_size`; `set_size` again from
+  `dock_pieces` when apps come or go). One dock, on the working output (`sync_dock` from
+  tick/reload). Input region (`dock_region`, also after each configure): the card and the room
+  icons grow into while out; a 2 px strip on the screen's edge, card-long, while in.
+- **Up/down**: Enter → up (`CountTrash`, desktop files re-read at most every 2 min via
+  `Command::LoadApps` → `Update::Apps` → `model.apps`); Leave → down after 450 ms
+  (generation-checked) unless busy (inside, a press, a carry, its menu open: `desk_menu.widget`
+  starts with "dock:"); `msg dock [show|hide]` (up for 3 s). Hidden, `dock::build` returns no
+  pieces, so nothing is sent.
+- **Pointer** (`dock_pointer`, before the generic routing; the rest — hover, middle and right
+  clicks — goes through the usual panel path): a left press on `dock.app.*` waits; release =
+  `DockClick` (launch, focus, or the app's next window: `dock::click`), moving > 6 px = carry
+  (`DockState.carry` by key; `dock::hole` against the still layout); drop rewrites `[dock]
+  pinned` through `set_setting` (`dock::repin`). An open app keeps its place (a `Slot::Hole`)
+  until over the pinned group.
+- **Menu**: `Action::DockMenu` opens the desktop menu (`open_desk_menu`) with widget
+  `dock:KEY` over the icon; `popups::dock` lists windows (`FocusWindow`), New window/Open,
+  pin/unpin, Close (all); for `@trash`: Open, Empty (armed: `dock:@trash!`, `DockTrashArm`).
+- **Trash** (`dock.rs`): counts `~/.local/share/Trash/files`; opens with `gio open trash:///`
+  (else xdg-open the folder); empties with `gio trash --empty` (else removes files/info by
+  hand, never following links) on the services thread. New icons `trash`, `trash-full`.
+- Launching: the desktop entry's Exec (`clean_exec`, terminal wrap) through `spawn_app`; a pin
+  without an entry runs as a plain command name if it's on PATH, else a notification.
+- Closing the launcher keeps the dock's icons (they were being dropped with the grid's).
+- Config `[dock] enabled (true), pinned ([]), autohide (true), hide_delay (450 ms), running
+  (true), size (44), magnify, launcher, trash (true)`.
+- **Its look** (2026-11-22, the user: "add some design options, like not rounded border"):
+  `corners` rounded (the theme's 16) | small (6) | square | pill (half the card; the pad grows
+  so icons clear the round ends), `background` card (`Prim::Card`) | flat (hairline + fill, no
+  shadow) | glass (fill at 62 %) | none, `attached` (foot 0; the card runs on past the screen's
+  edge by its radius so the lower corners go out of sight), `indicator` dots | line | none,
+  `separators`. All in `Geometry::of(&DockSettings)` (was `new(size)`), `Geometry::radius`,
+  `slots` and `build`; Settings → Dock groups behaviour, then look, then the apps. Checked by
+  snapshots of five combinations on the user's config; test `the_look_changes_the_measures`.
+- **Position** (2026-11-22, the user: "add position like top, bottom, left, right"): `[dock]
+  position`. Everything in `dock.rs` is laid out as if on the bottom edge — `a` along, `c`
+  across from the inner side — and a `Frame { edge, thick }` maps rectangles (and points back,
+  for carrying) onto the real edge, for the surface and inside each piece (`piece_frame`);
+  squares stay squares, text is only placed, never turned. So icons grow away from every edge,
+  the windows' marks sit between icon and edge, names go on the inner side (beside the icon on
+  the left/right, cut to `TIP_MAX` 200 px, which is the room kept there), separators turn.
+  `Geometry::along/thick/frame`; `surface_size` swaps for upright docks. App side: anchored to
+  that one edge (the compositor centres it in the room the bar leaves), the input region and
+  strip through the frame, carry positions turned to (a, c), the menu on the card's inner side;
+  a new edge closes and reopens the surface (`DockState.edge`). Snapshot: `--panel dock --query
+  sample,APP,left`. Tests `frames_put_the_dock_on_its_edge`, `an_upright_dock_is_tall`. Nested
+  niri: bottom → left (always out) live, one surface, a half-width tile 832 → 798 px; right and
+  top with `msg dock` up and down; screenshots of left, right and top looked right.
+- **Settings → Dock** (page 4, between Desktop and Night light; `settings::dock_rows`; the later
+  pages moved up one): every option, then each app on the dock with a Pin/Unpin button
+  (`Action::DockPin`, keyless rows).
+- **Always up** (`autohide = false`): shown from the start, exclusive zone card + foot (68 px at
+  44) so windows tile above it, set again on reload (`sync_dock` updates the zone and shows or
+  hides); `msg dock` does nothing then. `running = false` keeps only the pinned
+  (`App::dock_items`).
+- **Design, cleaned up (the user: "cleanup the dock design")**: the apps button and the trash
+  are glyphs in the icons' tint (no filled disc, no tile); apps without a picture get a quiet
+  hairline-edged tile with a soft initial; a state layer (text colour at 7 %, 11 % held) behind
+  the pointed-at icon, growing with it; a pressed icon dips to 92 %; separators are half-height
+  hairlines; dots 3 px, the focused app's a 10 px accent pill; the name is the bar's tooltip
+  pill (`container_highest`, text − 1) just over the grown icon; card = icon + 16 (6 above,
+  dots, 3 under), cells icon + 10. Fixed on the way: with nothing hovered, a separator counted
+  as hovered (its key and the hover were both None), so its neighbours were grown at rest
+  (tested now).
+
+Installed and restarted on the user's screen (2026-11-22): the `asterism-dock` layer mapped;
+39 MB RSS a minute after the restart with the fox out (15.7 MB anon, 21.6 MB file, 2.1 MB shm;
+about 34 MB before the dock, so up to ~5 MB is the app list and dock icons, not yet re-measured
+after settling).
+
+Verified (design and settings round): 76 tests (the build test now checks nothing grows at
+rest); snapshots of the new look with the user's wallpaper and of Settings → Dock; nested niri:
+`autohide = false` written live → the dock up and a window's tile 1080 → 1012 px tall, back to
+`true` → down after the delay and the tile 1080 again.
+
+Verified (first round): 76 tests (7 new in `dock`, `ipc` dock parsing); snapshots of the dock (plain,
+magnified with its name, carrying, the trash) and its menus; nested niri: `asterism-dock` maps
+on Top with keyboard none, `msg dock show` / toggle / auto-down after 3 s (debug log "dock
+up/down"), a new window's app joins with the focused pill and the surface widens. **Not
+verified (needs the user)**: revealing by touching the bottom edge, hover magnify and names,
+clicks (focus, cycle, launch, middle click), the right-click menus, dragging to reorder / pin /
+unpin, the trash's open and empty.
+
+### Temperature gauge (2026-11-22, the user: "add the temperature gauge in the bar")
+
+The `temperature` resource was a sun icon and a number, off by default. Now it's a ring like
+CPU and memory (`bar.rs` `resources`, one branch for all three): filled from 30 °C to 100 °C,
+the warning colour past 85 °C, a new `thermometer` icon in all three packs (hand-drawn, matched
+to the outline weight), tooltip "Processor temperature · N °C", click opens the dashboard.
+On by default (`cpu, memory, temperature, network`); Settings → Bar → "Temperature gauge"
+(`settings::resource`, keeps the resources in their usual order). Hidden when no sensor reads.
+The user's sensor is k10temp. Verified: snapshot (hover), 69 tests.
 
 ### The day panel (2026-11-21, the user: "proceed with the day panel")
 
@@ -929,6 +1040,7 @@ Not yet seen by the user live: everything in the new look — ask for their impr
   to close, the session row's second click. Live checks so far were `msg control` open/close.
 - The day panel by pointer and keys: the clock and top-left corner, adding/ticking/removing
   tasks, writing notes, Mod+Shift+D; the files landing in ~/Documents/Asterism.
+- The dock by pointer: the edge reveal, magnify, clicks, menus, drag to reorder/pin/unpin, trash.
 - Day-to-day use as the only shell (since 2026-11-21): the user hasn't reported back yet.
 
 ### Known limits
@@ -951,11 +1063,17 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 - The day panel's notes are typed at the end only (no cursor to move, no selection); for real
   editing open notes.md. Tasks can't be reordered or edited in place (remove and add, or edit
   todo.md).
+- The dock is on one output, revealed from a strip as long as its card (not the whole edge); on
+  the bar's edge it sits inside the bar and comes out from the bar's inner edge; its
+  trash count is the home trash only; "recent files" was not done.
 - Copying text off the screen needs slurp, grim and tesseract (not installed on the user's
   machine); it reads with tesseract's default language.
 
 ## Next progress (immediate)
 
+0. The user to try the dock: touch the edge by it, pin apps (right-click → Keep in the dock,
+   or Settings → Dock), drag to reorder, the trash, the other edges and looks; Mod+D brings it
+   out (added to their niri config, previous copy at config.kdl.before-dock-bind).
 0. The user to try the day panel: click the clock (or the top-left corner), add a task, tick
    it, write a note, and look at ~/Documents/Asterism/todo.md; Mod+Shift+D opens it (added to
    their niri config, previous copy at config.kdl.before-day-bind).

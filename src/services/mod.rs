@@ -229,6 +229,21 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
                     }
                 });
             }
+            LoadApps => {
+                let out = out.clone();
+                tokio::task::spawn_blocking(move || out.send(Update::Apps(crate::launcher::Apps::load().entries)));
+            }
+            CountTrash => {
+                let out = out.clone();
+                tokio::task::spawn_blocking(move || out.send(Update::Trash(crate::dock::trash_count())));
+            }
+            EmptyTrash => {
+                let out = out.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::dock::empty_trash();
+                    out.send(Update::Trash(crate::dock::trash_count()));
+                });
+            }
             ListPhotos(dir) => {
                 let out = out.clone();
                 tokio::task::spawn_blocking(move || {

@@ -10,8 +10,10 @@ Asterism began as a rewrite of the top bar of [ETEA Shell](https://github.com/SD
 **Hyprland**, and is now a **complete desktop shell**, and the user's only one (it replaced
 Noctalia on 2026-11-21): bar and menus, launcher, dock, window overview, control centre,
 notifications, lock screen (with fingerprint), polkit/Wi-Fi/Bluetooth prompts, wallpaper and
-its changer, desktop widgets, settings app, dashboard, a day panel (to-do, notes), clipboard history, screenshots and
-recording, timers, weather, night light, keyboard-shortcut sheet. README.md is the user-facing
+its changer (pictures, and live video/GIF wallpapers), desktop widgets (solid to see-through),
+optional frosted-glass blur by the compositor, settings app, dashboard, a day panel (to-do,
+notes), clipboard history, screenshots and recording, timers, weather, night light,
+keyboard-shortcut sheet, pets. README.md is the user-facing
 tour, grouped by what you're doing; this file is how it works and where it stands.
 
 **The look is Asterism's own ("hairline"), chosen 2026-11-20** after the user dropped ETEA's
@@ -26,6 +28,10 @@ yourself"). Don't drift back to either ETEA's stars or a straight Caelestia copy
   is a solid strip with a hairline on its inner edge; menus, panels and toasts are `Prim::Card`s
   (container colour, hairline, a soft 3-layer shadow, radius `t.radius` = 16) floating 8 px off
   the bar. No glow, no stars, no ink lines.
+- **Frosted glass is opt-in and the compositor's** (`app/blur.rs`, ext-background-effect): the
+  hairline look stays the default. A surface asking for blur draws its cards with
+  `Theme::frosted()` (card at 0.7, no shadow) and full-screen dims at `FROSTED` (0.6); widgets
+  have their own opacity. Never fake blur in the shell (no blurring of the wallpaper's pixels).
 - **One flourish, the asterism**: workspaces are dots; busy ones solid and joined by a thin
   line, empty ones hollow rings, the current one a larger accent dot with a ring.
 - **Accent marks state, sparingly**: hover on the bar is a short accent underline that widens
@@ -42,13 +48,15 @@ and Poppins (OFL), Material outline icons and Material Symbols (Apache 2.0), Pho
 ## Hard constraints (decided with the user, don't undo them)
 
 - **No GTK, no Qt, no gtk-layer-shell.** The user chose pure Rust over installing
-  `gtk4-layer-shell`. Wayland is spoken directly through smithay-client-toolkit.
+  `gtk4-layer-shell`. Wayland is spoken directly through smithay-client-toolkit (and
+  `wayland-protocols` with `staging`, for protocols sctk doesn't wrap).
 - **The only system library linked is libxkbcommon** (via sctk's `xkbcommon` feature, for typing
   in the launcher with real layouts). It's present on every Wayland desktop. Don't add other C
   libraries (no libpulse, no libpam bindings, no image libraries with C code) without asking.
 - **Spawning standard CLI tools is fine** where a protocol is impractical: `pactl` for sound,
   `curl` for web album art, `nmcli` to join wifi, `systemd-run` to start apps, `wl-copy`,
-  `gio` to open and empty the trash (with a plain-file fallback).
+  `gio` to open and empty the trash (with a plain-file fallback), `ffmpeg` to decode video
+  wallpapers (GIFs are decoded in Rust, by the `gif` crate).
 - **zbus is pinned to 5.x** on purpose (6.x reorganised its API). Don't bump it casually.
 - Must work on **both niri and Hyprland**. Hyprland 0.55+ uses a Lua config where `dispatch`
   takes Lua (`hl.dsp.focus({ workspace = 3 })`); older versions take `workspace 3`. The Hyprland
@@ -68,15 +76,19 @@ wpctl/brightnessctl/playerctl. The lock is Asterism's own (`[lock] idle = 10`, `
 true`). After a rebuild, `install -Dm755 target/release/asterism ~/.local/bin/asterism`, then
 restart it (`pkill -x asterism; setsid -f ~/.local/bin/asterism`) for the change to show.
 
-The machine: laptop, eDP-1 1920×1200 at scale 1; niri with `default-column-width 0.9` and
+The machine: laptop, eDP-1 1920×1200 at scale 1, and (seen since 2026-11-22) a second
+monitor, an MSI MP251W on HDMI-A-1, 1920×1080 at scale 1: so two bars, two wallpapers and two
+desks, and a video wallpaper runs two players (two `ffmpeg`). niri 26.04 with `default-column-width 0.9` and
 `prefer-no-csd` (so windows open wide and nobody draws title bars). PipeWire with
 pipewire-pulse (`parec`, `pactl`, `pw-record` present). kitty (its kitty.conf still includes
 `themes/noctalia.conf`; pointing it at `asterism-colors.conf` was offered, not done) and GTK
 through adw-gtk3-dark (gtk.css is a symlink to the theme). The user's config has
-`[wallpaper] interval = 5` (asked for 2026-11-21) with the default random animation, and
-widgets clock, media and visualizer (placed by hand in the editor), and a pet: `[pet] animal =
-"fox"` (switched from the cat by the user), `coat = "red"`, `size = 70` (both set by the user in
-Settings), no second pet, no bed yet, sounds on at volume 40. One VPN saved in NetworkManager
+`[wallpaper] interval = 5` (asked for 2026-11-21) with the default random animation, `fit =
+"stretch"`, `live = true` and `live_battery = true` (set by the user in Settings on 2026-11-22;
+their folder has one GIF, street2.gif, so the rotation can land on it); widgets: only the clock
+now; pets: `[pet] animal = "cat"` with `friend = "fox"`, `coat = "red"`, `size = 70`, no bed
+(`bed = -1`), sounds on at volume 40. No `[blur]` section and no widget opacity/blur set yet
+(as of the last restart): all the blur switches are off. One VPN saved in NetworkManager
 ("client"); BlueZ off; no slurp/grim/tesseract. The dock (since 2026-11-22), set by the user in
 Settings: `pinned = ["kitty", "com.microsoft.VSCode"]`, `magnify = false`, `corners =
 "small"`, `background = "glass"`, `attached = true` (on the bottom edge, hiding). Measured on their screen after the optimization round: ~34 MB RSS (21 MB of it the
@@ -86,7 +98,7 @@ How the user works: short requests, picks from offered options; after each round
 the build installed and the shell restarted. **Ask before restarting** (they've said yes every
 time): it briefly takes the bar away and empties the clipboard history, which lives in memory.
 They try things by hand afterwards, so end with what needs their pointer or keys. They commit
-themselves (today's work went in as f539ecf); commit only when asked. The project's rename
+themselves (the latest: 26336fc, the dock); commit only when asked. The project's rename
 history (etea-bar) was removed on request; keep the ETEA Shell credit in the README.
 
 ## Build, run, test
@@ -95,7 +107,7 @@ history (etea-bar) was removed on request; keep the ETEA Shell credit in the REA
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 79 tests (+3 opt-in, --ignored), see below
+cargo test --release                            # 88 tests (+3 opt-in, --ignored), see below
 ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
 cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
 cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
@@ -184,6 +196,15 @@ nothing of the user's may show). How they were made, to redo after visual change
 **Pitfalls met while testing on the user's machine** (each cost a wrong result or a side effect
 once):
 
+- A nested test shell inherits `NIRI_SOCKET` from the real session, so it reads (and could act
+  on) the user's real windows: its overview and dock showed them. Set `NIRI_SOCKET` to the
+  nested niri's socket (`/run/user/1000/niri.wayland-2.*.sock`) for the test shell.
+- Snapshots can't show blur: the compositor does it. Check it in nested niri with a
+  `screenshot-screen` there, over a busy wallpaper (the fractal test video showed it best; a
+  dark one hides it), and compare with it off.
+- Killed with SIGTERM, a test shell leaves `$XDG_RUNTIME_DIR/asterism-wayland-2.sock`
+  behind; remove it after.
+
 - The nested niri window is often off screen in the user's scrolling layout, and niri sends no
   frame callbacks to what it doesn't show: animations there get 3–4 frames. Measure the cost of
   a frame instead (`frame_cost`), and don't move the user's focus to make it visible.
@@ -216,6 +237,11 @@ main.rs ── CLI: run | msg … | --snapshot …
    │     shell.rs  layer-shell panels: launcher, notification toasts, OSD, control centre;
    │               keyboard routing for panels; `msg` requests
    │     backdrop.rs  wallpaper surfaces (background layer per output), painted on a thread
+   │     blur.rs    compositor blur (ext-background-effect) behind widgets and panels
+   │     live.rs    live wallpapers as the app runs them: a `crate::live::Player` per backdrop,
+   │               asked for a frame when the frame callback has come and nothing holds it
+   │               (battery, lock, away: own idle watch); held 60 s → put away; frames copied
+   │               into the surface's own pool and scaled by the viewporter
    │     wallpaper.rs the changer as the app runs it: picker panel, set/step, palette off-thread, rotation
    │     clipboard.rs ext-data-control: read selections on a worker thread, offer one back
    │     night.rs   wlr-gamma-control per output, schedule, the control-centre switch
@@ -256,6 +282,9 @@ main.rs ── CLI: run | msg … | --snapshot …
    ├── spectrum.rs  the visualizer's analysis: radix-2 FFT, log bands, auto-gain, fall-off
    ├── pet/         the pets: mod.rs behaviour (friends, bed, `after`, stepped frame clock) (needs, acts, `Pet::step` → events, poses),
    │               draw.rs (rig, IK legs, coats), sound.rs (voices synthesized → WAV)
+   ├── live.rs      live wallpapers, pure + threads: `Spec` (what plays), `Player` (a thread per
+   │               wallpaper: a frame per ask, paced; `ffmpeg` child for videos, the `gif` crate
+   │               for GIFs, composed here), stills (`video_still`, `gif_still`; `images::still`)
    ├── transition.rs wallpaper animations: kinds, `pick` (random, never twice), per-pixel reveal
    │               maps, `compose` (a lookup table per frame), `ease`
    ├── appcolors.rs the scheme for kitty/foot/alacritty/GTK: 16 ANSI colours harmonized to the
@@ -377,6 +406,18 @@ with a test in `ipc::tests`.
 - **The lock's outside unlock** (`asterism unlock` → a file in `$XDG_RUNTIME_DIR`) means any
   process running as the user can unlock the screen, the same trade-off as swaylock's
   `SIGUSR1`. It's the recovery path from a console; don't remove it without another one.
+- **A `SlotPool` buffer's canvas can be longer than w×h×4** (its length is rounded up to 64
+  bytes): copy into `canvas[..len]`, never `copy_from_slice` the whole slice (a 1799×1080 GIF
+  frame panicked the shell; `present_fill` once had the same trap).
+- **Live wallpapers are shm, so frame size is the cost**: converting, the pipe, our copy and the
+  compositor's upload all go with pixels, and reading frames back from the GPU is slow, so even
+  VA-API scaling to BGRA measured ~19 ms/frame at full size. Measured on the user's laptop
+  (1712×1028 nested, a 5 Mb/s 1080p h264): `-threads 1 -filter_threads 1` is both cheaper and
+  smaller than ffmpeg's default threads; `-hwaccel auto` at 50 % ≈ 8 ms/frame (~24 % of a core
+  at 30 fps), RSS ~150 MB (≈ 80 anon + 75 driver libs); at 100 % ≈ 15–20 ms, ~240 MB. ffmpeg's
+  memory is its decoder and filter frames, not the output queue (`-thread_queue_size` changed
+  nothing). Hence `live_scale` 50 by default. GPU surfaces (dmabuf) would need EGL/GBM: C
+  libraries, ruled out.
 - **Buffers for big surfaces come from the surface's own pool** (`BIG_BUFFER` = 1 MB in
   `present`; at most 2 buffers), dropped with the surface. The shared `SlotPool` never shrinks,
   so before this one full-screen panel opened once kept ~27 MB resident for good. Don't make
@@ -401,9 +442,12 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (79, +3 opt-in)
+### Tests (88, +3 opt-in)
 
-`dock` (app ids match desktop ids loosely, pinned then open apps with their windows, a click
+`live` (which files move, ffmpeg's arguments and frame size, a GIF cut/widened/shrunk to the
+screen, a GIF played round with transparency and delays, a one-frame GIF doesn't play).
+
+`dock` (a frosted card is see-through, app ids match desktop ids loosely, pinned then open apps with their windows, a click
 starts / focuses / cycles, repinning, slots in groups and while carrying, where a carried app
 lands, builds and stays empty while hidden, nothing grows at rest, the look's measures, frames on every edge, upright sizes).
 
@@ -418,11 +462,11 @@ high pointer, ignores a far one, eats from the bowl and bats the ball, purrs whe
 complains when dropped from high, stays on screen and speaks a few times in ten minutes, draws
 every pose in every coat), `pet::sound` (every voice and take: length, peak, not silence; a
 meow's pitch falls after its middle; WAV header; files made once), `theme` (icons and widgets follow the wallpaper: blue vs orange, plain, accent with a distinct
-"on", colourful groups), `transition` (every kind starts old and ends new, a wipe goes its way, random never repeats,
+"on", colourful groups; widget cards from solid to see-through; frosted cards), `transition` (every kind starts old and ends new, a wipe goes its way, random never repeats,
 maps fit; `frame_cost` is an ignored timing), `world` (the repaint key ignores interval and
 animation), `appcolors` (terminal colours keep their meaning and read on the background; every file format,
 alacritty's parses as TOML), `widgets` (places old `[x, y]` and new `[x, y, scale]`, scaling a
-piece), `spectrum` (FFT of a wave, a tone lands in its band, silence sinks to dots, band edges), `overview` (window maps fit their card), `services::bluetooth` (the agent over a real session
+piece, a blur region follows the cards' corners), `spectrum` (FFT of a wave, a tone lands in its band, silence sinks to dots, band edges), `overview` (window maps fit their card), `services::bluetooth` (the agent over a real session
 bus: yes, Rejected, passkey; names vs addresses), `services::niri` window rects,
 `settings` (writes keep comments, incl. into config.example.toml), `widgets` (synced lyrics),
 `dashboard` (ranking, sizes, never ending session processes), `timers` (countdown/pause, focus rounds, stopwatch), `weather` (Open-Meteo parsing, codes),
@@ -435,10 +479,121 @@ ranking, desktop file parsing). Add tests for any new parsing or protocol logic.
 ## Current progress (as of 2026-11-22: the first and second rounds from ETEA / caelestia, then
 fingerprint, Wi-Fi passwords, Bluetooth pairing, the window overview, the desktop rounds, the
 pets, an optimization round, the drag fix, the small everyday round, the day panel, the
-temperature gauge and the dock; newest first)
+temperature gauge, the dock, live wallpapers, see-through widgets and blur; newest first)
 
-**State of the tree**: the user's commits up to cdfe23f (the day panel) hold everything up to
-it. After it, uncommitted: the temperature gauge and the dock below.
+**State of the tree**: the user's commits up to 26336fc (the dock) hold everything up to it.
+After it, uncommitted: live wallpapers, see-through widgets, widget blur and panel blur below.
+
+### Blur behind the control centre and notifications (2026-11-22, the user asked "too")
+
+`[blur] control`, `notifications` (false), Settings → Look. `Theme::frosted()` (field
+`frosted`): `card_deep` at 0.7 and `draw_card` without its shadows (they'd show through as a
+dark rim). The painter's piece hash now includes `card_deep.key()`, so a card redraws when it
+turns frosted (it also keeps cards from going stale on a palette change). `blur::card_rows`
+turns every `Prim::Card` in a set of pieces into rounded rows: the Control and Toasts panels
+(`panel_blur`), and the menu popup when it's the notification centre (`PopupSurface.blur`,
+first field, so it drops before the popup; rows offset by `POPUP_MARGIN`, a commit when only
+the blur changed). draw_panel/draw_popup render those with the frosted theme. The framed
+control centre is a `Drawer` joined to the frame: no cards, so no blur. Toasts' region is their
+resting place (their short rise-in isn't followed). Verified: test
+`frosted_cards_let_the_blur_through`; nested niri under `dbus-run-session` (with NIRI_SOCKET set
+to the nested niri) over the fractal video: a notify-send pop-up, the control centre and the
+notification centre all frosted, no shadow rim. Not seen by the user yet.
+
+### Blur behind the dock, launcher, overview and picker (2026-11-22, the user: "add blur option
+for the dock background, app menu over view and wall paper selection too"; read as the dock,
+the launcher, the window overview and the wallpaper picker)
+
+The blur code moved to `app/blur.rs`: `BlurCaps`, `bind_blur`, `Blur` (now also on every
+`Panel`, declared before its role so it drops first) with `Blur::set(wl, rects, manager,
+compositor, qh) -> asked` (sends only changes; the caller commits when nothing was presented),
+`App::blurs(wanted)` (asked, capable, bound), `App::panel_blur(kind, pieces, w, h)`: the whole
+surface for Launcher/Overview/Wallpapers, the `dock.card` piece's rounded rows (radius from
+`Geometry::radius`) while its opacity > 0.5 (it fades as it slides) unless background "none".
+Config `[blur] dock, launcher, overview, wallpapers` (all false), Settings → Look (four
+switches). Frosted, the full-screen dims drop to `FROSTED` (0.6 of the surface colour, from
+0.9/0.93/0.92), and `dock::View::frosted` draws card/flat as glass (0.62 fill) so the blur shows.
+Verified: test `a_frosted_card_lets_the_blur_show`; nested niri with all on: launcher,
+overview, picker over a frosted screen, the dock's glass card blurred vs not (over the fractal
+video). Not seen by the user yet. Note: a nested test shell inherits `NIRI_SOCKET`, so its
+overview and dock showed the user's real windows (nothing was clicked); set `NIRI_SOCKET` to the
+nested socket when that matters.
+
+### Blur behind widgets (2026-11-22, the user: "add a blur option for the widget background")
+
+The compositor's blur, not ours: ext-background-effect-v1 (niri 26.04 has it, and
+org_kde_kwin_blur). `wayland-protocols` is now a direct dependency with `staging` (same 0.32.13
+already in the tree, pure Rust). `desk::bind_blur` binds the manager; `BlurCaps` records the
+`capabilities` event (`App::blur_capable`, desks repainted when it changes). Each desk `Part`
+has a `Blur` (the effect object, made once per surface when first wanted, destroyed in `Drop`
+before the layer: it's declared before `layer`, fields drop in order) and the rectangles last
+set. In `draw_desk`, with `[widgets] blur` and the capability: for every `widget.KIND` piece
+with a card (`widgets::card_radius`: none for clock and edge, 18 note, 20 others, × the place's
+scale), `widgets::rounded_rows` makes the rounded rect out of rows (regions are rectangles
+only; like rows merged); set only when changed, with a commit even if nothing was redrawn.
+Off → `set_blur_region(None)`. Hyprland: no such global as far as known, README says to use a
+layerrule on `asterism-desktop`. Settings → Desktop "Blur behind widgets". Verified: test
+`a_blur_region_follows_the_cards_corners`; nested niri: capability true, screenshots with blur
+on (frosted cards, the corner follows the curve inside the hairline, nothing behind the clock)
+and off after a live config edit. Not seen by the user yet; not tried on Hyprland.
+
+### See-through widgets (2026-11-22, the user: "make desktop widget's background transparent")
+
+`[widgets] opacity` (0–100, default 60; was a fixed 62 %) and `outline` (true), Settings →
+Desktop "Widget background" (stepper, 10 %) and "Widget outline". `Theme::widget_opacity`,
+`widget_outline`, `widget_shadow` (opacity < 0.4) beside `widget_card` (its alpha is the
+opacity). `widgets::card` draws the fill only above 0 and the hairline as a stroke
+(`outline()`), no longer as a rect under the fill (with a clear fill that would have filled the
+card). `widgets::build` wraps `build_widget` and, when `widget_shadow`, `shadow_words` puts the
+clock's soft shadow under every Text/Marquee not already shadowed. The note's paper is
+0.92 × opacity/0.6 (capped at 0.92), with a hairline once it's under 0.3. Verified: test
+`widget_cards_can_be_see_through`; snapshots at 60, 20 and 0 % on street2.gif (cards gone at 0,
+words shadowed, hairlines kept). Not seen by the user yet.
+
+### Live wallpapers (2026-11-22, the user: "add support for live wallpaper"; picked videos and
+animated GIFs, paused when covered, on battery, and when locked or idle)
+
+- **What**: `[wallpaper] image` (or a pick in the changer) ending in mp4/webm/mkv/mov/m4v/avi/ogv
+  or gif plays (`live::is_live`). The changer lists them (`wallpapers::KINDS` + videos) with a
+  small play badge; thumbnails, the palette and the still painted by `world::render` all come
+  from the first frame (`images::still`: ffmpeg for a video, never read whole; GIFs by magic in
+  `images::decode`).
+- **Playing** (`live.rs`): `Player::start` spawns the thread (and for a video `ffmpeg -hwaccel
+  auto -threads 1 -stream_loop -1 … -vf fps,scale+crop|pad,format=bgra -f rawvideo -`, with
+  PDEATHSIG). The thread waits for an ask (which hands back the last frame's Vec: one buffer
+  circulates), reads/composes the next frame, waits for its time (on the ask channel, so a
+  dropped player doesn't sleep on), and sends it through a calloop channel. Not asked → it waits,
+  ffmpeg blocks on its pipe: no CPU. After a pause it goes on from now. Drop kills ffmpeg. GIFs:
+  the canvas only (not every frame), disposal Keep/Background/Previous, delay ≤ 1 → 100 ms, a
+  one-frame GIF stops after its frame; sent at their own size cut (cover) or widened (contain) to
+  the screen's shape, shrunk to `live_scale` when bigger, nearest pixel (`layout`).
+- **App** (`app/live.rs`): `sync_live` (from `show_backdrop`, `sync_backdrops`, the tick, the
+  idle watch) starts a player for a shown backdrop whose job image is playable, restarts on a
+  new `Spec` (size, fit, fps, scale, background), stops otherwise. `step_live` (in `flush`) asks
+  when the frame callback came and nothing holds (`live_held`: lock running, `live_away` from
+  its own ext-idle notification of `live_idle` minutes, on battery without `live_battery`); held
+  60 s → `live_spec` None → put away (ffmpeg and buffers go), restarted from the start when
+  released. `live_frame` presents (`present_frame`: whole frame into the surface's own pool,
+  two buffers, viewporter destination = the screen). `release_backdrops` leaves a playing
+  backdrop's buffers alone. A change of picture starts from the frame on screen
+  (`Player::last_picture` replaces the repainted first frame).
+- **Covered**: nothing of its own; niri throttles frame callbacks for hidden surfaces to about
+  one a second (seen: 16 frames in ~25 s with the nested window off screen), so the player is
+  asked that often. With the user's `default-column-width 0.9` the wallpaper is rarely fully
+  covered, so expect it to play beside windows.
+- Config `[wallpaper] live (true), live_fps (30), live_scale (50 %), live_battery (false),
+  live_idle (5 min)`, Settings → Wallpaper has all five; excluded from `world::key`.
+
+Verified: 84 tests (5 new in `live`, the listing test with gif/MP4); snapshots of a video's and
+a GIF's still and of the picker (thumbnails + badge); nested niri: on battery → held, put away
+after 60 s, ffmpeg gone; `live_battery = true` → a test video plays at 856×514, `msg wallpaper
+set` to a GIF → video put away (ffmpeg gone), fade, the GIF plays (screenshot: advanced frames,
+colours right); the user's `street2.gif` (1920×1080, 28 frames) first panicked the shell (the
+64-byte rounding above), fixed, then played at 856×514, test shell 56 MB (74 before shrinking
+big GIFs). ffmpeg costs measured outside the shell (see Code conventions). **Not verified**:
+the frame rate and CPU on a visible screen (the nested window was off screen), how a video
+looks at 50 % on their screen, the lock and idle holds live (logic shared with the battery
+hold, which was seen).
 
 ### The dock (2026-11-22, the user: "add new dock feature"; picked auto-hide, pinned + running,
 apps button, drag to reorder, magnify, and "Trash/recent", read as a trash can, recent left out)
@@ -1018,6 +1173,12 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 
 ### Not yet verified by a person (needs real input)
 
+- Live wallpapers on the visible screen: the frame rate, ffmpeg's real CPU and memory, how a
+  video looks at 50 %, the lock and idle holds; two screens each playing.
+- See-through widgets (opacity, outline) and every blur switch (widgets, dock, launcher,
+  overview, picker, control centre, notifications) on their real screen: seen only in nested
+  niri.
+
 - Clicking through menus, outside-click dismissal (pointer grab), sliders by drag.
 - Keyboard navigation in menus opened by click (depends on the compositor giving the popup
   focus) and by `msg menu`.
@@ -1045,6 +1206,11 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 
 ### Known limits
 
+- Blur needs the compositor's ext-background-effect (niri 26+); without it the switches do
+  nothing (Hyprland: layer rules, written in the README, untested). The framed control centre
+  (a drawer) isn't frosted. A toast's blur region is its resting place, not its short rise-in.
+  Blur on the dock follows the card only while it's mostly out (opacity > 0.5).
+
 - No 802.1X (enterprise) wifi.
 - Notification bodies are plain text (markup stripped); no inline reply.
 - `msg menu` opens without a pointer grab: clicking elsewhere doesn't close it (Esc / keybind).
@@ -1052,8 +1218,11 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 - The control centre and the dashboard answer only Esc on the keyboard (no arrow navigation).
 - The overview has no live thumbnails (niri offers no per-window capture).
 - Clipboard history is in memory only: empty after a restart (on purpose).
-- The changer lists one folder (no subfolders) and PNG/JPEG only (no WebP); one picture for
-  all outputs (no per-output wallpapers yet).
+- The changer lists one folder (no subfolders): PNG, JPEG, GIF, videos (no WebP); one picture
+  for all outputs (no per-output wallpapers yet).
+- Live wallpapers go through shm, drawn by the processor (no EGL): a video costs ~¼ core and
+  ~150 MB in ffmpeg at half size. Its sound is dropped. One player per output (each its own
+  ffmpeg) on several screens.
 - The pets see the pointer only over the shell's own surfaces (wallpaper, widgets, bar, the
   pets): Wayland doesn't tell an app where the pointer is over other windows. They live on one
   output (the working one when they first appear).
@@ -1071,6 +1240,13 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 
 ## Next progress (immediate)
 
+0. The user to try frosted glass and see-through widgets: Settings → Look (the six blur
+   switches), Settings → Desktop (Widget background, outline, blur); open the launcher, overview,
+   picker, control centre and notification centre with them on, and say which they keep.
+
+0. The user to try live wallpapers: pick `street2.gif` (or a video) in the changer (Mod+W), see
+   it play beside windows, plug/unplug (on battery it holds still by default), and say how a
+   video looks at 50 % and what `top` shows for ffmpeg; Settings → Wallpaper has the knobs.
 0. The user to try the dock: touch the edge by it, pin apps (right-click → Keep in the dock,
    or Settings → Dock), drag to reorder, the trash, the other edges and looks; Mod+D brings it
    out (added to their niri config, previous copy at config.kdl.before-dock-bind).

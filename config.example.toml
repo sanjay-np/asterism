@@ -107,6 +107,14 @@ interval = 0              # minutes between changing to another picture at rando
 transition = "random"     # how pictures change: random (a different one each time), fade, wipe,
                           # circle, blinds, ink, pixels, slide, or none
 transition_ms = 1200      # how long that takes
+# A video (mp4, webm, mkv, mov…; needs ffmpeg) or an animated GIF as the `image` plays as a
+# live wallpaper. It's still while windows cover it, and while these hold it:
+live = true               # off: its first frame stays still
+live_fps = 30             # a video's frames a second, 5 to 60 (a GIF keeps its own timing)
+live_scale = 50           # a video (or big GIF) made at this % of the screen's width and height, 25 to 100,
+                          # and scaled up by the compositor; half costs a quarter
+live_battery = false      # play on battery too
+live_idle = 5             # minutes without input before it stops until you're back; 0 never
 grain = 1.0               # film grain against banding, 0 to 2
 # Without a picture you get a quiet gradient in the scheme's colours. Or, for a painted
 # landscape of the `planet` below instead:
@@ -190,6 +198,18 @@ units = "metric"          # metric (°C, km/h) or imperial (°F, mph)
 folder = ""               # where they live; empty takes ~/Documents/Asterism
 corner = true             # the top-left corner opens it
 
+[blur]
+# Frosted glass: the compositor blurs what's behind these (niri 26, and others with
+# ext-background-effect; on Hyprland use layer rules: `layerrule = blur, asterism-dock` and
+# asterism-launcher, asterism-overview, asterism-wallpapers, asterism-control,
+# asterism-notifications). The widgets: [widgets] blur.
+dock = false              # the dock's card (drawn see-through so the blur shows)
+launcher = false          # the app grid
+overview = false          # the windows' overview
+wallpapers = false        # the wallpaper picker
+control = false           # the control centre's card (not with the frame style)
+notifications = false     # notification pop-ups and the notification centre
+
 [dock]
 # The dock on an edge of the screen (the foot by default), hidden until the pointer touches the
 # edge by it (or `asterism msg dock`). Pinned apps stay; open apps join them with a dot per
@@ -230,3 +250,7 @@ lyrics = true             # song words under what's playing, from LRCLIB (sends 
 photos = ""               # the photo frame's folder; empty takes ~/Pictures (PNG and JPEG)
 photo_minutes = 10        # how long each picture stays
 note = ""                 # what the sticky note says; use """…""" for several lines
+opacity = 60              # how solid the cards are, 0 (see-through: words with a soft shadow) to 100
+outline = true            # a hairline round each card
+blur = false              # frosted glass: the compositor blurs what's behind each card (niri 26+;
+                          # on Hyprland, `layerrule = blur, asterism-desktop` instead)

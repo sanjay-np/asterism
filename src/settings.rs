@@ -147,6 +147,12 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
                 choice(&[("Tinted", "tinted"), ("Accent", "accent"), ("Colourful", "colourful"), ("Plain", "plain")], if c.colors.bar_icons.trim().is_empty() { "tinted" } else { c.colors.bar_icons.trim() }),
             ),
             row(&["colors", "widgets"], "Widgets", "Clock, headings and cards in the wallpaper's colours, or plain", choice(&[("Tinted", "tinted"), ("Plain", "plain")], if c.colors.widgets.trim().is_empty() { "tinted" } else { c.colors.widgets.trim() })),
+            row(&["blur", "dock"], "Blur behind the dock", "Frosted glass: the compositor blurs what's behind it (niri 26, and others that offer it)", Control::Switch(c.blur.dock)),
+            row(&["blur", "launcher"], "Blur behind the apps", "The app grid over a frosted screen", Control::Switch(c.blur.launcher)),
+            row(&["blur", "overview"], "Blur behind the overview", "The windows' overview over a frosted screen", Control::Switch(c.blur.overview)),
+            row(&["blur", "wallpapers"], "Blur behind the wallpaper picker", "", Control::Switch(c.blur.wallpapers)),
+            row(&["blur", "control"], "Blur behind the control centre", "Its card frosted glass (not with the frame style, where it's joined to the frame)", Control::Switch(c.blur.control)),
+            row(&["blur", "notifications"], "Blur behind notifications", "The pop-ups and the notification centre", Control::Switch(c.blur.notifications)),
             in_list(&["colors", "apps"], &c.colors.apps, "kitty", "Colours for kitty", "Add to kitty.conf: include asterism-colors.conf"),
             in_list(&["colors", "apps"], &c.colors.apps, "foot", "Colours for foot", "Add to foot.ini: include=~/.config/foot/asterism-colors.ini"),
             in_list(&["colors", "apps"], &c.colors.apps, "alacritty", "Colours for Alacritty", "Import ~/.config/alacritty/asterism-colors.toml"),
@@ -175,12 +181,20 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
             ),
             row(&["wallpaper", "transition_ms"], "Animation length", "", Control::Stepper { value: c.wallpaper.transition_ms as i64, min: 400, max: 3000, step: 200, unit: "ms" }),
             row(&["wallpaper", "fit"], "Fit", "", choice(&[("Cover", "cover"), ("Contain", "contain"), ("Stretch", "stretch")], &lower(&format!("{:?}", c.wallpaper.fit)))),
+            row(&["wallpaper", "live"], "Moving wallpapers", "Videos and animated GIFs play; off keeps their first frame", Control::Switch(c.wallpaper.live)),
+            row(&["wallpaper", "live_fps"], "Video frame rate", "Fewer frames cost less", Control::Stepper { value: c.wallpaper.live_fps as i64, min: 10, max: 60, step: 5, unit: "fps" }),
+            row(&["wallpaper", "live_scale"], "Moving wallpaper sharpness", "Videos (and big GIFs) made at this share of the screen's width and height, then scaled up; less costs less", Control::Stepper { value: c.wallpaper.live_scale as i64, min: 25, max: 100, step: 25, unit: "%" }),
+            row(&["wallpaper", "live_battery"], "Play on battery", "Off: still until the charger's back", Control::Switch(c.wallpaper.live_battery)),
+            row(&["wallpaper", "live_idle"], "Still when away", "Minutes without input before it stops, 0 never", Control::Stepper { value: c.wallpaper.live_idle as i64, min: 0, max: 60, step: 1, unit: "min" }),
             row(&["wallpaper", "enabled"], "Draw the wallpaper", "Off leaves it to another program", Control::Switch(c.wallpaper.enabled)),
         ],
         3 => {
             let mut list = vec![
                 row(&[], "Arrange widgets", "Add, take off, move and resize them, on the desktop itself", Control::Button("Arrange", Action::EditWidgets(Some(true)))),
                 row(&["widgets", "note"], "Sticky note", "What the note on the desktop says", Control::Text(c.widgets.note.clone())),
+                row(&["widgets", "opacity"], "Widget background", "How solid their cards are; 0 leaves the words alone on the wallpaper, with a soft shadow", Control::Stepper { value: c.widgets.opacity as i64, min: 0, max: 100, step: 10, unit: "%" }),
+                row(&["widgets", "outline"], "Widget outline", "A hairline round each card", Control::Switch(c.widgets.outline)),
+                row(&["widgets", "blur"], "Blur behind widgets", "Frosted glass: the compositor blurs what's behind each card (niri 26 and others that offer it); goes well with a lighter background", Control::Switch(c.widgets.blur)),
             ];
             for kind in crate::widgets::KINDS {
                 let about = match kind {

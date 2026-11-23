@@ -116,6 +116,7 @@ dependencies = [
  "cosmic-text",
  "env_logger",
  "futures-lite",
+ "gif",
  "log",
  "material-colors",
  "resvg",
@@ -127,6 +128,7 @@ dependencies = [
  "tokio",
  "toml",
  "toml_edit",
+ "wayland-protocols",
  "zbus",
  "zune-jpeg",
 ]

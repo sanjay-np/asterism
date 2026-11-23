@@ -11,8 +11,8 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Pictures the shell can draw.
-const KINDS: [&str; 3] = ["png", "jpg", "jpeg"];
+/// Pictures the shell can draw, then the moving ones (`crate::live`).
+const KINDS: [&str; 4] = ["png", "jpg", "jpeg", "gif"];
 
 /// Thumbnails are cut to the screen's usual shape, so a grid of them lines up.
 pub const THUMB_W: u32 = 384;
@@ -41,7 +41,7 @@ pub fn list(dir: &Path) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()).is_some_and(|e| KINDS.contains(&e.to_lowercase().as_str())))
+        .filter(|p| p.is_file() && (crate::live::is_video(p) || p.extension().and_then(|e| e.to_str()).is_some_and(|e| KINDS.contains(&e.to_lowercase().as_str()))))
         .collect();
     found.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
     found
@@ -126,7 +126,7 @@ pub fn thumbnail(path: &Path) -> Option<Arc<Image>> {
     if let Some(image) = crate::images::load(&file, THUMB_W.max(THUMB_H)) {
         return Some(image);
     }
-    let big = crate::images::load(path, 1024)?;
+    let big = crate::images::still(path, 1024)?;
     let source = tiny_skia::Pixmap::from_vec(big.data.clone(), tiny_skia::IntSize::from_wh(big.width, big.height)?)?;
     let mut small = tiny_skia::Pixmap::new(THUMB_W, THUMB_H)?;
     let scale = (THUMB_W as f32 / big.width as f32).max(THUMB_H as f32 / big.height as f32);
@@ -275,6 +275,13 @@ impl Picker {
                     cell.prims.push(Prim::Icon { x: ix + (thumb_w - 28.0) / 2.0, y: iy + (thumb_h - 28.0) / 2.0, size: 28.0, name: "image".into(), color: t.outline });
                 }
             }
+            if crate::live::is_live(path) {
+                // A moving one: a small play mark in its corner
+                let r = 11.0;
+                let (cx, cy) = (ix + r + 8.0, iy + thumb_h - r - 8.0);
+                cell.prims.push(Prim::Rect { x: cx - r, y: cy - r, w: r * 2.0, h: r * 2.0, radius: r, color: t.surface.alpha(0.82) });
+                cell.prims.push(Prim::Icon { x: cx - 7.0, y: cy - 7.0, size: 14.0, name: "play".into(), color: t.color_text });
+            }
             if on_screen {
                 let r = 13.0;
                 let (cx, cy) = (ix + thumb_w - r - 8.0, iy + r + 8.0);
@@ -358,12 +365,13 @@ mod tests {
     #[test]
     fn lists_pictures_by_name() {
         let dir = scratch("list");
-        for file in ["b.JPG", "a.png", "notes.txt", "c.jpeg", "d.webp"] {
+        for file in ["b.JPG", "a.png", "notes.txt", "c.jpeg", "d.webp", "e.gif", "f.MP4"] {
             std::fs::write(dir.join(file), b"x").unwrap();
         }
         std::fs::create_dir(dir.join("sub.png")).unwrap();
         let names: Vec<String> = list(&dir).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
-        assert_eq!(names, ["a.png", "b.JPG", "c.jpeg"]);
+        // Moving ones too (`crate::live`)
+        assert_eq!(names, ["a.png", "b.JPG", "c.jpeg", "e.gif", "f.MP4"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -42,10 +42,10 @@ no GTK, Qt or QML.
 
 | | |
 |---|---|
-| 🎨 **Colour from your wallpaper** | A Material 3 scheme grown from each new wallpaper, applied to the bar, menus, widgets — and, if you like, your terminal and GTK apps |
+| 🎨 **Colour from your wallpaper** | A Material 3 scheme grown from each new wallpaper, applied to the bar, menus, widgets — and, if you like, your terminal and GTK apps; frosted-glass blur behind panels, the dock and widgets |
 | 🧭 **Everything in reach** | App launcher with maths, emoji and SSH; a dock that hides until you want it; window overview; workspace previews on hover; clipboard history; keyboard-shortcut sheet |
 | 🗓️ **Your day** | Calendar, timers, a to-do list and notes, kept as plain Markdown files |
-| 🖼️ **A living desktop** | Wallpaper changer with animated transitions, desktop widgets you arrange by hand, a music visualizer |
+| 🖼️ **A living desktop** | Wallpaper changer with animated transitions, live video and GIF wallpapers, desktop widgets you arrange by hand (solid, see-through or frosted), a music visualizer |
 | 🔒 **The serious parts** | Lock screen (with fingerprint), polkit agent, Wi-Fi password prompts, Bluetooth pairing, notification daemon |
 | 🐈 **A little life** | Optional pets — a cat, a fox or a bird — that live on the screen and react to you |
 | ⚙️ **Scriptable** | Every panel and action through `asterism msg …`, for keybindings and scripts |
@@ -76,6 +76,32 @@ kanji, the current one marked with a *bōten* (傍点), the emphasis dot of Japa
 
 Type is Google Sans Flex (bundled), icons are thin Material outlines (or rounded Material, or
 Phosphor), and motion is kept quick.
+
+**Frosted glass, if you like it.** The compositor can blur what's behind the dock, the app
+grid, the overview, the wallpaper picker, the control centre, notifications (pop-ups and the
+notification centre) and the desktop widgets. Each is a switch: Settings → Look (the widgets':
+Settings → Desktop), or in the config:
+
+```toml
+[blur]
+dock = true
+launcher = true           # the app grid
+overview = true
+wallpapers = true         # the wallpaper picker
+control = true            # the control centre
+notifications = true      # pop-ups and the notification centre
+
+[widgets]
+blur = true
+opacity = 30              # how solid their cards are, 0–100 %
+```
+
+Frosted cards are drawn see-through and without their shadow, and full-screen views dim the
+screen less, so the blur shows. All are off by default. Blur needs a compositor that offers
+ext-background-effect (niri 26 does); on Hyprland, layer rules do the same:
+`layerrule = blur, asterism-dock` (and `asterism-launcher`, `asterism-overview`,
+`asterism-wallpapers`, `asterism-control`, `asterism-notifications`, `asterism-desktop`). With
+the `frame` style the control centre is joined to the frame, so it stays solid.
 
 ## The bar and its menus
 
@@ -237,6 +263,22 @@ spreading ink, pixels turning over, or a slide. Choose one (or none) with
 
 <p align="center"><img src="screenshots/readme/transitions.png" alt="Three wallpaper transitions caught halfway: ink, circle and blinds"></p>
 
+**Live wallpapers.** A video (mp4, webm, mkv, mov…, played through `ffmpeg`) or an animated GIF
+works like any picture: pick it in the changer (it has a small play mark), and the colours
+come from its first frame. It plays only while it's worth it:
+
+- **Covered by windows**, it all but stops: the compositor no longer asks for frames (niri
+  slows them to about one a second).
+- **On battery** it holds still (`live_battery = true` plays anyway); so it does while the
+  screen is **locked**, or after `live_idle` minutes without input (5 by default).
+- Held a minute, the player is put away entirely, and starts again when you're back.
+
+Videos are decoded at half the screen's width and height by default and scaled up by the
+compositor (`live_scale`, 25–100 %), at `live_fps` frames a second (30); big GIFs are shrunk the
+same way. A video costs about a quarter of one core and 75–150 MB in `ffmpeg` while it plays;
+smaller and slower costs less. `live = false` keeps the first frame still. All of it is in
+Settings → Wallpaper.
+
 ### Widgets
 
 Small cards on the wallpaper, under your windows:
@@ -260,6 +302,15 @@ frame:
 - Esc, Enter or Done finishes.
 
 <p align="center"><img src="screenshots/readme/arrange.png" alt="Arranging widgets: frames with close buttons and a strip to add more"></p>
+
+**Their background** can be anything from solid to see-through: `[widgets] opacity` (0–100 %,
+60 by default, or Settings → Desktop → Widget background). Below 40 % the words get a soft
+shadow so a busy wallpaper doesn't swallow them; at 0 only the words (and the hairline round
+each card, unless `outline = false`) are left. The sticky note's paper fades with them.
+**Blur** (`blur = true`, Settings → Desktop → Blur behind widgets) frosts what's behind each card,
+shaped to its corners; it's the compositor's, so niri 26 or another that offers
+ext-background-effect (on Hyprland: `layerrule = blur, asterism-desktop`). With a light
+background (20–40 %) it reads as frosted glass.
 
 The visualizer listens to what your speakers play (`parec` or `pw-record`), only while it's shown
 and music is playing. The sound never leaves the shell, and it doesn't show as a microphone in use.
@@ -485,6 +536,9 @@ Measured on a 1920×1200 laptop with the wallpaper, three widgets and a pet:
 | CPU at rest | ~0.3 % of one core |
 | CPU with a pet about | +1–2 % (less while it sits or sleeps) |
 | Wallpaper transition | 2–6 ms per frame at 1920×1200 |
+| Live wallpaper, video | about ¼ of a core and 75–150 MB in `ffmpeg` at half size and 30 fps; nothing while held still |
+| Live wallpaper, GIF | decoded in the shell; a full-HD GIF adds ~20 MB, small ones next to nothing |
+| Blur | done by the compositor: nothing in the shell |
 
 How it stays light:
 - **Damage tracking:** pieces of the UI are cached and only changed rectangles are redrawn and
@@ -492,7 +546,9 @@ How it stays light:
 - **Buffers:** large surfaces get buffers of their own, which are freed when the surface goes.
 - **Pictures:** decoded wallpapers are handed back to the system as soon as they've been painted.
 - **Out of sight, out of work:** the dock draws and sends nothing while it's down, and wakes
-  only for news it shows (windows, icons, the trash).
+  only for news it shows (windows, icons, the trash). A live wallpaper gets no frames while
+  windows cover it, holds still on battery, locked or while you're away, and after a minute of
+  that its player is put away altogether.
 
 ## Requirements
 
@@ -515,6 +571,7 @@ Wayland desktop already has.
 | Music visualizer · pet sounds | `parec` or `pw-record` · `pw-play` or `paplay` |
 | Recording · Hyprland screenshots · text capture | `wf-recorder` · `grim`, `slurp` · plus `tesseract` |
 | Kanji workspaces · emoji | a CJK font (e.g. Noto Sans CJK) · a colour emoji font (e.g. Noto Color Emoji) |
+| Video wallpapers | `ffmpeg` (GIFs need nothing) |
 
 ## Installation
 
@@ -646,12 +703,13 @@ within two seconds, with no restart.
 | `[clock]` · `[layout]` | Clock format; which modules sit left, centre and right |
 | `[commands]` | Commands for settings, lock, suspend, log out, reboot, power off |
 | `[notifications]` · `[notifications.apps]` | Daemon, timeouts, battery warnings; per-app rules |
-| `[wallpaper]` | Image, fit, folder, rotation interval, transitions |
+| `[wallpaper]` | Image (a picture, a video or a GIF), fit, folder, rotation interval, transitions; live wallpapers: on/off, frame rate, size, on battery, still when away |
 | `[colors]` | Accent, role overrides, icon and widget tinting, app colour files |
 | `[launcher]` · `[weather]` · `[timers]` | Terminal and search engine; place and units; focus lengths |
 | `[lock]` · `[night_light]` | Idle minutes, before sleep, fingerprint; schedule and temperature |
-| `[widgets]` · `[day]` · `[pet]` | Desktop widgets; the to-do folder and corner; the pets |
+| `[widgets]` · `[day]` · `[pet]` | Desktop widgets, their background's opacity, outline and blur; the to-do folder and corner; the pets |
 | `[dock]` | On or off, pinned apps, position, hiding and its delay, open apps, the apps button and the trash; icon size, magnify, corners, background, attached, indicator, separators |
+| `[blur]` | Frosted glass behind the dock, launcher, overview, wallpaper picker, control centre and notifications |
 
 The settings you're most likely to change first:
 
@@ -721,13 +779,25 @@ another shell); Asterism steps aside on purpose. Stop the other one and restart 
 **Something is missing from the bar.** Run with `RUST_LOG=debug asterism` to see which services
 and tools were found.
 
+**A live wallpaper doesn't move.** On battery it holds still unless `[wallpaper] live_battery =
+true` (Settings → Wallpaper → Play on battery); it also stops while locked and after
+`live_idle` minutes without input. Videos need `ffmpeg`. A GIF of a single frame is a picture.
+
+**Blur doesn't show.** The compositor has to offer ext-background-effect (niri 26 and later);
+`RUST_LOG=debug asterism` logs "compositor blur behind surfaces: true" when it does. On
+Hyprland use the layer rules in [Look and feel](#look-and-feel). Opaque cards hide a blur: the
+widgets need a low `opacity`, the others are made see-through for you.
+
 **Known limits:**
 - No 802.1X (enterprise) Wi-Fi.
 - Notification bodies are plain text, with no inline reply.
 - The overview and workspace previews are window maps, not live thumbnails (niri has no
   per-window capture).
 - Clipboard history is empty after a restart, by design.
-- The wallpaper changer lists one folder (PNG and JPEG). There is one picture for all outputs.
+- The wallpaper changer lists one folder (PNG, JPEG, GIF and videos). There is one picture for
+  all outputs.
+- Live wallpapers are drawn by the processor (shared memory, no GPU surfaces: that would mean
+  linking EGL), so a video costs more than in a GPU player like mpvpaper; keep it at half size.
 - Pets see the pointer only over the shell's own surfaces, since Wayland keeps the pointer's
   position over other windows private.
 - The day panel's notes are typed at the end only. For heavier editing, open `notes.md`.
@@ -772,7 +842,7 @@ More detail on architecture and conventions is in [AGENTS.md](AGENTS.md).
 
 | Path | What's there |
 |---|---|
-| `src/app/` | Wayland: bars per output, menus, panels, widgets, wallpaper and transitions, pets, idle, clipboard, night light, damage tracking, buffers |
+| `src/app/` | Wayland: bars per output, menus, panels, widgets, wallpaper, transitions and live wallpapers, compositor blur, pets, idle, clipboard, night light, damage tracking, buffers |
 | `src/bar.rs`, `src/popups.rs` | Bar modules; menus, the control centre and the day panel |
 | `src/launcher.rs`, `src/overview.rs`, `src/dock.rs` | App search, maths, emoji, the grid; the window overview; the dock |
 | `src/cards.rs` | Notification pop-ups, levels, password and pairing cards, song and workspace cards |
@@ -781,6 +851,7 @@ More detail on architecture and conventions is in [AGENTS.md](AGENTS.md).
 | `src/widgets.rs`, `src/dashboard.rs`, `src/settings.rs` | Desktop widgets; the dashboard; the Settings app and its comment-preserving config writer |
 | `src/day.rs`, `src/clipboard.rs`, `src/shortcuts.rs` | To-do and notes files; clipboard history; the shortcuts sheet |
 | `src/wallpapers.rs`, `src/transition.rs`, `src/palette.rs`, `src/appcolors.rs` | The changer; transitions; the scheme from the wallpaper; colour files for apps |
+| `src/live.rs` | Live wallpapers: the video (`ffmpeg`) and GIF players, paced and asked frame by frame |
 | `src/pet/` | The pets: behaviour, drawing, synthesized voices |
 | `src/ui.rs`, `src/render/` | Pieces, primitives, actions, animation; tiny-skia drawing, text, icons |
 | `src/theme.rs`, `src/config.rs` | Colour roles and sizes; the configuration |

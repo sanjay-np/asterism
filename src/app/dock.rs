@@ -57,7 +57,7 @@ impl App {
         }
     }
 
-    fn dock_geometry(&self) -> Geometry {
+    pub(super) fn dock_geometry(&self) -> Geometry {
         Geometry::of(&self.config.dock)
     }
 
@@ -158,6 +158,7 @@ impl App {
         let hovered = self.panels[index].surf.hovered.clone();
         let pressed = self.panels[index].surf.pressed.clone();
         let mut anim = std::mem::replace(&mut self.panels[index].surf.anim, Animator::new());
+        let frosted = self.blurs(self.config.blur.dock);
         let mut view = dock::View {
             theme: &self.theme,
             text: &mut self.painter.text,
@@ -172,6 +173,7 @@ impl App {
             trash: self.model.trash,
             w,
             wanted: Vec::new(),
+            frosted,
         };
         let pieces = dock::build(&mut view);
         let wanted = std::mem::take(&mut view.wanted);

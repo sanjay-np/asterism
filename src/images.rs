@@ -12,6 +12,9 @@ pub fn decode(data: &[u8], max: u32) -> Option<Arc<Image>> {
         tiny_skia::Pixmap::decode_png(data).ok()?
     } else if data.starts_with(&[0xff, 0xd8]) {
         jpeg(data)?
+    } else if data.starts_with(b"GIF8") {
+        // Its first frame
+        crate::live::gif_still(data)?
     } else {
         svg(data, max)?
     };
@@ -20,6 +23,15 @@ pub fn decode(data: &[u8], max: u32) -> Option<Arc<Image>> {
 
 pub fn load(path: &Path, max: u32) -> Option<Arc<Image>> {
     decode(&std::fs::read(path).ok()?, max)
+}
+
+/// A wallpaper as a still picture: a picture, or a video's or GIF's first frame (a video is
+/// never read whole into memory).
+pub fn still(path: &Path, max: u32) -> Option<Arc<Image>> {
+    if crate::live::is_video(path) {
+        return Some(shrink(crate::live::video_still(path, max)?, max));
+    }
+    load(path, max)
 }
 
 fn jpeg(data: &[u8]) -> Option<tiny_skia::Pixmap> {

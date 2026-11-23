@@ -23,17 +23,19 @@ pub(super) struct Backdrop {
     pub change: Option<Change>,
     /// A picture was just sent: its buffers go once the compositor has drawn it.
     pub release: Option<Instant>,
+    /// A video or GIF playing on it (`app/live.rs`).
+    pub live: Option<crate::live::Player>,
 }
 
 /// Everything a wallpaper is painted from.
 #[derive(Clone)]
 pub(super) struct Job {
-    w: u32,
-    h: u32,
+    pub w: u32,
+    pub h: u32,
     scale: f32,
     planet: &'static crate::theme::Planet,
-    settings: crate::config::WallpaperSettings,
-    palette: crate::palette::Palette,
+    pub settings: crate::config::WallpaperSettings,
+    pub palette: crate::palette::Palette,
 }
 
 impl Job {
@@ -78,7 +80,7 @@ impl App {
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.set_size(0, 0);
         layer.commit();
-        self.backdrops.push(Backdrop { surf, layer, output, shown: None, painting: None, job: None, change: None, release: None });
+        self.backdrops.push(Backdrop { surf, layer, output, shown: None, painting: None, job: None, change: None, release: None, live: None });
     }
 
     /// Wallpapers follow the config: on, off, or painted again with new settings.
@@ -94,6 +96,7 @@ impl App {
         for backdrop in &mut self.backdrops {
             backdrop.surf.dirty = true;
         }
+        self.sync_live();
     }
 
     /// Starts painting the wallpapers whose look changed.
@@ -159,6 +162,15 @@ impl App {
         }
         backdrop.shown = Some(key);
         backdrop.job = Some(job);
+        // A moving wallpaper stops here; the change starts from the frame it was showing, not
+        // its first
+        let mut before = before;
+        if let Some(player) = backdrop.live.take()
+            && let Some((old, _, _)) = before.as_mut()
+            && let Some(frame) = player.last_picture(old.width(), old.height())
+        {
+            *old = frame;
+        }
         match before {
             Some((old, kind, map)) if old.width() == picture.width() && old.height() == picture.height() => {
                 log::debug!("wallpaper changes by {}", kind.name());
@@ -194,6 +206,8 @@ impl App {
             wl.set_input_region(None);
             wl.commit();
         }
+        // A video or GIF goes on from its first frame
+        self.sync_live();
     }
 
     /// Lets go of a shown wallpaper's buffer and pool once the compositor has drawn it (its frame
@@ -202,6 +216,11 @@ impl App {
         let mut freed = false;
         for backdrop in &mut self.backdrops {
             let Some(sent) = backdrop.release else { continue };
+            if backdrop.live.is_some() {
+                // Its frames are drawn from these buffers
+                backdrop.release = None;
+                continue;
+            }
             if backdrop.change.is_none() && (!backdrop.surf.frame_pending || sent.elapsed() > Duration::from_secs(5)) {
                 backdrop.surf.buffers.clear();
                 backdrop.surf.own_pool = None;

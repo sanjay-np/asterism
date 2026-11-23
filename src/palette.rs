@@ -49,7 +49,7 @@ fn rgb(c: Rgba) -> Rgb {
 /// The colour a picture is about: its pixels grouped, then scored for how well each group
 /// would carry a theme (common, colourful, not muddy).
 pub fn source_of(path: &std::path::Path) -> Option<Rgba> {
-    let image = crate::images::load(path, 112)?;
+    let image = crate::images::still(path, 112)?;
     let pixels: Vec<Rgb> = image
         .data
         .as_chunks::<4>().0.iter()

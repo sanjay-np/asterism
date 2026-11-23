@@ -184,7 +184,8 @@ fn grain(pixmap: &mut Pixmap, amount: f32) {
 /// A picture of your own, fitted to the screen.
 fn picture(pixmap: &mut Pixmap, path: &str, fit: Fit) -> bool {
     let path = crate::config::expand_home(path);
-    let Some(image) = std::fs::read(&path).ok().and_then(|data| crate::images::decode(&data, 8192)) else {
+    // A video or a GIF: its first frame
+    let Some(image) = crate::images::still(&path, 8192) else {
         log::warn!("wallpaper: can't read {}", path.display());
         return false;
     };
@@ -262,7 +263,21 @@ pub fn key(w: u32, h: u32, scale: f32, planet: &Planet, settings: &WallpaperSett
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     // Only what the picture is drawn from: how often it changes, and how, don't touch it
-    let drawn = WallpaperSettings { interval: 0, directory: String::new(), configured: String::new(), transition: String::new(), transition_ms: 0, ..settings.clone() };
+    // (nor how a moving one plays: its first frame is what's painted)
+    let still = WallpaperSettings::default();
+    let drawn = WallpaperSettings {
+        interval: 0,
+        directory: String::new(),
+        configured: String::new(),
+        transition: String::new(),
+        transition_ms: 0,
+        live: true,
+        live_fps: still.live_fps,
+        live_scale: still.live_scale,
+        live_battery: still.live_battery,
+        live_idle: still.live_idle,
+        ..settings.clone()
+    };
     (w, h, (scale * 120.0) as u32, planet.id, format!("{drawn:?}"), palette.source.key()).hash(&mut hasher);
     if let Ok(meta) = std::fs::metadata(crate::config::expand_home(settings.image.trim())) {
         meta.modified().ok().hash(&mut hasher);

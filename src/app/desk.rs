@@ -12,11 +12,14 @@
 //! desktop's menu (`PanelKind::DeskMenu`) where it was clicked.
 
 use super::*;
+use super::blur::Blur;
 
 /// One small surface of the desktop: a widget (with, while arranging, its frame and its ×), or
 /// the strip at the top while arranging. Placed on the output by its margins.
 pub(super) struct Part {
     pub key: String,
+    /// Dropped before the layer (fields drop in this order): its blur object first.
+    pub blur: Blur,
     pub surf: Surf,
     pub layer: LayerSurface,
     /// Its top-left on the output, and the size asked of the compositor.
@@ -156,7 +159,7 @@ impl App {
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.commit();
-        Part { key: key.to_string(), surf, layer, at, want: size, input: None }
+        Part { key: key.to_string(), blur: Blur::default(), surf, layer, at, want: size, input: None }
     }
 
     /// The dimmed screen while arranging: the whole output, the keyboard on the working one.
@@ -170,7 +173,7 @@ impl App {
         layer.set_keyboard_interactivity(keys);
         layer.set_size(0, 0);
         layer.commit();
-        Part { key: "dim".into(), surf, layer, at: (0, 0), want: (0, 0), input: None }
+        Part { key: "dim".into(), blur: Blur::default(), surf, layer, at: (0, 0), want: (0, 0), input: None }
     }
 
     /// Widgets on or off with the config.
@@ -328,6 +331,7 @@ impl App {
                     self.desks[index].parts.len() - 1
                 }
             };
+            let widget_blur = self.blurs(self.config.widgets.blur);
             let part = &mut self.desks[index].parts[part_index];
             if part.want != size {
                 // A new size: asked for, drawn once the compositor agrees
@@ -372,12 +376,29 @@ impl App {
                 }
                 part.input = Some(input);
             }
+            // The compositor blurs what's behind each card, shaped to its corners
+            let wanted: Vec<(i32, i32, i32, i32)> = if widget_blur {
+                list.iter()
+                    .filter_map(|p| {
+                        let kind = p.key.strip_prefix("widget.")?;
+                        let radius = crate::widgets::card_radius(kind)? * crate::widgets::place_of(&self.widget_places, kind).scale;
+                        Some(crate::widgets::rounded_rows(p.x, p.y, p.w, p.h, radius))
+                    })
+                    .flatten()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let blur_changed = match part.surf.wl.clone() {
+                Some(wl) => part.blur.set(&wl, wanted, self.blur_effects.as_ref(), &self.compositor, &self.qh),
+                None => false,
+            };
             part.surf.dirty = false;
             part.surf.anim.begin();
             match shell::render_panel(&mut part.surf, list, &mut self.painter, &self.theme, None, 0.0) {
                 Some(damage) => present(&mut part.surf, damage, &mut self.pool, &self.qh),
                 None => {
-                    if moved && let Some(wl) = &part.surf.wl {
+                    if (moved || blur_changed) && let Some(wl) = &part.surf.wl {
                         wl.commit();
                     }
                 }

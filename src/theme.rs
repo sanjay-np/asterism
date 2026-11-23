@@ -180,6 +180,14 @@ pub struct Theme {
     pub widget_strong: Rgba,
     pub widget_soft: Rgba,
     pub widget_card: Rgba,
+    /// How solid the widgets' cards are (0 to 1), whether they have a hairline, and whether
+    /// their words need a shadow (a faint card doesn't keep a busy wallpaper from them).
+    pub widget_opacity: f32,
+    pub widget_outline: bool,
+    pub widget_shadow: bool,
+    /// Cards are frosted glass: the compositor blurs behind them, so they're drawn see-through
+    /// and without a shadow (`Theme::frosted`).
+    pub frosted: bool,
 
     /// Durations, in milliseconds.
     pub fast: f32,
@@ -215,6 +223,7 @@ impl Theme {
             _ => [tinted; 3],
         };
         let widgets_tinted = config.colors.widgets.trim().to_lowercase() != "plain";
+        let widget_opacity = config.widgets.opacity.min(100) as f32 / 100.0;
         let surface = pick(&config.colors.surface, p.surface);
         Theme {
             style: config.style,
@@ -257,7 +266,11 @@ impl Theme {
             icon_tints,
             widget_strong: if widgets_tinted { text.mix(primary, 0.55) } else { text },
             widget_soft: if widgets_tinted { text.mix(primary, 0.35).alpha(0.9) } else { text.alpha(0.85) },
-            widget_card: if widgets_tinted { surface.mix(p.primary_container, 0.3).alpha(0.62) } else { surface.alpha(0.62) },
+            widget_card: if widgets_tinted { surface.mix(p.primary_container, 0.3).alpha(widget_opacity) } else { surface.alpha(widget_opacity) },
+            widget_opacity,
+            widget_outline: config.widgets.outline,
+            widget_shadow: widget_opacity < 0.4,
+            frosted: false,
             warn: pick(&config.colors.warn, p.error),
             mic: p.error,
             // With accent icons, a tool that's on needs another colour to stand out
@@ -299,6 +312,11 @@ impl Theme {
     }
 
     /// The 1px line that edges the bar and outlines cards.
+    /// The same theme for a surface the compositor blurs behind: cards see-through, no shadow.
+    pub fn frosted(&self) -> Theme {
+        Theme { frosted: true, card_deep: self.card_deep.alpha(0.7), ..self.clone() }
+    }
+
     pub fn hairline(&self) -> Rgba {
         self.outline_variant.alpha(0.75)
     }
@@ -317,6 +335,34 @@ mod tests {
         let mut config = Config::default();
         config.colors.bar_icons = bar_icons.into();
         Theme::with_palette(&config, crate::palette::from_source(source))
+    }
+
+    #[test]
+    fn frosted_cards_let_the_blur_through() {
+        let plain = theme(Rgba::rgb(0x4a, 0x6f, 0xd9), "");
+        let frosted = plain.frosted();
+        assert!(!plain.frosted && frosted.frosted);
+        assert!(plain.card_deep.a > 0.99 && frosted.card_deep.a < 0.8);
+        // Only the card changes
+        assert_eq!((frosted.primary, frosted.surface), (plain.primary, plain.surface));
+    }
+
+    #[test]
+    fn widget_cards_can_be_see_through() {
+        let blue = Rgba::rgb(0x4a, 0x6f, 0xd9);
+        let at = |opacity: u32| {
+            let mut config = Config::default();
+            config.widgets.opacity = opacity;
+            Theme::with_palette(&config, crate::palette::from_source(blue))
+        };
+        // The default is a solid-enough card, words without shadows
+        let (usual, clear, solid) = (at(60), at(0), at(100));
+        assert!((usual.widget_card.a - 0.6).abs() < 0.01 && !usual.widget_shadow);
+        // See-through: no card at all, words shadowed; solid: opaque
+        assert!(clear.widget_card.a == 0.0 && clear.widget_opacity == 0.0 && clear.widget_shadow);
+        assert!((solid.widget_card.a - 1.0).abs() < 0.001 && !solid.widget_shadow);
+        // More than 100 is 100
+        assert_eq!(at(250).widget_opacity, 1.0);
     }
 
     #[test]

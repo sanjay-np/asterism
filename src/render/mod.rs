@@ -205,7 +205,9 @@ fn arc(cx: f32, cy: f32, r: f32, start: f32, sweep: f32) -> Option<tiny_skia::Pa
 /// container colour, and a hairline just inside its edge.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_card(pixmap: &mut Pixmap, theme: &Theme, x: f32, y: f32, w: f32, h: f32, radius: f32, t: Transform) {
-    for (grow, drop, alpha) in [(6.0, 6.0, 0.035), (3.5, 4.0, 0.06), (1.5, 2.0, 0.1)] {
+    // Frosted, a shadow under the see-through card would show through it as a dark rim
+    let shadows: &[(f32, f32, f32)] = if theme.frosted { &[] } else { &[(6.0, 6.0, 0.035), (3.5, 4.0, 0.06), (1.5, 2.0, 0.1)] };
+    for &(grow, drop, alpha) in shadows {
         if let Some(shade) = rounded_rect(x - grow, y - grow + drop, w + grow * 2.0, h + grow * 2.0, radius + grow) {
             pixmap.fill_path(&shade, &solid(Rgba::BLACK.alpha(alpha)), FillRule::Winding, t, None);
         }
@@ -493,7 +495,8 @@ impl Painter {
             self.glow_strength = theme.glow_strength;
             self.glowing.clear();
         }
-        let hash = piece.content_hash(scale) ^ theme.glow.key() as u64 ^ (theme.glow_strength * 100.0) as u64;
+        // The card's colour too: frosted or not, a piece's card is drawn differently
+        let hash = piece.content_hash(scale) ^ theme.glow.key() as u64 ^ (theme.glow_strength * 100.0) as u64 ^ (theme.card_deep.key() as u64) << 32;
         let room = piece.pad + if piece.glow { GLOW_ROOM } else { 0.0 };
         let key = (surface, piece.key.clone());
         if let Some((h, pixmap)) = self.pieces.get(&key)

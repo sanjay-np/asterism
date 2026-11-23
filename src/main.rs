@@ -13,6 +13,7 @@ mod dock;
 mod images;
 mod ipc;
 mod launcher;
+mod live;
 mod lock;
 mod model;
 mod night;

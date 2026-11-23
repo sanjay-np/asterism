@@ -29,6 +29,8 @@ pub(super) enum PanelKind {
 }
 
 pub(super) struct Panel {
+    /// Goes before the role (fields drop in order): its blur object first.
+    pub blur: super::blur::Blur,
     pub surf: Surf,
     pub role: Role,
     pub kind: PanelKind,
@@ -60,6 +62,10 @@ pub(super) struct Toast {
 
 /// The launcher's dimmed sky.
 const SHADE: Rgba = Rgba { r: 0.02, g: 0.024, b: 0.055, a: 0.6 };
+
+/// How much of the scheme's surface lies over a frosted full-screen panel: less than over a
+/// plain one (0.9), or the blur hardly shows.
+const FROSTED: f32 = 0.6;
 /// How long the level stays after the last change.
 const OSD_FOR: Duration = Duration::from_millis(1400);
 /// How long a new song's card stays.
@@ -119,7 +125,7 @@ impl App {
         surface.set_keyboard_interactivity(keyboard);
         surface.set_exclusive_zone(exclusive);
         surface.commit();
-        self.panels.push(Panel { surf, role: Role::Layer(surface), kind, want: size });
+        self.panels.push(Panel { blur: Default::default(), surf, role: Role::Layer(surface), kind, want: size });
     }
 
     /// A panel as an ordinary window: the compositor places it, sizes it and decorates it (or
@@ -140,7 +146,7 @@ impl App {
         window.set_app_id(app_id);
         window.set_min_size(Some(min));
         window.commit();
-        self.panels.push(Panel { surf, role: Role::Window(window), kind, want: size });
+        self.panels.push(Panel { blur: Default::default(), surf, role: Role::Window(window), kind, want: size });
     }
 
     /// Lets the compositor move the window this press was on (its title area was held).
@@ -256,8 +262,8 @@ impl App {
                     }
                     self.send(request);
                 }
-                // The whole screen, the wallpaper only just showing through
-                (pieces, Some(self.theme.surface.alpha(0.9)), -10.0)
+                // The whole screen, the wallpaper only just showing through (frosted, more of it)
+                (pieces, Some(self.theme.surface.alpha(if self.blurs(self.config.blur.launcher) { FROSTED } else { 0.9 })), -10.0)
             }
             PanelKind::Wifi => {
                 let Some(pieces) = self.wifi_pieces(w, h) else { return };
@@ -265,7 +271,7 @@ impl App {
             }
             PanelKind::Overview => {
                 let Some(pieces) = self.overview_pieces(w, h) else { return };
-                (pieces, Some(self.theme.surface.alpha(0.93)), -10.0)
+                (pieces, Some(self.theme.surface.alpha(if self.blurs(self.config.blur.overview) { FROSTED } else { 0.93 })), -10.0)
             }
             PanelKind::DeskMenu => {
                 let Some(pieces) = self.desk_menu_pieces(index, w, h) else { return };
@@ -326,7 +332,7 @@ impl App {
                     }
                     self.send(request);
                 }
-                (pieces, Some(self.theme.surface.alpha(0.92)), -10.0)
+                (pieces, Some(self.theme.surface.alpha(if self.blurs(self.config.blur.wallpapers) { FROSTED } else { 0.92 })), -10.0)
             }
             PanelKind::Toasts => {
                 let list: Vec<&Notification> = self.toasts.iter().filter_map(|toast| self.model.notifications.list.iter().find(|n| n.id == toast.id)).collect();
@@ -415,9 +421,28 @@ impl App {
                 (pieces, None, 8.0)
             }
         };
+        let wanted = self.panel_blur(kind, &pieces, w, h);
+        // Cards over a blur are frosted glass
+        let frosted = match kind {
+            PanelKind::Control => self.blurs(self.config.blur.control),
+            PanelKind::Toasts => self.blurs(self.config.blur.notifications),
+            _ => false,
+        };
+        let frosted_theme = frosted.then(|| self.theme.frosted());
+        let theme = frosted_theme.as_ref().unwrap_or(&self.theme);
         let panel = &mut self.panels[index];
-        if let Some(damage) = render_panel(&mut panel.surf, pieces, &mut self.painter, &self.theme, background, rise) {
-            present(&mut panel.surf, damage, &mut self.pool, &self.qh);
+        let blur_changed = match panel.surf.wl.clone() {
+            Some(wl) => panel.blur.set(&wl, wanted, self.blur_effects.as_ref(), &self.compositor, &self.qh),
+            None => false,
+        };
+        match render_panel(&mut panel.surf, pieces, &mut self.painter, theme, background, rise) {
+            Some(damage) => present(&mut panel.surf, damage, &mut self.pool, &self.qh),
+            None => {
+                // Only the blur changed: it takes a commit to count
+                if blur_changed && let Some(wl) = &panel.surf.wl {
+                    wl.commit();
+                }
+            }
         }
     }
 
@@ -1450,6 +1475,7 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
                     trash: model.trash,
                     w: along,
                     wanted: Vec::new(),
+                    frosted: false,
                 };
                 let pieces = crate::dock::build(&mut view);
                 render_panel(&mut surf, pieces, painter, theme, None, 0.0);

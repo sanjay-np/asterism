@@ -386,6 +386,9 @@ pub struct View<'a> {
     /// The surface's length along the dock.
     pub w: f32,
     /// Icons not loaded yet, by app key: asked for by the caller.
+    /// The compositor blurs behind the card: it's drawn see-through, whatever its look, so the
+    /// frosting shows.
+    pub frosted: bool,
     pub wanted: Vec<String>,
 }
 
@@ -427,7 +430,12 @@ pub fn build(v: &mut View<'_>) -> Vec<Piece> {
     let mut card = Piece::new("dock.card", 0.0, 0.0);
     place(&mut card, x0, g.room + dy, card_w, card_h);
     let (w, h) = (card.w, card.h);
-    match v.settings.background.as_str() {
+    let look = match v.settings.background.as_str() {
+        "none" => "none",
+        _ if v.frosted => "glass",
+        other => other,
+    };
+    match look {
         "none" => {}
         "flat" => {
             card.prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, radius, color: t.hairline() });
@@ -845,7 +853,7 @@ mod tests {
         let icons = HashMap::new();
         let build_with = |anim: &mut Animator, text: &mut Text, shown: bool, hovered: Option<&str>| {
             anim.begin();
-            let mut v = View { theme: &theme, text, anim, items: &items, settings: &s, icons: &icons, hovered, pressed: None, shown, carry: None, trash: 3, w: 600.0, wanted: Vec::new() };
+            let mut v = View { theme: &theme, text, anim, items: &items, settings: &s, icons: &icons, hovered, pressed: None, shown, carry: None, trash: 3, w: 600.0, wanted: Vec::new(), frosted: false };
             let pieces = build(&mut v);
             let wanted = v.wanted;
             anim.end();
@@ -864,5 +872,30 @@ mod tests {
         // Hidden from the start: nothing at all
         let mut fresh = Animator::new();
         assert!(build_once(&mut fresh, &mut text, false).0.is_empty());
+    }
+
+    #[test]
+    fn a_frosted_card_lets_the_blur_show() {
+        let theme = Theme::new(&crate::config::Config::default());
+        let mut text = Text::new("sans");
+        let apps = vec![entry("firefox", "Firefox")];
+        let items = items(&["firefox".into()], &[], &apps);
+        let icons = HashMap::new();
+        let card = |background: &str, frosted: bool, text: &mut Text| {
+            let s = DockSettings { background: background.into(), ..settings() };
+            let mut anim = Animator::new();
+            anim.begin();
+            let mut v = View { theme: &theme, text, anim: &mut anim, items: &items, settings: &s, icons: &icons, hovered: None, pressed: None, shown: true, carry: None, trash: 0, w: 600.0, wanted: Vec::new(), frosted };
+            let pieces = build(&mut v);
+            anim.end();
+            pieces.into_iter().find(|p| p.key == "dock.card").map(|p| p.prims).unwrap_or_default()
+        };
+        let solid = |prims: &[Prim]| prims.iter().any(|p| matches!(p, Prim::Card { .. }) || matches!(p, Prim::Rect { color, .. } if color.a > 0.99));
+        // The usual card is solid; frosted it's see-through, the flat one too
+        assert!(solid(&card("card", false, &mut text)));
+        assert!(!solid(&card("card", true, &mut text)) && !card("card", true, &mut text).is_empty());
+        assert!(!solid(&card("flat", true, &mut text)));
+        // No background stays none
+        assert!(card("none", true, &mut text).is_empty());
     }
 }

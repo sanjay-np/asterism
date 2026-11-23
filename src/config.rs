@@ -221,11 +221,42 @@ pub struct WallpaperSettings {
     /// of `transition::NAMES`; and how long it takes, in milliseconds.
     pub transition: String,
     pub transition_ms: u32,
+    /// A video or an animated GIF as the `image` plays (off: its first frame stays still).
+    pub live: bool,
+    /// Frames a second a video plays at, 5 to 60 (a GIF keeps its own timing).
+    pub live_fps: u32,
+    /// How big a video's frames are decoded (a big GIF's shrunk), in percent of the screen's width and height (25 to
+    /// 100); the compositor scales them up. Smaller costs less: everything a frame costs
+    /// (converting, the pipe, copying, the compositor's upload) goes with its pixels.
+    pub live_scale: u32,
+    /// Plays on battery too (off: the frame on screen stays until the charger's back).
+    pub live_battery: bool,
+    /// Minutes without input before it stops until you're back; 0 never.
+    pub live_idle: u32,
 }
 
 impl Default for WallpaperSettings {
     fn default() -> Self {
-        Self { enabled: true, image: String::new(), directory: String::new(), interval: 0, configured: String::new(), fit: Fit::Cover, world: false, terrain: 0.34, relief: 1.0, stars: 0.0, grain: 1.0, transition: "random".into(), transition_ms: 1200 }
+        Self {
+            enabled: true,
+            image: String::new(),
+            directory: String::new(),
+            interval: 0,
+            configured: String::new(),
+            fit: Fit::Cover,
+            world: false,
+            terrain: 0.34,
+            relief: 1.0,
+            stars: 0.0,
+            grain: 1.0,
+            transition: "random".into(),
+            transition_ms: 1200,
+            live: true,
+            live_fps: 30,
+            live_scale: 50,
+            live_battery: false,
+            live_idle: 5,
+        }
     }
 }
 
@@ -262,11 +293,19 @@ pub struct WidgetSettings {
     pub photo_minutes: u32,
     /// What the sticky note says.
     pub note: String,
+    /// How solid the widgets' cards are, in percent: 0 is see-through (the words alone on the
+    /// wallpaper, with a soft shadow to read by), 100 solid.
+    pub opacity: u32,
+    /// A hairline round each card.
+    pub outline: bool,
+    /// The compositor blurs what's behind each card (niri 26+, and others with
+    /// ext-background-effect).
+    pub blur: bool,
 }
 
 impl Default for WidgetSettings {
     fn default() -> Self {
-        Self { show: vec!["clock".into(), "weather".into(), "media".into()], lyrics: true, photos: String::new(), photo_minutes: 10, note: String::new() }
+        Self { show: vec!["clock".into(), "weather".into(), "media".into()], lyrics: true, photos: String::new(), photo_minutes: 10, note: String::new(), opacity: 60, outline: true, blur: false }
     }
 }
 
@@ -291,6 +330,24 @@ impl Default for DaySettings {
     fn default() -> Self {
         Self { folder: String::new(), corner: true }
     }
+}
+
+/// Where the compositor blurs what's behind the shell (ext-background-effect; the widgets have
+/// theirs in `[widgets] blur`).
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct BlurSettings {
+    pub dock: bool,
+    /// The app grid.
+    pub launcher: bool,
+    /// The windows' overview.
+    pub overview: bool,
+    /// The wallpaper picker.
+    pub wallpapers: bool,
+    /// The control centre's card.
+    pub control: bool,
+    /// Notification pop-ups and the notification centre.
+    pub notifications: bool,
 }
 
 /// The dock at the foot of the screen: hidden until the pointer touches the edge under it.
@@ -512,6 +569,7 @@ pub struct Config {
     pub pet: PetSettings,
     pub day: DaySettings,
     pub dock: DockSettings,
+    pub blur: BlurSettings,
 }
 
 impl Default for Config {
@@ -556,6 +614,7 @@ impl Default for Config {
             pet: PetSettings::default(),
             day: DaySettings::default(),
             dock: DockSettings::default(),
+            blur: BlurSettings::default(),
         }
     }
 }

@@ -155,10 +155,78 @@ pub struct View<'a> {
     pub photo_step: u64,
 }
 
-/// A translucent card with a hairline, for the widgets that need one.
+/// A translucent card, as solid as `[widgets] opacity` says (none at all at 0), with a hairline
+/// unless it's turned off.
 fn card(piece: &mut Piece, t: &Theme, w: f32, h: f32) {
-    piece.prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, radius: 20.0, color: t.hairline() });
-    piece.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: w - 2.0, h: h - 2.0, radius: 19.0, color: t.widget_card });
+    if t.widget_opacity > 0.0 {
+        piece.prims.push(Prim::Rect { x: 0.5, y: 0.5, w: w - 1.0, h: h - 1.0, radius: 19.5, color: t.widget_card });
+    }
+    if t.widget_outline {
+        piece.prims.push(outline(0.5, 0.5, w - 1.0, h - 1.0, 19.5, 1.0, t.hairline()));
+    }
+}
+
+/// How round a widget's card is, for the blur behind it; None for those with no card (the
+/// clock's words, the bars along the screen's foot).
+pub fn card_radius(kind: &str) -> Option<f32> {
+    match kind {
+        "clock" | "edge" => None,
+        "note" => Some(18.0),
+        _ => Some(20.0),
+    }
+}
+
+/// A rounded rectangle as the plain rectangles a Wayland region is made of: the middle whole,
+/// the corners' rows each cut in to the curve (rows alike merged).
+pub fn rounded_rows(x: f32, y: f32, w: f32, h: f32, radius: f32) -> Vec<(i32, i32, i32, i32)> {
+    let (x, y, w, h) = (x.round() as i32, y.round() as i32, w.round() as i32, h.round() as i32);
+    let r = (radius.round() as i32).clamp(0, w.min(h) / 2);
+    let mut rows: Vec<(i32, i32, i32, i32)> = Vec::new();
+    let mut add = |rect: (i32, i32, i32, i32)| {
+        // A row cut in as far as the one before it on the same side joins it
+        if let Some(last) = rows.last_mut()
+            && last.0 == rect.0
+            && last.2 == rect.2
+            && last.1 + last.3 == rect.1
+        {
+            last.3 += rect.3;
+        } else if rect.2 > 0 && rect.3 > 0 {
+            rows.push(rect);
+        }
+    };
+    let inset = |i: i32| {
+        let dy = r as f32 - i as f32 - 0.5;
+        (r as f32 - (r as f32 * r as f32 - dy * dy).max(0.0).sqrt()).ceil() as i32
+    };
+    for i in 0..r {
+        let cut = inset(i);
+        add((x + cut, y + i, w - 2 * cut, 1));
+    }
+    add((x, y + r, w, h - 2 * r));
+    for i in (0..r).rev() {
+        let cut = inset(i);
+        add((x + cut, y + h - 1 - i, w - 2 * cut, 1));
+    }
+    rows
+}
+
+/// Words on a faint card get the clock's soft shadow, so a busy wallpaper doesn't swallow them
+/// (those already shadowed are left as they are).
+fn shadow_words(piece: &mut Piece) {
+    let shadow = crate::theme::Rgba::BLACK.alpha(0.35);
+    let mut prims = Vec::with_capacity(piece.prims.len() * 2);
+    for prim in std::mem::take(&mut piece.prims) {
+        let had = matches!(prims.last(), Some(Prim::Text { color, .. }) if *color == shadow);
+        match &prim {
+            Prim::Text { x, y, text, font, .. } if !had => prims.push(Prim::Text { x: x + 1.5, y: y + 2.0, text: text.clone(), font: *font, color: shadow }),
+            Prim::Marquee { x, y, width, text, font, offset, gap, .. } => {
+                prims.push(Prim::Marquee { x: x + 1.5, y: y + 2.0, width: *width, text: text.clone(), font: *font, color: shadow, offset: *offset, gap: *gap })
+            }
+            _ => {}
+        }
+        prims.push(prim);
+    }
+    piece.prims = prims;
 }
 
 /// Text with a soft shadow, to read on any wallpaper.
@@ -401,6 +469,14 @@ pub fn editor(widgets: Vec<Piece>, show: &[String], places: &HashMap<String, Pla
 
 /// One widget, at the origin; `None` when it has nothing to show (nothing playing, say).
 pub fn build(kind: &str, v: &mut View<'_>) -> Option<Piece> {
+    let mut piece = build_widget(kind, v)?;
+    if v.theme.widget_shadow {
+        shadow_words(&mut piece);
+    }
+    Some(piece)
+}
+
+fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
     let t = v.theme;
     let m = v.model;
     let key = format!("widget.{kind}");
@@ -566,7 +642,14 @@ pub fn build(kind: &str, v: &mut View<'_>) -> Option<Piece> {
             }
             let ch = 40.0 + lines.len() as f32 * lh;
             let mut piece = Piece::new(key, cw, ch);
-            piece.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: cw, h: ch, radius: 18.0, color: t.primary_container.alpha(0.92) });
+            // A paper of its own colour, as see-through as the other cards are asked to be
+            let paper = (0.92 * t.widget_opacity / 0.6).min(0.92);
+            if paper > 0.0 {
+                piece.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: cw, h: ch, radius: 18.0, color: t.primary_container.alpha(paper) });
+            }
+            if t.widget_outline && paper < 0.3 {
+                piece.prims.push(outline(0.5, 0.5, cw - 1.0, ch - 1.0, 17.5, 1.0, t.hairline()));
+            }
             for (i, line) in lines.into_iter().enumerate() {
                 piece.prims.push(Prim::Text { x: 20.0, y: 20.0 + i as f32 * lh, text: line, font, color: t.on_primary_container.alpha(if empty { 0.7 } else { 1.0 }) });
             }
@@ -636,6 +719,23 @@ pub fn build(kind: &str, v: &mut View<'_>) -> Option<Piece> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_blur_region_follows_the_cards_corners() {
+        let rows = rounded_rows(10.0, 20.0, 100.0, 60.0, 20.0);
+        let covered = |px: i32, py: i32| rows.iter().any(|&(x, y, w, h)| px >= x && px < x + w && py >= y && py < y + h);
+        // The middle and the edges' middles are in, the very corners out
+        assert!(covered(60, 50) && covered(10, 50) && covered(109, 50) && covered(60, 20) && covered(60, 79));
+        assert!(!covered(10, 20) && !covered(109, 20) && !covered(10, 79) && !covered(109, 79));
+        // Nothing outside the card, and alike rows merged (fewer than one per row)
+        assert!(rows.iter().all(|&(x, y, w, h)| x >= 10 && y >= 20 && x + w <= 110 && y + h <= 80));
+        assert!(rows.len() < 41, "{}", rows.len());
+        // No radius: one rectangle; a radius too big for it is cut to half its side
+        assert_eq!(rounded_rows(0.0, 0.0, 40.0, 30.0, 0.0), vec![(0, 0, 40, 30)]);
+        assert!(rounded_rows(0.0, 0.0, 40.0, 30.0, 99.0).iter().all(|&(_, y, _, h)| y >= 0 && y + h <= 30));
+        // Only cards are blurred behind
+        assert_eq!((card_radius("clock"), card_radius("edge"), card_radius("weather")), (None, None, Some(20.0)));
+    }
 
     #[test]
     fn reads_places_old_and_new() {

@@ -85,11 +85,13 @@ mod key {
 pub const POPUP_MARGIN: f32 = 14.0;
 
 mod backdrop;
+mod blur;
 mod clipboard;
 mod day;
 mod desk;
 mod dock;
 mod idle;
+mod live;
 mod night;
 mod overview;
 mod peek;
@@ -331,6 +333,8 @@ pub struct Scroll {
 }
 
 struct PopupSurface {
+    /// Before the popup (fields drop in order): its blur object goes first.
+    blur: blur::Blur,
     surf: Surf,
     popup: Popup,
     kind: Kind,
@@ -458,6 +462,9 @@ pub struct App {
     clip_sender: calloop::channel::Sender<clipboard::ClipRead>,
     /// Idle: the compositor's notifier, and the notification for our timeout (with its minutes).
     idle_notifier: Option<smithay_client_toolkit::reexports::protocols::ext::idle_notify::v1::client::ext_idle_notifier_v1::ExtIdleNotifierV1>,
+    /// Blur behind surfaces (ext-background-effect), and whether the compositor says it can.
+    blur_effects: Option<wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
+    blur_capable: bool,
     idle_watch: Option<(smithay_client_toolkit::reexports::protocols::ext::idle_notify::v1::client::ext_idle_notification_v1::ExtIdleNotificationV1, u32)>,
     /// Night light: the compositor's gamma controls, one per output; a hand on the switch, and
     /// what the schedule said last.
@@ -490,6 +497,14 @@ pub struct App {
     edges: Vec<Edge>,
     /// Where painted wallpapers come back.
     painted: calloop::channel::Sender<Painted>,
+    /// Where live wallpapers' frames come (`app/live.rs`), the last player's number, and what
+    /// holds them still: you away (with its idle watch), the lock, and since when.
+    live_frames: calloop::channel::Sender<crate::live::Frame>,
+    next_player: u64,
+    live_away: bool,
+    live_locked: bool,
+    live_held_since: Option<Instant>,
+    live_idle_watch: Option<(smithay_client_toolkit::reexports::protocols::ext::idle_notify::v1::client::ext_idle_notification_v1::ExtIdleNotificationV1, u32)>,
     popup: Option<PopupSurface>,
     next_id: u32,
 
@@ -749,6 +764,7 @@ impl App {
     fn tick(&mut self) {
         self.expire_toasts();
         self.rotate_wallpaper();
+        self.tick_live();
         self.tick_timers();
         self.save_day(false);
         self.apply_night_light();
@@ -926,6 +942,7 @@ impl App {
             state.tray_path.clear();
         }
         self.popup = Some(PopupSurface {
+            blur: Default::default(),
             surf,
             popup,
             kind,
@@ -1354,6 +1371,7 @@ impl App {
         }
         self.draw_peek();
         self.step_changes();
+        self.step_live();
         self.release_backdrops();
         self.paint_backdrops();
         self.paint_edges();
@@ -1429,8 +1447,22 @@ impl App {
             popup.surf.w = w;
             popup.surf.h = h;
         }
-        if let Some(damage) = render_popup(&mut popup.surf, built.pieces, &mut self.painter, &self.theme, scroll) {
-            present(&mut popup.surf, damage, &mut self.pool, &self.qh);
+        // The notification centre over a blur: its card frosted glass
+        let frosted = matches!(popup.kind, Kind::Notifications) && self.blurs(self.config.blur.notifications);
+        let wanted = if frosted { blur::card_rows(&built.pieces, POPUP_MARGIN, POPUP_MARGIN) } else { Vec::new() };
+        let blur_changed = match popup.surf.wl.clone() {
+            Some(wl) => popup.blur.set(&wl, wanted, self.blur_effects.as_ref(), &self.compositor, &self.qh),
+            None => false,
+        };
+        let frosted_theme = frosted.then(|| self.theme.frosted());
+        let theme = frosted_theme.as_ref().unwrap_or(&self.theme);
+        match render_popup(&mut popup.surf, built.pieces, &mut self.painter, theme, scroll) {
+            Some(damage) => present(&mut popup.surf, damage, &mut self.pool, &self.qh),
+            None => {
+                if blur_changed && let Some(wl) = &popup.surf.wl {
+                    wl.commit();
+                }
+            }
         }
         self.popup = Some(popup);
     }
@@ -2507,6 +2539,14 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
             }
         })
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (live_frames, frames) = calloop::channel::channel::<crate::live::Frame>();
+    handle
+        .insert_source(frames, |event, _, app: &mut App| {
+            if let calloop::channel::Event::Msg(frame) = event {
+                app.live_frame(frame);
+            }
+        })
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let (sender, receiver) = calloop::channel::channel();
     let roles = crate::services::Roles { notification_daemon: config.notifications.daemon, control_socket: true, polkit_agent: config.polkit_agent, lock: true, bluetooth_agent: true };
     let commands = crate::services::spawn(sender, crate::services::detect_compositor(), roles);
@@ -2590,6 +2630,8 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         clip_picker: None,
         clip_sender,
         idle_notifier: idle::bind_idle(&globals, &qh),
+        blur_effects: blur::bind_blur(&globals, &qh),
+        blur_capable: false,
         idle_watch: None,
         gamma_manager: night::bind_gamma(&globals, &qh),
         gammas: Vec::new(),
@@ -2608,6 +2650,12 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         backdrops: Vec::new(),
         edges: Vec::new(),
         painted,
+        live_frames,
+        next_player: 0,
+        live_away: false,
+        live_locked: false,
+        live_held_since: None,
+        live_idle_watch: None,
         popup: None,
         next_id: 0,
         config_stamp: stamp(&config_path),

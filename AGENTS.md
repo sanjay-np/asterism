@@ -86,14 +86,16 @@ pipewire-pulse (`parec`, `pactl`, `pw-record` present). kitty (its kitty.conf st
 through adw-gtk3-dark (gtk.css is a symlink to the theme). The user's config has
 `[wallpaper] interval = 5` (asked for 2026-11-21) with the default random animation, `fit =
 "stretch"`, `live = true` and `live_battery = true` (set by the user in Settings on 2026-11-22;
-their folder has one GIF, street2.gif, so the rotation can land on it); widgets: only the clock
-now; pets: `[pet] animal = "cat"` with `friend = "fox"`, `coat = "red"`, `size = 70`, no bed
-(`bed = -1`), sounds on at volume 40. No `[blur]` section and no widget opacity/blur set yet
-(as of the last restart): all the blur switches are off. One VPN saved in NetworkManager
+their folder has one GIF, street2.gif, so the rotation can land on it); widgets: only the
+visualizer (so nothing shows unless music plays); pets (as of 2026-11-23): `pets = ["bird",
+"bird", "bird:wallpaper", "bird:bluebird", "bird:robin"]` (the old `animal`/`friend` keys are
+still in the file, ignored), `size = 70`, no bed, `sounds = false`. `[blur]`: dock, launcher,
+overview, wallpapers, control and notifications all on; widget blur off. One VPN saved in NetworkManager
 ("client"); BlueZ off; no slurp/grim/tesseract. The dock (since 2026-11-22), set by the user in
 Settings: `pinned = ["kitty", "com.microsoft.VSCode"]`, `magnify = false`, `corners =
-"small"`, `background = "glass"`, `attached = true` (on the bottom edge, hiding). Measured on their screen after the optimization round: ~34 MB RSS (21 MB of it the
-binary and fonts, file-backed), 1.9 MB shm, ~2.3 % CPU with the fox out (it was 79 MB, ~3 %).
+"small"`, `background = "glass"`, `attached = true` (on the bottom edge, hiding). Measured on
+their screen after the second optimization round (2026-11-23, five birds out): 27.3 MB RSS
+(19.1 MB of it the binary and fonts, file-backed; 6.2 anon; 2.1 shm), 2.2 % CPU.
 
 How the user works: short requests, picks from offered options; after each round they want
 the build installed and the shell restarted. **Ask before restarting** (they've said yes every
@@ -251,7 +253,8 @@ main.rs ── CLI: run | msg … | --snapshot …
    │     day.rs     the day panel: open/close (a card centred under the bar), its keys
    │               (task field, notes), tick/remove/clear, a save 1 s after the last change
    │     pet.rs     the pets (`Vec<PetSurface>`, slot = place in `[pet] pets`, no limit): 240×180 Overlay surfaces moved by
-   │               margins, one timer, idle watch, drag, sounds; props (bowl, ball, yarn, bed) on Top
+   │               margins, one timer but a clock per pet (and one for the props), each picture cut to
+   │               what it covers (`pet::tighten`); idle watch, drag, sounds; props (bowl, ball, yarn, bed) on Top
    │     peek.rs    the workspace card under a hovered page dot
    │     dock.rs    the dock's surface: Top layer on its edge (PanelKind::Dock), out/in
 │               by an edge strip input region, press → click or carry, its menu via the desk menu
@@ -291,7 +294,8 @@ main.rs ── CLI: run | msg … | --snapshot …
    ├── appcolors.rs the scheme for kitty/foot/alacritty/GTK: 16 ANSI colours harmonized to the
    │               source, files beside the apps' configs, written only when changed
    ├── settings.rs  pages of rows → Action::SetSetting(keys, Value) → toml_edit write keeping comments;
-   │               drawn as a window (sidebar, page title, rows on a card, stacked when narrow, scrolls)
+   │               drawn as a window (sidebar, page title, titled groups each on a card (`Control::Section`),
+   │               galleries of pictures (`Control::Gallery`, the Pets page), stacked when narrow, scrolls)
    ├── world.rs     the wallpaper: an image, a quiet gradient in the scheme, or (opt-in) a planet's hills
    ├── theme.rs, config.rs, images.rs, ipc.rs, snapshot.rs
 ```
@@ -396,7 +400,8 @@ with a test in `ipc::tests`.
 - Don't block the Wayland thread: file walks, icon theme lookups, image decoding and D-Bus all
   happen on the services thread (e.g. `Command::AppIcon` → `Update::AppIcon`).
 - Edit with exact, asserted replacements; re-read a file before editing if it may have changed.
-- **clippy is clean** (`cargo clippy --release`, no warnings, as of 2026-11-21); keep it so.
+- **clippy is clean** (`cargo clippy --release`) but for one warning that appeared with a newer
+  clippy, a needless range loop in `appcolors.rs` (left as it was); add no others.
   Don't run `cargo fmt`: the code is hand-formatted with wide lines (no rustfmt.toml), and a
   run would rewrite over a thousand places. Watch `clippy --fix`: it once moved a
   state-changing `take()` into a match guard, which works but hides the change.
@@ -448,6 +453,14 @@ with a test in `ipc::tests`.
 `live` (which files move, ffmpeg's arguments and frame size, a GIF cut/widened/shrunk to the
 screen, a GIF played round with transparency and delays, a one-frame GIF doesn't play).
 
+Added 2026-11-23: `widgets` (a resized place keeps its box, a box gives room before it makes
+things bigger, handles say which way they pull), `app::desk` (a handle pulls its own edges, the
+clock keeps its shape), `pet` (pets keep themselves as the list changes, walks ease in and out
+and turns take a moment, a still pet moves a little now and then, a pet is painted only where
+it is; the per-animal tests run for all six), `pet::sound` (all ten voices), `ipc` (`pet add`,
+`pet N next`), `settings` (rows that do nothing are left out, search says where a setting is,
+the day button goes after the clock).
+
 `dock` (a frosted card is see-through, app ids match desktop ids loosely, pinned then open apps with their windows, a click
 starts / focuses / cycles, repinning, slots in groups and while carrying, where a carried app
 lands, builds and stays empty while hidden, nothing grows at rest, the look's measures, frames on every edge, upright sizes).
@@ -477,14 +490,17 @@ bus: yes, Rejected, passkey; names vs addresses), `services::niri` window rects,
 (stream parsing, following changes), `ipc` (request parsing), `launcher` (maths, Exec cleaning,
 ranking, desktop file parsing). Add tests for any new parsing or protocol logic.
 
-## Current progress (as of 2026-11-22: the first and second rounds from ETEA / caelestia, then
+## Current progress (as of 2026-11-23: the first and second rounds from ETEA / caelestia, then
 fingerprint, Wi-Fi passwords, Bluetooth pairing, the window overview, the desktop rounds, the
 pets, an optimization round, the drag fix, the small everyday round, the day panel, the
-temperature gauge, the dock, live wallpapers, see-through widgets and blur; newest first)
+temperature gauge, the dock, live wallpapers, see-through widgets and blur, free widget
+resizing, any number of pets and three new animals, livelier pets and the Pets page, the
+settings regrouped, the day button, a second optimization round; newest first)
 
 **State of the tree**: the user's commits up to ec587a8 (live wallpapers, blur and see-through
-widgets) hold everything up to it. After it, uncommitted: free widget resizing and any number
-of pets (with the panda, tiger and lion) below.
+widgets) hold everything up to it. After it, uncommitted: every 2026-11-23 round below (free
+widget resizing, any number of pets with the panda, tiger and lion, livelier pets and the Pets
+page, the settings regrouped, the day button, the second optimization round).
 
 ### Less memory and CPU, round two (2026-11-23, the user: "optimize this code so that it uses
 less memory and cpu")
@@ -902,7 +918,8 @@ left, moved to the middle at the user's request the same day) (`PanelKind::Day`,
 `asterism-day`, full-output Top layer, exclusive zone 0, Exclusive keyboard, a click beside the
 card or Esc closes it; framed: hung from the bar like a menu, `card(…, 1)` (4 with the bar at
 the bottom), not stretched; with the bar at the bottom it sits just above it).
-Opens from a click on the clock (its right click keeps the calendar menu), a new top-left hot
+(Since 2026-11-23 it opens from its own bar button, and the clock opens the calendar; see "Your
+day, apart from the calendar".) Opened from a click on the clock (its right click kept the calendar menu), a new top-left hot
 corner (`corner.day`, `[day] corner`, default on), `msg day [open|close]`. Opening it closes
 menus, the control centre and the launcher; opening the control centre closes it.
 
@@ -1442,6 +1459,13 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 
 ## Next progress (immediate)
 
+0. The user to try the 2026-11-23 rounds by hand: resize widgets by their sides and corners
+   (Arrange widgets); the Pets page (click a pet, change its coat by picture, + to add, ×);
+   whether the pets' motion now feels alive (easing, turning, glances) and the new voices
+   (sounds are off in their config); the regrouped Settings (rows appearing as switches
+   change, search results); the day button beside the clock (and the clock opening the
+   calendar).
+
 0. The user to try frosted glass and see-through widgets: Settings → Look (the six blur
    switches), Settings → Desktop (Widget background, outline, blur); open the launcher, overview,
    picker, control centre and notification centre with them on, and say which they keep.
@@ -1452,19 +1476,18 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 0. The user to try the dock: touch the edge by it, pin apps (right-click → Keep in the dock,
    or Settings → Dock), drag to reorder, the trash, the other edges and looks; Mod+D brings it
    out (added to their niri config, previous copy at config.kdl.before-dock-bind).
-0. The user to try the day panel: click the clock (or the top-left corner), add a task, tick
-   it, write a note, and look at ~/Documents/Asterism/todo.md; Mod+Shift+D opens it (added to
-   their niri config, previous copy at config.kdl.before-day-bind).
-0. The user to try the previous round: hover a workspace dot, a second pet and the bed/yarn (menu),
+0. The user to try the day panel: its button beside the clock (or the top-left corner), add a
+   task, tick it, write a note, and look at ~/Documents/Asterism/todo.md; Mod+Shift+D opens it
+   (added to their niri config, previous copy at config.kdl.before-day-bind).
+0. The user to try the previous round: hover a workspace dot, the pets' bed/yarn (menu),
    settings search, the VPN switch (their "client"); install slurp/grim/tesseract to try
    copying text off the screen.
 1. **User test pass**, above all the lock screen with the real password (Mod+Alt+L), then the
    clipboard picker, timers, night light schedule; fix what breaks.
 2. Try Bluetooth pairing for real once the user starts bluetooth.service.
-3. The user to try the pet by hand: pick it up (the fixed drag), stroke it, feed it, play with
-   the ball, and say how its synthesized sounds sound; the widgets' drag (same fix). If its CPU
-   (~2.3 % with the fox) matters: cache the rendered frames of still poses, or a lower frame
-   rate while walking (both offered, not chosen).
+3. The user to try the pets by hand: pick one up (the fixed drag), stroke it, feed it, play with
+   the ball, and say how the synthesized sounds sound. Caching pet frames was tried and left
+   (a moving pet never repeats a picture; see the second optimization round).
 4. The user to watch a wallpaper change animate (Settings → Wallpaper: Change by itself, or
    Mod+Shift+W) and say how it feels; then the desktop's round two (right-click menus, resizing, photo frame, note,
    edge bars, song card) and the app colours (include the file in kitty.conf, gtk.css).

@@ -27,9 +27,34 @@ pub enum Control {
     /// Labels and the values they write; which one is current.
     Choice(Vec<(String, Value)>, Option<usize>),
     Stepper { value: i64, min: i64, max: i64, step: i64, unit: &'static str },
-    /// Typed in place; what's written now.
-    Text(String),
+    /// Typed in place: what's written now, and what's used while it's empty.
+    Text(String, String),
+    /// Not a setting: a group's title (the row's label) and what the group is for (its about),
+    /// over a card of its own.
+    Section,
     Button(&'static str, Action),
+    /// Pictures to pick from, under the label, as many lines of them as they need.
+    Gallery(Vec<Tile>),
+}
+
+/// One picture in a gallery: a pet drawn as it is (an animal and its coat) or an icon, a name
+/// and a word under it; lit when it's the one chosen; what a click does, and a × when it can
+/// be taken away.
+pub struct Tile {
+    pub picture: Option<(crate::pet::Species, String)>,
+    pub icon: Option<&'static str>,
+    pub label: String,
+    pub sub: String,
+    pub on: bool,
+    pub action: Option<Action>,
+    pub remove: Option<Action>,
+}
+
+/// Which pet the Pets page shows (its place in the list), or the animals to add one from.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PetPick {
+    pub selected: usize,
+    pub adding: bool,
 }
 
 pub struct Row {
@@ -44,14 +69,25 @@ fn row(keys: &[&str], label: &str, about: &str, control: Control) -> Row {
     Row { keys: keys.iter().map(|k| k.to_string()).collect(), label: label.into(), about: about.into(), control }
 }
 
+/// A group's title over its own card.
+fn section(label: &str, about: &str) -> Row {
+    Row { keys: Vec::new(), label: label.into(), about: about.into(), control: Control::Section }
+}
+
 fn choice(options: &[(&str, &str)], current: &str) -> Control {
     let list: Vec<(String, Value)> = options.iter().map(|(label, value)| (label.to_string(), Value::Str(value.to_string()))).collect();
     let at = options.iter().position(|(_, v)| v.eq_ignore_ascii_case(current));
     Control::Choice(list, at)
 }
 
-pub const PAGES: [&str; 10] = ["Look", "Bar", "Wallpaper", "Desktop", "Dock", "Night light", "Lock", "Notifications", "Weather", "Timers"];
-const PAGE_ICONS: [&str; 10] = ["picker", "layout", "image", "apps", "dock", "nightlight", "lock", "bell", "cloud-sun", "timer"];
+pub const PAGES: [&str; 11] = ["Look", "Bar", "Wallpaper", "Desktop", "Dock", "Pets", "Night light", "Lock", "Notifications", "Weather", "Timers"];
+/// A gallery's pictures: their size, and the room between them.
+const TILE: (f32, f32) = (124.0, 140.0);
+const TILE_GAP: f32 = 10.0;
+
+/// The Pets page's place among them.
+pub const PETS_PAGE: usize = 5;
+const PAGE_ICONS: [&str; 11] = ["picker", "layout", "image", "apps", "dock", "paw", "nightlight", "lock", "bell", "cloud-sun", "timer"];
 
 /// What a typed value says now, to start editing from.
 pub fn text_value(c: &Config, keys: &[String]) -> String {
@@ -76,6 +112,24 @@ fn in_list(keys: &[&str], list: &[String], item: &str, label: &str, about: &str)
 }
 
 /// A switch for one of the bar's resources, which keeps them in their usual order when turned on.
+/// Your day's button in the bar: on, it goes just after the clock (in whichever part of the bar
+/// the clock is, else the middle); off, it's taken out wherever it was.
+fn day_button(c: &Config) -> Row {
+    let l = &c.layout;
+    let parts: [(&str, &Vec<String>); 3] = [("left", &l.left), ("center", &l.center), ("right", &l.right)];
+    let label = "Your day";
+    let about = "A button for timers, to-do and notes, with how many tasks are left (the clock opens the calendar)";
+    if let Some((part, list)) = parts.iter().find(|(_, list)| list.iter().any(|m| m == "day")) {
+        let next: Vec<String> = list.iter().filter(|m| *m != "day").cloned().collect();
+        return row(&["layout", part], label, about, Control::SwitchTo(true, Value::List(next)));
+    }
+    let (part, list) = parts.iter().find(|(_, list)| list.iter().any(|m| m == "clock")).copied().unwrap_or(("center", &l.center));
+    let mut next = list.clone();
+    let at = next.iter().position(|m| m == "clock").map_or(next.len(), |i| i + 1);
+    next.insert(at, "day".into());
+    row(&["layout", part], label, about, Control::SwitchTo(false, Value::List(next)))
+}
+
 fn resource(list: &[String], item: &str, label: &str, about: &str) -> Row {
     const ORDER: [&str; 4] = ["cpu", "memory", "temperature", "network"];
     let on = list.iter().any(|k| k == item);
@@ -96,6 +150,7 @@ fn dock_rows(c: &Config, model: &Model) -> Vec<Row> {
     if !d.enabled {
         return list;
     }
+    list.push(section("Behaviour", ""));
     list.push(row(&["dock", "position"], "Position", "The edge of the screen it sits on", choice(&[("Bottom", "bottom"), ("Top", "top"), ("Left", "left"), ("Right", "right")], &d.position)));
     list.push(row(&["dock", "autohide"], "Hide it", "Out of sight until the pointer touches the edge by it, or Mod+D; off: always out, windows kept clear of it", Control::Switch(d.autohide)));
     if d.autohide {
@@ -104,6 +159,7 @@ fn dock_rows(c: &Config, model: &Model) -> Vec<Row> {
     list.push(row(&["dock", "running"], "Open apps", "Apps with windows open join the pinned ones, a dot for each window", Control::Switch(d.running)));
     list.push(row(&["dock", "launcher"], "Apps button", "At the start: opens the launcher", Control::Switch(d.launcher)));
     list.push(row(&["dock", "trash"], "Trash", "At the end: click opens it, right click empties it", Control::Switch(d.trash)));
+    list.push(section("Look", ""));
     list.push(row(&["dock", "size"], "Icon size", "", Control::Stepper { value: d.size as i64, min: 32, max: 72, step: 4, unit: "px" }));
     list.push(row(&["dock", "magnify"], "Grow under the pointer", "The icon you point at, and a little its neighbours", Control::Switch(d.magnify)));
     list.push(row(&["dock", "corners"], "Corners", "", choice(&[("Rounded", "rounded"), ("Small", "small"), ("Square", "square"), ("Pill", "pill")], &d.corners)));
@@ -111,17 +167,21 @@ fn dock_rows(c: &Config, model: &Model) -> Vec<Row> {
     list.push(row(&["dock", "attached"], "On the screen's edge", "Sits on the edge, its lower corners square, rather than floating just above it", Control::Switch(d.attached)));
     list.push(row(&["dock", "indicator"], "Open windows", "How an open app is marked", choice(&[("Dots", "dots"), ("Line", "line"), ("None", "none")], &d.indicator)));
     list.push(row(&["dock", "separators"], "Separators", "Thin lines between the apps button, pinned apps, open apps and the trash", Control::Switch(d.separators)));
-    for item in crate::dock::items(&d.pinned, &model.compositor.workspaces, &model.apps) {
+    let items = crate::dock::items(&d.pinned, &model.compositor.workspaces, &model.apps);
+    if !items.is_empty() {
+        list.push(section("Apps", "Pinned ones stay on the dock; drag them along it to reorder, or right-click one"));
+    }
+    for item in items {
         let windows = match item.windows.len() {
             0 => String::new(),
             1 => "open".into(),
             n => format!("{n} windows"),
         };
         let (about, control) = if item.pinned {
-            let about = if windows.is_empty() { "Pinned; drag it along the dock to move it".to_string() } else { format!("Pinned · {windows}") };
+            let about = if windows.is_empty() { "Pinned".to_string() } else { format!("Pinned · {windows}") };
             (about, Control::Button("Unpin", Action::DockPin(item.key.clone(), false)))
         } else {
-            let mut about = format!("{windows}, not pinned");
+            let mut about = windows.clone();
             about[..1].make_ascii_uppercase();
             (about, Control::Button("Pin", Action::DockPin(item.key.clone(), true)))
         };
@@ -130,136 +190,256 @@ fn dock_rows(c: &Config, model: &Model) -> Vec<Row> {
     list
 }
 
+/// A coat's name as a label ("tabby" → "Tabby").
+fn title_case(name: &str) -> String {
+    let mut label = name.to_string();
+    if let Some(first) = label.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    label
+}
+
+/// The Pets page: your pets as pictures of themselves (click one to change it, × to put it
+/// away, + to add one), then the one chosen (its animal, and its coats as pictures) or the
+/// animals to add, then what they all share.
+fn pet_rows(c: &Config, pick: &PetPick) -> Vec<Row> {
+    use crate::pet::Species;
+    let mut list = Vec::new();
+    let entries = c.pet.entries();
+    let keys = vec!["pet".to_string(), "pets".to_string()];
+    let with = |at: usize, entry: String| -> Value {
+        let mut next = entries.clone();
+        next[at] = entry;
+        Value::List(next)
+    };
+    // Those naming an animal there is, by their place in the list
+    let pets: Vec<(usize, Species, String)> = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| {
+            let (animal, coat) = crate::config::pet_entry(e);
+            Some((i, Species::from_name(&animal)?, coat))
+        })
+        .collect();
+    let adding = pick.adding || pets.is_empty();
+    let chosen = (!adding).then(|| pets.iter().find(|(i, ..)| *i == pick.selected).or(pets.first())).flatten().cloned();
+    let mut tiles: Vec<Tile> = pets
+        .iter()
+        .map(|(i, species, coat)| {
+            let names = crate::pet::draw::coats(*species);
+            let coat_name = names.iter().find(|n| n.eq_ignore_ascii_case(coat)).unwrap_or(&names[0]);
+            Tile {
+                picture: Some((*species, coat.clone())),
+                icon: None,
+                label: species.title().into(),
+                sub: title_case(coat_name),
+                on: chosen.as_ref().is_some_and(|(at, ..)| at == i),
+                action: Some(Action::SettingsPet(Some(*i))),
+                remove: Some(Action::PetAway(*i)),
+            }
+        })
+        .collect();
+    tiles.push(Tile { picture: None, icon: Some("add"), label: "Add a pet".into(), sub: if pets.is_empty() { "Pick an animal".into() } else { "As many as you like".into() }, on: adding, action: Some(Action::SettingsPet(None)), remove: None });
+    let about = if pets.is_empty() { "Companions roaming the screen above your windows" } else { "Click one to change it, × puts it away; they greet, chase and nap together" };
+    list.push(Row { keys: Vec::new(), label: "Your pets".into(), about: about.into(), control: Control::Gallery(tiles) });
+
+    match chosen {
+        None => {
+            // The animals, each in its own coat: a click adds one
+            let tiles = Species::ALL.iter().map(|s| Tile { picture: Some((*s, String::new())), icon: None, label: s.title().into(), sub: String::new(), on: false, action: Some(Action::PetAdd(s.name().into())), remove: None }).collect();
+            list.push(Row { keys: Vec::new(), label: "Add which animal?".into(), about: "Its coat can be changed after".into(), control: Control::Gallery(tiles) });
+        }
+        Some((at, species, coat)) => {
+            let animals: Vec<(String, Value)> = Species::ALL.iter().map(|s| (s.title().to_string(), with(at, s.name().to_string()))).collect();
+            let current = Species::ALL.iter().position(|s| *s == species);
+            list.push(Row { keys: keys.clone(), label: "Animal".into(), about: "Turns this one into another".into(), control: Control::Choice(animals, current) });
+            let names = crate::pet::draw::coats(species);
+            let current = names.iter().position(|n| n.eq_ignore_ascii_case(&coat)).unwrap_or(0);
+            let tiles = names
+                .iter()
+                .enumerate()
+                .map(|(n, name)| Tile {
+                    picture: Some((species, name.to_string())),
+                    icon: None,
+                    label: title_case(name),
+                    sub: String::new(),
+                    on: n == current,
+                    action: Some(Action::SetSetting(keys.clone(), with(at, format!("{}:{name}", species.name())))),
+                    remove: None,
+                })
+                .collect();
+            list.push(Row { keys: Vec::new(), label: "Coat".into(), about: "Its own colours, or the wallpaper's".into(), control: Control::Gallery(tiles) });
+        }
+    }
+    if !pets.is_empty() {
+        list.push(section("All of them", ""));
+        list.push(row(&["pet", "sounds"], "Sounds", "Meows, yips, chirps, roars and bleats now and then; purrs when petted", Control::Switch(c.pet.sounds)));
+        list.push(row(&["pet", "volume"], "Their volume", "", Control::Stepper { value: c.pet.volume as i64, min: 10, max: 100, step: 10, unit: "%" }));
+        list.push(row(&["pet", "size"], "Their size", "", Control::Stepper { value: c.pet.size as i64, min: 70, max: 140, step: 10, unit: "%" }));
+        let bed = c.pet.bed >= 0;
+        list.push(row(&[], "A bed", "Where they nap, and sleep while you're away", Control::Button(if bed { "Take it away" } else { "Put one down" }, Action::PetBed(!bed))));
+    }
+    list
+}
+
 /// What a page holds, from the config as it is now.
-pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
+pub fn rows(page: usize, c: &Config, model: &Model, pick: &PetPick) -> Vec<Row> {
     let lower = |s: &str| s.to_lowercase();
     match page {
         0 => vec![
-            row(&["style"], "Bar style", "A slim line, a frame round the screen, or floating", choice(&[("Line", "line"), ("Frame", "frame"), ("Floating", "floating"), ("Islands", "islands"), ("Bare", "transparent")], &lower(&format!("{:?}", c.style)))),
-            row(&["size"], "Size", "", choice(&[("Compact", "compact"), ("Normal", "normal"), ("Large", "large")], &lower(&format!("{:?}", c.size)))),
-            row(&["position"], "Where the bar sits", "", choice(&[("Top", "top"), ("Bottom", "bottom")], &lower(&format!("{:?}", c.position)))),
-            row(&["icons"], "Icons", "Thin outlines, rounded, or filled", choice(&[("Outline", "outline"), ("Material", "material"), ("Phosphor", "phosphor")], &c.icons)),
-            row(&["page_style"], "Workspaces", "Dots (busy ones joined by a line), numbers, or kanji (一 二 三)", choice(&[("Dots", "dots"), ("Numbers", "numbers"), ("Kanji", "kanji")], &lower(&format!("{:?}", c.page_style)))),
+            section("Colours", "Grown from the wallpaper"),
             row(
                 &["colors", "bar_icons"],
                 "Bar icons",
-                "In the wallpaper's colours, or plain",
+                "In the wallpaper's colours, the accent, a colour for each group, or plain",
                 choice(&[("Tinted", "tinted"), ("Accent", "accent"), ("Colourful", "colourful"), ("Plain", "plain")], if c.colors.bar_icons.trim().is_empty() { "tinted" } else { c.colors.bar_icons.trim() }),
             ),
-            row(&["colors", "widgets"], "Widgets", "Clock, headings and cards in the wallpaper's colours, or plain", choice(&[("Tinted", "tinted"), ("Plain", "plain")], if c.colors.widgets.trim().is_empty() { "tinted" } else { c.colors.widgets.trim() })),
-            row(&["blur", "dock"], "Blur behind the dock", "Frosted glass: the compositor blurs what's behind it (niri 26, and others that offer it)", Control::Switch(c.blur.dock)),
-            row(&["blur", "launcher"], "Blur behind the apps", "The app grid over a frosted screen", Control::Switch(c.blur.launcher)),
-            row(&["blur", "overview"], "Blur behind the overview", "The windows' overview over a frosted screen", Control::Switch(c.blur.overview)),
-            row(&["blur", "wallpapers"], "Blur behind the wallpaper picker", "", Control::Switch(c.blur.wallpapers)),
-            row(&["blur", "control"], "Blur behind the control centre", "Its card frosted glass (not with the frame style, where it's joined to the frame)", Control::Switch(c.blur.control)),
-            row(&["blur", "notifications"], "Blur behind notifications", "The pop-ups and the notification centre", Control::Switch(c.blur.notifications)),
-            in_list(&["colors", "apps"], &c.colors.apps, "kitty", "Colours for kitty", "Add to kitty.conf: include asterism-colors.conf"),
-            in_list(&["colors", "apps"], &c.colors.apps, "foot", "Colours for foot", "Add to foot.ini: include=~/.config/foot/asterism-colors.ini"),
-            in_list(&["colors", "apps"], &c.colors.apps, "alacritty", "Colours for Alacritty", "Import ~/.config/alacritty/asterism-colors.toml"),
-            in_list(&["colors", "apps"], &c.colors.apps, "gtk", "Colours for GTK apps", "Add to gtk.css: @import url(\"asterism-colors.css\");"),
+            row(&["colors", "widgets"], "Desktop widgets", "The clock, headings and cards in the wallpaper's colours, or plain", choice(&[("Tinted", "tinted"), ("Plain", "plain")], if c.colors.widgets.trim().is_empty() { "tinted" } else { c.colors.widgets.trim() })),
+            section("Frosted glass", "The compositor blurs what's behind (niri 26, and others that offer it)"),
+            row(&["blur", "dock"], "Dock", "", Control::Switch(c.blur.dock)),
+            row(&["blur", "launcher"], "App launcher", "", Control::Switch(c.blur.launcher)),
+            row(&["blur", "overview"], "Window overview", "", Control::Switch(c.blur.overview)),
+            row(&["blur", "wallpapers"], "Wallpaper picker", "", Control::Switch(c.blur.wallpapers)),
+            row(&["blur", "control"], "Control centre", "Not with the frame style, where it's joined to the frame", Control::Switch(c.blur.control)),
+            row(&["blur", "notifications"], "Notifications", "The pop-ups and the notification centre", Control::Switch(c.blur.notifications)),
+            row(&["widgets", "blur"], "Desktop widgets", "Goes well with a lighter widget background (Desktop)", Control::Switch(c.widgets.blur)),
+            section("Your apps' colours", "The wallpaper's colours written for them; each needs one line in its own config"),
+            in_list(&["colors", "apps"], &c.colors.apps, "kitty", "kitty", "kitty.conf: include asterism-colors.conf"),
+            in_list(&["colors", "apps"], &c.colors.apps, "foot", "foot", "foot.ini: include=~/.config/foot/asterism-colors.ini"),
+            in_list(&["colors", "apps"], &c.colors.apps, "alacritty", "Alacritty", "alacritty.toml: import ~/.config/alacritty/asterism-colors.toml"),
+            in_list(&["colors", "apps"], &c.colors.apps, "gtk", "GTK apps", "gtk.css: @import url(\"asterism-colors.css\");"),
         ],
-        1 => vec![
-            row(&["percent"], "Numbers beside icons", "Volume, battery and the machine's load as percentages", Control::Switch(c.percent)),
-            resource(&c.resources, "temperature", "Temperature gauge", "The processor's heat as a ring beside the load (needs \"resources\" in the bar)"),
-            row(&["media_title"], "The song's title", "Slides by when long, or is cut short", choice(&[("Slide", "scroll"), ("Short", "short"), ("Off", "off")], &lower(&format!("{:?}", c.media_title)))),
-            row(&["clock", "hours24"], "24-hour clock", "", Control::Switch(c.clock.hours24)),
-            row(&["clock", "seconds"], "Seconds", "", Control::Switch(c.clock.seconds)),
-            row(&["clock", "date"], "Date beside the time", "", choice(&[("Saturday, November 21", "%A, %B %-d"), ("Sat 21 Nov", "%a %-d %b"), ("21/11/2026", "%d/%m/%Y"), ("None", "")], &c.clock.date)),
-            row(&["hot_corner"], "Hot corner", "The top-right corner opens the control centre", Control::Switch(c.hot_corner)),
-            row(&["day", "corner"], "Day panel corner", "The top-left corner opens your day: calendar, timers, to-do, notes (so does clicking the clock)", Control::Switch(c.day.corner)),
-            row(&["day", "folder"], "To-do and notes folder", "todo.md and notes.md live here; empty takes ~/Documents/Asterism", Control::Text(c.day.folder.clone())),
-            row(&["song_popup"], "New song card", "Its cover and name for a moment, when the song changes", Control::Switch(c.song_popup)),
-        ],
-        2 => vec![
-            row(&[], "Choose a picture", "Your wallpapers as a grid; the colours follow the picture", Control::Button("Open", Action::ToggleWallpapers)),
-            row(&["wallpaper", "interval"], "Change by itself", "Minutes between pictures from the folder, 0 never", Control::Stepper { value: c.wallpaper.interval as i64, min: 0, max: 240, step: 5, unit: "min" }),
-            row(
-                &["wallpaper", "transition"],
-                "Animation",
-                "How one picture gives way to the next; Random is a different one each time",
-                choice(&[("Random", "random"), ("Fade", "fade"), ("Wipe", "wipe"), ("Circle", "circle"), ("Blinds", "blinds"), ("Ink", "ink"), ("Pixels", "pixels"), ("Slide", "slide"), ("None", "none")], &c.wallpaper.transition),
-            ),
-            row(&["wallpaper", "transition_ms"], "Animation length", "", Control::Stepper { value: c.wallpaper.transition_ms as i64, min: 400, max: 3000, step: 200, unit: "ms" }),
-            row(&["wallpaper", "fit"], "Fit", "", choice(&[("Cover", "cover"), ("Contain", "contain"), ("Stretch", "stretch")], &lower(&format!("{:?}", c.wallpaper.fit)))),
-            row(&["wallpaper", "live"], "Moving wallpapers", "Videos and animated GIFs play; off keeps their first frame", Control::Switch(c.wallpaper.live)),
-            row(&["wallpaper", "live_fps"], "Video frame rate", "Fewer frames cost less", Control::Stepper { value: c.wallpaper.live_fps as i64, min: 10, max: 60, step: 5, unit: "fps" }),
-            row(&["wallpaper", "live_scale"], "Moving wallpaper sharpness", "Videos (and big GIFs) made at this share of the screen's width and height, then scaled up; less costs less", Control::Stepper { value: c.wallpaper.live_scale as i64, min: 25, max: 100, step: 25, unit: "%" }),
-            row(&["wallpaper", "live_battery"], "Play on battery", "Off: still until the charger's back", Control::Switch(c.wallpaper.live_battery)),
-            row(&["wallpaper", "live_idle"], "Still when away", "Minutes without input before it stops, 0 never", Control::Stepper { value: c.wallpaper.live_idle as i64, min: 0, max: 60, step: 1, unit: "min" }),
-            row(&["wallpaper", "enabled"], "Draw the wallpaper", "Off leaves it to another program", Control::Switch(c.wallpaper.enabled)),
-        ],
-        3 => {
+        1 => {
+            // The date's choices shown as today would be
+            let today = chrono::Local::now();
+            let dates: Vec<(String, &str)> = ["%A, %B %-d", "%a %-d %b", "%d/%m/%Y"].iter().map(|f| (today.format(f).to_string(), *f)).collect();
+            let mut date_options: Vec<(&str, &str)> = dates.iter().map(|(l, f)| (l.as_str(), *f)).collect();
+            date_options.push(("None", ""));
+            vec![
+                section("Layout", ""),
+                row(&["style"], "Style", "A slim line, a frame round the screen, floating, islands, or bare", choice(&[("Line", "line"), ("Frame", "frame"), ("Floating", "floating"), ("Islands", "islands"), ("Bare", "transparent")], &lower(&format!("{:?}", c.style)))),
+                row(&["position"], "Edge", "Where the bar sits", choice(&[("Top", "top"), ("Bottom", "bottom")], &lower(&format!("{:?}", c.position)))),
+                row(&["size"], "Size", "How tall the bar is, and its text", choice(&[("Compact", "compact"), ("Normal", "normal"), ("Large", "large")], &lower(&format!("{:?}", c.size)))),
+                row(&["icons"], "Icon set", "Thin outlines, rounded, or filled", choice(&[("Outline", "outline"), ("Material", "material"), ("Phosphor", "phosphor")], &c.icons)),
+                row(&["page_style"], "Workspaces", "Dots (busy ones joined by a line), numbers, or kanji (一 二 三)", choice(&[("Dots", "dots"), ("Numbers", "numbers"), ("Kanji", "kanji")], &lower(&format!("{:?}", c.page_style)))),
+                section("What it shows", ""),
+                row(&["percent"], "Numbers beside icons", "Volume, battery and the machine's load as percentages", Control::Switch(c.percent)),
+                resource(&c.resources, "temperature", "Temperature gauge", "The processor's heat as a ring beside the load"),
+                row(&["media_title"], "The song's title", "Slides by when long, or is cut short", choice(&[("Slide", "scroll"), ("Short", "short"), ("Off", "off")], &lower(&format!("{:?}", c.media_title)))),
+                row(&["song_popup"], "New song card", "Its cover and name for a moment, when the song changes", Control::Switch(c.song_popup)),
+                day_button(c),
+                section("Clock", ""),
+                row(&["clock", "hours24"], "24-hour clock", "", Control::Switch(c.clock.hours24)),
+                row(&["clock", "seconds"], "Seconds", "", Control::Switch(c.clock.seconds)),
+                row(&["clock", "date"], "Date beside the time", "", choice(&date_options, &c.clock.date)),
+                section("Corners", "Push the pointer into a corner of the screen"),
+                row(&["hot_corner"], "Control centre", "The top-right corner", Control::Switch(c.hot_corner)),
+                row(&["day", "corner"], "Day panel", "The top-left corner: calendar, timers, to-do, notes (clicking the clock opens it too)", Control::Switch(c.day.corner)),
+                section("Day panel", ""),
+                row(&["day", "folder"], "To-do and notes folder", "Where todo.md and notes.md are kept", Control::Text(c.day.folder.clone(), "~/Documents/Asterism".into())),
+            ]
+        }
+        2 => {
+            let w = &c.wallpaper;
+            if !w.enabled {
+                return vec![row(&["wallpaper", "enabled"], "Draw the wallpaper", "Off: the desktop is left to another program", Control::Switch(w.enabled))];
+            }
             let mut list = vec![
-                row(&[], "Arrange widgets", "Add, take off, move and resize them, on the desktop itself", Control::Button("Arrange", Action::EditWidgets(Some(true)))),
-                row(&["widgets", "note"], "Sticky note", "What the note on the desktop says", Control::Text(c.widgets.note.clone())),
-                row(&["widgets", "opacity"], "Widget background", "How solid their cards are; 0 leaves the words alone on the wallpaper, with a soft shadow", Control::Stepper { value: c.widgets.opacity as i64, min: 0, max: 100, step: 10, unit: "%" }),
-                row(&["widgets", "outline"], "Widget outline", "A hairline round each card", Control::Switch(c.widgets.outline)),
-                row(&["widgets", "blur"], "Blur behind widgets", "Frosted glass: the compositor blurs what's behind each card (niri 26 and others that offer it); goes well with a lighter background", Control::Switch(c.widgets.blur)),
+                section("Picture", "Its colours become the shell's"),
+                row(&[], "Choose a picture", "Your wallpapers as a grid", Control::Button("Open", Action::ToggleWallpapers)),
+                row(&["wallpaper", "fit"], "Fit", "Fill the screen and crop, show it whole, or stretch it", choice(&[("Cover", "cover"), ("Contain", "contain"), ("Stretch", "stretch")], &lower(&format!("{:?}", w.fit)))),
+                section("Changing", ""),
+                row(&["wallpaper", "interval"], "Change by itself", "Minutes between pictures from the folder; 0 never", Control::Stepper { value: w.interval as i64, min: 0, max: 240, step: 5, unit: "min" }),
+                row(
+                    &["wallpaper", "transition"],
+                    "Animation",
+                    "How one picture gives way to the next; Random is a different one each time",
+                    choice(&[("Random", "random"), ("Fade", "fade"), ("Wipe", "wipe"), ("Circle", "circle"), ("Blinds", "blinds"), ("Ink", "ink"), ("Pixels", "pixels"), ("Slide", "slide"), ("None", "none")], &w.transition),
+                ),
+            ];
+            if !w.transition.eq_ignore_ascii_case("none") {
+                list.push(row(&["wallpaper", "transition_ms"], "Animation length", "", Control::Stepper { value: w.transition_ms as i64, min: 400, max: 3000, step: 200, unit: "ms" }));
+            }
+            list.push(section("Moving wallpapers", "Videos and animated GIFs"));
+            list.push(row(&["wallpaper", "live"], "Play them", "Off keeps their first frame", Control::Switch(w.live)));
+            if w.live {
+                list.push(row(&["wallpaper", "live_fps"], "Frame rate", "Fewer frames cost less", Control::Stepper { value: w.live_fps as i64, min: 10, max: 60, step: 5, unit: "fps" }));
+                list.push(row(&["wallpaper", "live_scale"], "Sharpness", "Made at this share of the screen's size, then scaled up; less costs less", Control::Stepper { value: w.live_scale as i64, min: 25, max: 100, step: 25, unit: "%" }));
+                list.push(row(&["wallpaper", "live_battery"], "Play on battery", "Off: still until the charger's back", Control::Switch(w.live_battery)));
+                list.push(row(&["wallpaper", "live_idle"], "Still when you're away", "Minutes without input before it stops; 0 never", Control::Stepper { value: w.live_idle as i64, min: 0, max: 60, step: 1, unit: "min" }));
+            }
+            list.push(section("Other", ""));
+            list.push(row(&["wallpaper", "enabled"], "Draw the wallpaper", "Off: the desktop is left to another program", Control::Switch(w.enabled)));
+            list
+        }
+        3 => {
+            let shown = |kind: &str| c.widgets.show.iter().any(|k| k == kind);
+            let mut list = vec![
+                section("Widgets", "On the wallpaper, under your windows"),
+                row(&[], "Arrange them", "Add, take off, move and resize them on the desktop itself (or right-click the desktop)", Control::Button("Arrange", Action::EditWidgets(Some(true)))),
             ];
             for kind in crate::widgets::KINDS {
                 let about = match kind {
+                    "clock" => "The time and the date",
+                    "weather" => "Now, and the days ahead when it's tall",
                     "media" => "The song, its cover and its progress",
                     "visualizer" => "Bars that move with the music, while something plays",
                     "edge" => "The same bars along the foot of the screen",
+                    "calendar" => "This month",
                     "system" => "Processor, memory and disk",
                     "photos" => "A picture from a folder, a new one every so often",
+                    "note" => "A few lines of your own",
                     _ => "",
                 };
                 list.push(in_list(&["widgets", "show"], &c.widgets.show, kind, crate::widgets::name(kind), about));
             }
-            list.push(row(&["pet", "animal"], "Pet", "A companion roaming the screen above your windows", choice(&[("None", "none"), ("Cat", "cat"), ("Fox", "fox"), ("Bird", "bird")], &c.pet.animal)));
-            list.push(row(&["pet", "friend"], "A second pet", "Company for the first: they greet, chase and nap together", choice(&[("None", "none"), ("Cat", "cat"), ("Fox", "fox"), ("Bird", "bird")], &c.pet.friend)));
-            if let Some(species) = crate::pet::Species::from_name(&c.pet.friend) {
-                let names = crate::pet::draw::coats(species);
-                let options: Vec<(String, Value)> = names.iter().map(|n| {
-                    let mut label = n.to_string();
-                    if let Some(first) = label.get_mut(0..1) {
-                        first.make_ascii_uppercase();
-                    }
-                    (label, Value::Str(n.to_string()))
-                }).collect();
-                let current = names.iter().position(|n| n.eq_ignore_ascii_case(c.pet.friend_coat.trim())).unwrap_or(0);
-                list.push(Row { keys: vec!["pet".into(), "friend_coat".into()], label: "Its coat".into(), about: "The second pet's colours".into(), control: Control::Choice(options, Some(current)) });
+            list.push(section("Their look", ""));
+            list.push(row(&["widgets", "opacity"], "Background", "How solid their cards are; 0 leaves the words alone on the wallpaper, with a soft shadow", Control::Stepper { value: c.widgets.opacity as i64, min: 0, max: 100, step: 10, unit: "%" }));
+            list.push(row(&["widgets", "outline"], "Outline", "A hairline round each card", Control::Switch(c.widgets.outline)));
+            if shown("note") {
+                list.push(section("Sticky note", ""));
+                list.push(row(&["widgets", "note"], "It says", "Right-click the note to write here", Control::Text(c.widgets.note.clone(), "Nothing yet".into())));
             }
-            if let Some(species) = crate::pet::Species::from_name(&c.pet.animal) {
-                // Its coats, by the names the animal has
-                let names = crate::pet::draw::coats(species);
-                let options: Vec<(String, Value)> = names.iter().map(|n| {
-                    let mut label = n.to_string();
-                    if let Some(first) = label.get_mut(0..1) {
-                        first.make_ascii_uppercase();
-                    }
-                    (label, Value::Str(n.to_string()))
-                }).collect();
-                let current = names.iter().position(|n| n.eq_ignore_ascii_case(c.pet.coat.trim())).unwrap_or(0);
-                list.push(Row { keys: vec!["pet".into(), "coat".into()], label: "Coat".into(), about: "Its own colours, or the wallpaper's".into(), control: Control::Choice(options, Some(current)) });
-                list.push(row(&["pet", "sounds"], "Sounds", "It meows (or yips, or chirps) now and then; purrs when petted", Control::Switch(c.pet.sounds)));
-                list.push(row(&["pet", "volume"], "Its volume", "", Control::Stepper { value: c.pet.volume as i64, min: 10, max: 100, step: 10, unit: "%" }));
-                list.push(row(&["pet", "size"], "Its size", "", Control::Stepper { value: c.pet.size as i64, min: 70, max: 140, step: 10, unit: "%" }));
+            if shown("photos") {
+                list.push(section("Photo frame", ""));
+                list.push(row(&["widgets", "photos"], "Folder", "", Control::Text(c.widgets.photos.clone(), "~/Pictures".into())));
+                list.push(row(&["widgets", "photo_minutes"], "Each picture stays", "", Control::Stepper { value: c.widgets.photo_minutes as i64, min: 1, max: 120, step: 1, unit: "min" }));
             }
-            list.push(row(&["widgets", "lyrics"], "Song words", "Under what's playing, line by line (asks LRCLIB with the song's name)", Control::Switch(c.widgets.lyrics)));
-            list.push(row(&["widgets", "photos"], "Photo folder", "Empty takes ~/Pictures", Control::Text(c.widgets.photos.clone())));
-            list.push(row(&["widgets", "photo_minutes"], "Each picture stays", "", Control::Stepper { value: c.widgets.photo_minutes as i64, min: 1, max: 120, step: 1, unit: "min" }));
+            if shown("media") {
+                list.push(section("What's playing", ""));
+                list.push(row(&["widgets", "lyrics"], "Song words", "Under the song, line by line (asks LRCLIB with the song's name)", Control::Switch(c.widgets.lyrics)));
+            }
             list
         }
         4 => dock_rows(c, model),
-        5 => vec![
-            row(&["night_light", "mode"], "Night light", "Warmer colours: always, or from evening to morning", choice(&[("Off", "off"), ("On", "on"), ("Schedule", "schedule")], &c.night_light.mode)),
-            row(&["night_light", "temperature"], "Warmth", "6500 K is the screen as it is", Control::Stepper { value: c.night_light.temperature as i64, min: 2500, max: 6000, step: 250, unit: "K" }),
-            row(&["night_light", "start"], "From", "", choice(&[("Sunset", "sunset"), ("19:00", "19:00"), ("20:00", "20:00"), ("21:00", "21:00"), ("22:00", "22:00")], &c.night_light.start)),
-            row(&["night_light", "end"], "Until", "", choice(&[("Sunrise", "sunrise"), ("06:00", "06:00"), ("07:00", "07:00"), ("08:00", "08:00")], &c.night_light.end)),
-        ],
-        6 => vec![
+        PETS_PAGE => pet_rows(c, pick),
+        6 => {
+            let n = &c.night_light;
+            let mut list = vec![row(&["night_light", "mode"], "Night light", "Warmer colours: always, or from evening to morning", choice(&[("Off", "off"), ("On", "on"), ("Schedule", "schedule")], &n.mode))];
+            if !n.mode.eq_ignore_ascii_case("off") {
+                list.push(row(&["night_light", "temperature"], "Warmth", "Lower is warmer; 6500 K is the screen as it is", Control::Stepper { value: n.temperature as i64, min: 2500, max: 6000, step: 250, unit: "K" }));
+            }
+            if n.mode.eq_ignore_ascii_case("schedule") {
+                list.push(section("Schedule", "Sunset and sunrise where the weather is"));
+                list.push(row(&["night_light", "start"], "From", "", choice(&[("Sunset", "sunset"), ("19:00", "19:00"), ("20:00", "20:00"), ("21:00", "21:00"), ("22:00", "22:00")], &n.start)));
+                list.push(row(&["night_light", "end"], "Until", "", choice(&[("Sunrise", "sunrise"), ("06:00", "06:00"), ("07:00", "07:00"), ("08:00", "08:00")], &n.end)));
+            }
+            list
+        }
+        7 => vec![
             row(&["lock", "idle"], "Lock when idle", "Minutes without input, 0 never; Stay awake holds it off", Control::Stepper { value: c.lock.idle as i64, min: 0, max: 120, step: 5, unit: "min" }),
             row(&["lock", "before_sleep"], "Lock before sleep", "Closing the lid, or suspend from anywhere", Control::Switch(c.lock.before_sleep)),
+            row(&["lock", "fingerprint"], "Fingerprint", "Unlock with a finger too, when there's a reader fprintd knows", Control::Switch(c.lock.fingerprint)),
             row(&[], "Lock now", "", Control::Button("Lock", Action::LockNow)),
         ],
-        7 => {
+        8 => {
             let mut list = vec![
-                row(&["notifications", "timeout"], "Pop-ups stay", "Seconds, when the app doesn't say", Control::Stepper { value: c.notifications.timeout as i64, min: 2, max: 30, step: 1, unit: "s" }),
-                row(&["notifications", "max_popups"], "Pop-ups at once", "", Control::Stepper { value: c.notifications.max_popups as i64, min: 1, max: 8, step: 1, unit: "" }),
-                row(&["notifications", "battery_low"], "Battery low at", "0 never", Control::Stepper { value: c.notifications.battery_low as i64, min: 0, max: 50, step: 5, unit: "%" }),
-                row(&["notifications", "battery_critical"], "Battery critical at", "0 never", Control::Stepper { value: c.notifications.battery_critical as i64, min: 0, max: 20, step: 1, unit: "%" }),
+                section("Pop-ups", ""),
+                row(&["notifications", "timeout"], "They stay", "Seconds, when the app doesn't say", Control::Stepper { value: c.notifications.timeout as i64, min: 2, max: 30, step: 1, unit: "s" }),
+                row(&["notifications", "max_popups"], "At once", "More wait their turn", Control::Stepper { value: c.notifications.max_popups as i64, min: 1, max: 8, step: 1, unit: "" }),
+                section("Battery warnings", "At these charges; 0 turns one off"),
+                row(&["notifications", "battery_low"], "Low at", "", Control::Stepper { value: c.notifications.battery_low as i64, min: 0, max: 50, step: 5, unit: "%" }),
+                row(&["notifications", "battery_critical"], "Critical at", "", Control::Stepper { value: c.notifications.battery_critical as i64, min: 0, max: 20, step: 1, unit: "%" }),
             ];
             // Every app that has notified, and every app with a rule
             let mut apps: Vec<String> = c.notifications.apps.keys().cloned().collect();
@@ -269,6 +449,9 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
                 }
             }
             apps.sort_by_key(|a| a.to_lowercase());
+            if !apps.is_empty() {
+                list.push(section("Apps", "Each pops up, stays quietly in the notification centre, or is dropped; apps appear here once they've notified"));
+            }
             for app in apps {
                 let rule = c.notifications.apps.iter().find(|(k, _)| k.eq_ignore_ascii_case(&app)).map(|(_, r)| *r).unwrap_or_default();
                 let at = match rule {
@@ -279,18 +462,22 @@ pub fn rows(page: usize, c: &Config, model: &Model) -> Vec<Row> {
                 list.push(Row {
                     keys: vec!["notifications".into(), "apps".into(), app.clone()],
                     label: app,
-                    about: "Pop up, stay in the centre quietly, or be dropped".into(),
+                    about: String::new(),
                     control: Control::Choice(vec![("Pop up".into(), Value::Remove), ("Quiet".into(), Value::Str("silence".into())), ("Drop".into(), Value::Str("discard".into()))], Some(at)),
                 });
             }
             list
         }
-        8 => vec![
-            row(&["weather", "enabled"], "Weather", "From Open-Meteo: only the place is sent", Control::Switch(c.weather.enabled)),
-            row(&["weather", "city"], "Place", "Empty takes your time zone's city", Control::Text(c.weather.city.clone())),
-            row(&["weather", "units"], "Units", "", choice(&[("°C, km/h", "metric"), ("°F, mph", "imperial")], &c.weather.units)),
-        ],
+        9 => {
+            let mut list = vec![row(&["weather", "enabled"], "Weather", "From Open-Meteo: only the place is sent", Control::Switch(c.weather.enabled))];
+            if c.weather.enabled {
+                list.push(row(&["weather", "city"], "Place", "A city's name", Control::Text(c.weather.city.clone(), "Your time zone's city".into())));
+                list.push(row(&["weather", "units"], "Units", "", choice(&[("°C, km/h", "metric"), ("°F, mph", "imperial")], &c.weather.units)));
+            }
+            list
+        }
         _ => vec![
+            section("Focus rounds", "Work, then a break; a longer one after a few rounds"),
             row(&["timers", "focus"], "Focus", "", Control::Stepper { value: c.timers.focus as i64, min: 5, max: 120, step: 5, unit: "min" }),
             row(&["timers", "short_break"], "Short break", "", Control::Stepper { value: c.timers.short_break as i64, min: 1, max: 30, step: 1, unit: "min" }),
             row(&["timers", "long_break"], "Long break", "", Control::Stepper { value: c.timers.long_break as i64, min: 5, max: 60, step: 5, unit: "min" }),
@@ -346,18 +533,27 @@ pub struct Settings {
     pub max_scroll: f32,
     /// What's typed in the search field: the rows of every page that match, instead of a page.
     pub query: String,
+    /// The pet the Pets page shows, or its animals to add.
+    pub pet: PetPick,
 }
 
 /// The rows of every page whose name, description or page matches `query` (any case); each
 /// says which page it's on.
-pub fn search(query: &str, c: &Config, model: &Model) -> Vec<Row> {
+pub fn search(query: &str, c: &Config, model: &Model, pick: &PetPick) -> Vec<Row> {
     let query = query.trim().to_lowercase();
     let mut found = Vec::new();
     for (page, name) in PAGES.iter().enumerate() {
-        for mut row in rows(page, c, model) {
-            let haystack = format!("{} {} {}", row.label, row.about, name).to_lowercase();
+        let mut group = String::new();
+        for mut row in rows(page, c, model, pick) {
+            if let Control::Section = row.control {
+                group = row.label.clone();
+                continue;
+            }
+            // Where it is: the page, and its group there
+            let place = if group.is_empty() { name.to_string() } else { format!("{name} › {group}") };
+            let haystack = format!("{} {} {}", row.label, row.about, place).to_lowercase();
             if query.split_whitespace().all(|word| haystack.contains(word)) {
-                row.about = if row.about.is_empty() { name.to_string() } else { format!("{name} · {}", row.about) };
+                row.about = if row.about.is_empty() { place } else { format!("{place} · {}", row.about) };
                 found.push(row);
             }
         }
@@ -372,14 +568,17 @@ fn control_width(control: &Control, text: &mut Text, font: Font) -> f32 {
         Control::Switch(_) | Control::SwitchTo(..) => 44.0,
         Control::Choice(options, _) => options.iter().map(|(label, _)| pill(label, text)).sum::<f32>() + 8.0 * options.len().saturating_sub(1) as f32,
         Control::Stepper { .. } => pill("+", text) + 92.0 + pill("−", text),
-        Control::Text(_) => 240.0,
+        Control::Text(..) => 240.0,
+        Control::Section => 0.0,
         Control::Button(label, _) => pill(label, text),
+        // Always under its label, the row's whole width
+        Control::Gallery(_) => f32::MAX,
     }
 }
 
 impl Settings {
     pub fn new() -> Self {
-        Self { page: 0, editing: None, scroll: 0.0, max_scroll: 0.0, query: String::new() }
+        Self { page: 0, editing: None, scroll: 0.0, max_scroll: 0.0, query: String::new(), pet: PetPick::default() }
     }
 
     /// The app's window: the pages down a sidebar, the page's rows on a card beside them.
@@ -429,7 +628,8 @@ impl Settings {
         for (i, name) in PAGES.iter().enumerate() {
             let (iw, ih) = (side_w - 24.0, 40.0);
             let mut item = Piece::new(format!("set.page.{i}"), iw, ih);
-            let on = i == self.page;
+            // While searching no page is the one shown
+            let on = i == self.page && self.query.trim().is_empty();
             if on {
                 item.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: iw, h: ih, radius: ih / 2.0, color: t.secondary_container });
             }
@@ -457,10 +657,23 @@ impl Settings {
         let control_font = Font::new(t.text - 1.0).weight(500);
         let (_, lh) = text.measure("Ag", label_font);
         let (_, ah) = text.measure("Ag", about_font);
-        let card_index = pieces.len();
+        // Each group's rows on a card of their own (where it starts: its place among the pieces,
+        // and its top), the group's title over it
+        let mut card: Option<(usize, f32)> = None;
+        let close = |pieces: &mut Vec<Piece>, card: &mut Option<(usize, f32)>, y: &mut f32| {
+            let Some((index, card_top)) = card.take() else { return };
+            *y += 6.0;
+            let card_h = *y - card_top;
+            let mut back = Piece::new(format!("set.card.{index}"), cw, card_h);
+            back.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: cw, h: card_h, radius: t.radius, color: t.hairline() });
+            back.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: cw - 2.0, h: card_h - 2.0, radius: t.radius - 1.0, color: t.card_deep });
+            back.x = cx;
+            back.y = card_top;
+            pieces.insert(index, back);
+        };
         let top = head_h + 4.0 - self.scroll;
-        let mut y = top + 6.0;
-        let rows = if self.query.trim().is_empty() { rows(self.page, c, model) } else { search(&self.query, c, model) };
+        let mut y = top;
+        let rows = if self.query.trim().is_empty() { rows(self.page, c, model, &self.pet) } else { search(&self.query, c, model, &self.pet) };
         if rows.is_empty() {
             let words = format!("Nothing here matches “{}”", self.query.trim());
             let (nw, nh) = text.measure(&words, about_font);
@@ -471,7 +684,34 @@ impl Settings {
             pieces.push(none);
         }
         let count = rows.len();
+        let breaks: Vec<bool> = rows.iter().map(|row| matches!(row.control, Control::Section)).collect();
+        let section_font = Font::new(t.text - 2.0).weight(600).spacing(1.0);
         for (r, row) in rows.into_iter().enumerate() {
+            if let Control::Section = row.control {
+                // A group's title, in small spaced capitals, and what it's for
+                close(&mut pieces, &mut card, &mut y);
+                if r > 0 {
+                    y += 18.0;
+                }
+                let title = row.label.to_uppercase();
+                let (_, th) = text.measure(&title, section_font);
+                let about = (!row.about.is_empty()).then(|| crate::bar::Ctx::ellipsize_with(text, &row.about, about_font, cw - 8.0));
+                let head = th + about.as_ref().map_or(0.0, |_| ah + 2.0);
+                let mut group = Piece::new(format!("set.section.{r}"), cw, head);
+                group.prims.push(Prim::Text { x: 4.0, y: 0.0, text: title, font: section_font, color: t.primary });
+                if let Some(about) = about {
+                    group.prims.push(Prim::Text { x: 4.0, y: th + 2.0, text: about, font: about_font, color: t.color_soft });
+                }
+                group.x = cx;
+                group.y = y + 10.0;
+                pieces.push(group);
+                y += head + 20.0;
+                continue;
+            }
+            if card.is_none() {
+                card = Some((pieces.len(), y));
+                y += 6.0;
+            }
             // The control beside its label; when there isn't room for both, under it
             let ctrl_w = control_width(&row.control, text, control_font);
             let stacked = iw - ctrl_w - 24.0 < (iw * 0.4).min(220.0);
@@ -495,7 +735,14 @@ impl Settings {
                 }
                 _ => Vec::new(),
             };
-            let row_h = if stacked { 104.0 + 40.0 * lines.len().saturating_sub(1) as f32 } else { 66.0 };
+            // A gallery: its pictures in as many lines as they need, under the label
+            let per_line = (((iw + TILE_GAP) / (TILE.0 + TILE_GAP)).floor() as usize).max(1);
+            let gallery_top = 14.0 + lh + if row.about.is_empty() { 0.0 } else { ah } + 14.0;
+            let row_h = match &row.control {
+                Control::Gallery(tiles) => gallery_top + tiles.len().div_ceil(per_line) as f32 * (TILE.1 + TILE_GAP) + 6.0,
+                _ if stacked => 104.0 + 40.0 * lines.len().saturating_sub(1) as f32,
+                _ => 66.0,
+            };
             let label_w = if stacked { iw } else { iw - ctrl_w - 24.0 };
             let mut line = Piece::new(format!("set.row.{r}"), iw, row_h);
             let top_y = match (stacked, row.about.is_empty()) {
@@ -509,7 +756,8 @@ impl Settings {
                 let about = crate::bar::Ctx::ellipsize_with(text, &row.about, about_font, label_w);
                 line.prims.push(Prim::Text { x: 0.0, y: top_y + lh, text: about, font: about_font, color: t.color_soft });
             }
-            if r + 1 < count {
+            // A line between rows of the same card
+            if r + 1 < count && !breaks[r + 1] {
                 line.prims.push(Prim::Line { points: vec![(0.0, row_h - 0.5), (iw, row_h - 0.5)], width: 1.0, color: t.outline_variant.alpha(0.5) });
             }
             line.x = ix;
@@ -586,13 +834,14 @@ impl Settings {
                     pieces.push(v);
                     pill(&mut pieces, format!("set.minus.{r}"), "−", right - plus - 92.0, false, (value > min).then(|| Action::SetSetting(row.keys.clone(), Value::Int((value - step).max(min)))), text);
                 }
-                Control::Text(current) => {
+                Control::Text(current, placeholder) => {
                     let editing = self.editing.as_ref().filter(|(k, _)| *k == row.keys).map(|(_, typed)| typed.clone());
                     let (fw, fh) = (240.0, 34.0);
                     let mut f = Piece::new(format!("set.text.{r}"), fw, fh);
                     f.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: fw, h: fh, radius: fh / 2.0, color: if editing.is_some() { t.primary } else { t.hairline() } });
                     f.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: fw - 2.0, h: fh - 2.0, radius: fh / 2.0 - 1.0, color: t.surface });
-                    let shown = editing.clone().unwrap_or_else(|| if current.is_empty() { "Not set".into() } else { current.clone() });
+                    // Empty, it shows what's used instead, quietly
+                    let shown = editing.clone().unwrap_or_else(|| if current.is_empty() { placeholder.clone() } else { current.clone() });
                     let shown = crate::bar::Ctx::ellipsize_with(text, &shown, control_font, fw - 30.0);
                     let (sw, sh) = text.measure(&shown, control_font);
                     f.prims.push(Prim::Text { x: 14.0, y: ((fh - sh) / 2.0).round(), text: shown, font: control_font, color: if editing.is_some() || !current.is_empty() { t.color_text } else { t.color_soft } });
@@ -608,18 +857,72 @@ impl Settings {
                 Control::Button(label, action) => {
                     pill(&mut pieces, format!("set.button.{r}"), label, right, true, Some(action), text);
                 }
+                Control::Section => {}
+                Control::Gallery(tiles) => {
+                    let (tw, th) = TILE;
+                    let name_font = Font::new(t.text - 1.0).weight(500);
+                    for (n, tile) in tiles.into_iter().enumerate() {
+                        let tx = ix + (n % per_line) as f32 * (tw + TILE_GAP);
+                        let ty = y + gallery_top + (n / per_line) as f32 * (th + TILE_GAP);
+                        let mut card = Piece::new(format!("set.tile.{r}.{n}"), tw, th);
+                        if tile.on {
+                            card.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: tw, h: th, radius: 16.0, color: t.primary });
+                            card.prims.push(Prim::Rect { x: 2.0, y: 2.0, w: tw - 4.0, h: th - 4.0, radius: 14.0, color: t.secondary_container });
+                        } else {
+                            card.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: tw, h: th, radius: 16.0, color: t.hairline() });
+                            card.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: tw - 2.0, h: th - 2.0, radius: 15.0, color: t.surface });
+                        }
+                        if let Some(icon) = tile.icon {
+                            card.prims.push(Prim::Rect { x: (tw - 48.0) / 2.0, y: 26.0, w: 48.0, h: 48.0, radius: 24.0, color: if tile.on { t.primary } else { t.primary_container } });
+                            card.prims.push(Prim::Icon { x: (tw - 24.0) / 2.0, y: 38.0, size: 24.0, name: icon.into(), color: if tile.on { t.on_primary } else { t.on_primary_container } });
+                        }
+                        let ink = if tile.on { t.on_secondary_container } else { t.color_text };
+                        let label = crate::bar::Ctx::ellipsize_with(text, &tile.label, name_font, tw - 12.0);
+                        let (nw, nh) = text.measure(&label, name_font);
+                        let name_y = if tile.sub.is_empty() { th - nh - 14.0 } else { th - nh - ah - 12.0 };
+                        card.prims.push(Prim::Text { x: ((tw - nw) / 2.0).round(), y: name_y.round(), text: label, font: name_font, color: ink });
+                        if !tile.sub.is_empty() {
+                            let sub = crate::bar::Ctx::ellipsize_with(text, &tile.sub, about_font, tw - 12.0);
+                            let (sw, _) = text.measure(&sub, about_font);
+                            card.prims.push(Prim::Text { x: ((tw - sw) / 2.0).round(), y: (name_y + nh).round(), text: sub, font: about_font, color: if tile.on { ink.alpha(0.8) } else { t.color_soft } });
+                        }
+                        card.highlight = !tile.on;
+                        card.actions.left = tile.action;
+                        card.x = tx;
+                        card.y = ty;
+                        pieces.push(card);
+                        // The animal itself, sitting, its feet on the tile's floor
+                        if let Some((species, coat)) = &tile.picture {
+                            let k = 0.95;
+                            let mut picture = crate::pet::Pet::portrait(*species, coat, t);
+                            picture.key = format!("set.pic.{r}.{n}");
+                            picture.scale(k);
+                            picture.x = (tx + tw / 2.0 - crate::pet::FEET.0 * k - 8.0).round();
+                            picture.y = (ty + 90.0 - crate::pet::FEET.1 * k).round();
+                            pieces.push(picture);
+                        }
+                        if let Some(remove) = tile.remove {
+                            let size = 26.0;
+                            let mut x = Piece::new(format!("set.untile.{r}.{n}"), size, size);
+                            x.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: size, h: size, radius: size / 2.0, color: t.outline_variant });
+                            x.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: size - 2.0, h: size - 2.0, radius: size / 2.0 - 1.0, color: t.container_highest });
+                            x.prims.push(Prim::Icon { x: 6.0, y: 6.0, size: 14.0, name: "close".into(), color: t.color_text });
+                            x.label = Some("Put it away".into());
+                            x.highlight = true;
+                            x.actions.left = Some(remove);
+                            x.x = tx + tw - size - 6.0;
+                            x.y = ty + 6.0;
+                            pieces.push(x);
+                        }
+                    }
+                }
             }
             y += row_h;
         }
-        let card_h = if count == 0 { 0.0 } else { y + 6.0 - top };
-        let mut card = Piece::new("set.card", cw, card_h);
-        card.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: cw, h: card_h, radius: t.radius, color: t.hairline() });
-        card.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: cw - 2.0, h: card_h - 2.0, radius: t.radius - 1.0, color: t.card_deep });
-        card.x = cx;
-        card.y = top;
-        pieces.insert(card_index, card);
-        // How far it can scroll: the card's foot 32 px off the window's
-        self.max_scroll = (card_h + head_h + 4.0 + 32.0 - h).max(0.0);
+        close(&mut pieces, &mut card, &mut y);
+        // How far it can scroll: the last card's foot 32 px off the window's
+        let content_h = y - top;
+        self.max_scroll = (content_h + head_h + 4.0 + 32.0 - h).max(0.0);
         if self.scroll > self.max_scroll {
             self.scroll = self.max_scroll;
         }
@@ -628,7 +931,7 @@ impl Settings {
             let mut under = Piece::new("set.hint", hw, hh);
             under.prims.push(Prim::Text { x: 0.0, y: 0.0, text: hint.into(), font: about_font, color: t.color_soft });
             under.x = cx + cw - hw;
-            under.y = top + card_h + 10.0;
+            under.y = y + 10.0;
             pieces.push(under);
         }
 
@@ -660,6 +963,52 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn labels(rows: &[Row]) -> Vec<String> {
+        rows.iter().map(|r| r.label.clone()).collect()
+    }
+
+    #[test]
+    fn rows_that_do_nothing_are_left_out() {
+        let model = Model::default();
+        let pick = PetPick::default();
+        let mut c = Config::default();
+        // Night light off: only its switch; on a schedule: its hours too
+        c.night_light.mode = "off".into();
+        assert_eq!(labels(&rows(6, &c, &model, &pick)), ["Night light"]);
+        c.night_light.mode = "schedule".into();
+        let shown = labels(&rows(6, &c, &model, &pick));
+        assert!(shown.contains(&"Warmth".to_string()) && shown.contains(&"From".to_string()), "{shown:?}");
+        // Moving wallpapers off: none of their knobs
+        c.wallpaper.live = false;
+        assert!(!labels(&rows(2, &c, &model, &pick)).contains(&"Frame rate".to_string()));
+        // A widget's own settings only while it's on the desktop
+        c.widgets.show = vec!["clock".into()];
+        assert!(!labels(&rows(3, &c, &model, &pick)).contains(&"Folder".to_string()));
+        c.widgets.show.push("photos".into());
+        assert!(labels(&rows(3, &c, &model, &pick)).contains(&"Folder".to_string()));
+    }
+
+    #[test]
+    fn the_day_button_goes_after_the_clock() {
+        let mut c = Config::default();
+        c.layout.center = vec!["resources".into(), "clock".into(), "media".into()];
+        let on = day_button(&c);
+        assert!(matches!(&on.control, Control::SwitchTo(false, Value::List(next)) if next == &["resources", "clock", "day", "media"]));
+        c.layout.center = vec!["clock".into(), "day".into()];
+        assert!(matches!(&day_button(&c).control, Control::SwitchTo(true, Value::List(next)) if next == &["clock"]));
+    }
+
+    #[test]
+    fn search_finds_settings_and_says_where_they_are() {
+        let model = Model::default();
+        let found = search("corner", &Config::default(), &model, &PetPick::default());
+        assert!(!found.is_empty());
+        // Groups' titles aren't results; each result says its page and group
+        assert!(found.iter().all(|r| !matches!(r.control, Control::Section)));
+        let day = found.iter().find(|r| r.label == "Day panel").expect("the day panel's corner");
+        assert!(day.about.starts_with("Bar › Corners"), "{}", day.about);
+    }
 
     #[test]
     fn writes_without_losing_comments() {

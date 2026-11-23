@@ -31,9 +31,10 @@ seconds = false
 date = "%A, %B %-d"       # strftime; "%a %-d %b" is shorter, "" hides the date
 
 [layout]
-# Modules: pages, clock, weather, media, resources, tray, tools, status, launcher (an apps button)
+# Modules: pages, clock (opens the calendar), day (your day: timers, to-do and notes, with how
+# many tasks are left), weather, media, resources, tray, tools, status, launcher (an apps button)
 left = ["launcher", "pages"]
-center = ["resources", "clock", "weather", "media"]
+center = ["resources", "clock", "day", "weather", "media"]
 right = ["tools", "tray", "status"]
 
 # The status items, in order: notifications (needs swaync), keyboard (shown with two
@@ -153,23 +154,25 @@ widgets = "tinted"
 apps = []                 # any of kitty, foot, alacritty, gtk
 
 [pet]
-# A companion living on the screen above your windows (clicks pass through all but it): a "cat"
-# or a "fox" along the foot of the screen, a "bird" flying about and perching on the bar; or
-# "none". It has energy, hunger and wants attention: it naps, asks to be fed, comes to find you.
-# It sleeps after a minute without input (and stretches and yawns when you're back), gets the
-# zoomies when the machine is busy, sways to music, perks up at notifications, and stalks and
-# pounces on the pointer over the desktop and the bar. Click it to stroke it (it purrs); drag
-# it to pick it up; right-click for food, a ball, another animal, or to put it away.
-animal = "none"
-coat = ""                 # cat: tabby, ginger, black, white, tuxedo, siamese; fox: red, arctic;
-                          # bird: sparrow, robin, bluebird; any: wallpaper. Empty: the first.
-sounds = true             # it meows (yips, chirps) now and then and purrs; never in do-not-disturb
+# Companions living on the screen above your windows (clicks pass through all but them), as many
+# as you like: a "cat", a "fox", a "panda", a "tiger" or a "lion" along the foot of the screen,
+# a "bird" flying about and perching on the bar. Each has energy, hunger and wants attention: it
+# naps, asks to be fed, comes to find you. It sleeps after a minute without input (and stretches
+# and yawns when you're back), gets the zoomies when the machine is busy, sways to music, perks
+# up at notifications, and stalks and pounces on the pointer over the desktop and the bar; they
+# greet, chase and nap beside each other. Click one to stroke it; drag it to pick it up;
+# right-click for food, a ball, another animal, another pet, or to put it away.
+# Each is "animal" or "animal:coat". Coats: cat: tabby, ginger, black, white, tuxedo, siamese;
+# fox: red, arctic; bird: sparrow, robin, bluebird; panda: giant, brown; tiger: bengal, white;
+# lion: lion, lioness; any: wallpaper. No coat: the first.
+pets = []                 # e.g. ["cat:ginger", "fox", "panda", "lion:lioness"]
+sounds = true             # meows, yips, chirps, roars, bleats now and then; never in do-not-disturb
 volume = 40               # percent
 size = 100                # percent, 70 to 140
-friend = "none"           # a second pet: cat, fox or bird; they greet, chase and nap together
-friend_coat = ""
 bed = -1                  # their bed's place, in thousandths of the screen's width; -1 none
-                          # (the pet's menu puts one down: "Give them a bed")
+                          # (a pet's menu puts one down: "Give them a bed")
+# Older configs name two pets instead: animal = "cat", coat = "", friend = "fox", friend_coat = "".
+# They're read only while there's no `pets` line.
 
 [lock]
 idle = 10                 # minutes without input before the screen locks; 0 never
@@ -241,7 +244,7 @@ rounds = 4                # a long break after this many rounds
 [widgets]
 # On the desktop, under your windows; drag one to move it (it stays where you leave it).
 # Right-click a widget or the wallpaper for the desktop's menu; "Arrange widgets" there (or
-# `asterism msg widgets edit`) adds, takes off, moves and resizes (the wheel) them all.
+# `asterism msg widgets edit`) adds, takes off, moves and resizes (by their sides and corners) them all.
 # "visualizer": bars that move with the music while something plays, in a card; "edge": the
 # same along the foot of the screen (both listen to the speakers through parec or pw-record,
 # only then). "photos": a picture from a folder; "note": a sticky note.

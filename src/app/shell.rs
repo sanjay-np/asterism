@@ -1078,8 +1078,16 @@ impl App {
                 "nobed" => self.pet_bed(false),
                 "next" => self.pet_action(0, true),
                 "away" => self.pet_action(0, false),
-                "friend next" => self.pet_action(1, true),
-                _ => self.pet_action(1, false),
+                "add" => self.pet_add(""),
+                other => match other.split_once(' ') {
+                    Some(("add", entry)) => self.pet_add(entry),
+                    Some((n, what)) => {
+                        if let Ok(n) = n.parse::<usize>() {
+                            self.pet_action(n.saturating_sub(1), what == "next");
+                        }
+                    }
+                    None => {}
+                },
             },
             Request::Record { audio } => self.send(if self.model.recording.is_some() { Command::RecordStop } else { Command::RecordStart { audio } }),
             Request::Control(open) => self.toggle_control(open),
@@ -1331,6 +1339,11 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
             settings.page = query.parse().unwrap_or(0);
             if let Some(words) = query.strip_prefix("search:") {
                 settings.query = words.to_string();
+            }
+            // "pets:N" shows the Nth pet (from 0), "pets:add" the animals to add
+            if let Some(which) = query.strip_prefix("pets:") {
+                settings.page = crate::settings::PETS_PAGE;
+                settings.pet = crate::settings::PetPick { selected: which.parse().unwrap_or(0), adding: which == "add" };
             }
             let pieces = settings.build(config, model, theme, &mut painter.text, w, h);
             (Surf::offscreen(w, h, scale), pieces, Some(theme.surface))

@@ -59,7 +59,7 @@ impl Kind {
 pub struct Chance(u64);
 
 impl Chance {
-    #[cfg(test)]
+    /// The same chances every time from the same seed (tests, pictures that mustn't change).
     pub fn new(seed: u64) -> Self {
         Self(seed)
     }

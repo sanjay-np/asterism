@@ -713,18 +713,27 @@ pub fn desktop(ctx: &mut Ctx<'_>, widget: Option<&str>) -> Built {
     let mut col = Col { ctx, pieces: Vec::new(), y: PAD - 6.0, w: w - PAD * 2.0 };
     let then = |action: Action| Some(Action::Both(Box::new(action), Box::new(Action::CloseMenu)));
     if let Some(kind) = widget {
-        col.label(crate::widgets::name(kind));
+        // A pet's menu says which animal it is
+        let pet = kind.starts_with("pet").then(|| {
+            let slot: usize = kind.strip_prefix("pet.").and_then(|n| n.parse().ok()).unwrap_or(0);
+            let entries = col.ctx.config.pet.entries();
+            let animal = entries.get(slot).map(|e| crate::config::pet_entry(e).0).unwrap_or_default();
+            crate::pet::Species::from_name(&animal).map_or("Your pet".to_string(), |s| format!("Your {}", s.name()))
+        });
+        col.label(pet.as_deref().unwrap_or(crate::widgets::name(kind)));
         match kind {
             "note" => col.row("desk.note", Some("lyrics"), "Write the note", "", Mark::None, true, then(Action::EditNote)),
             "photos" => col.row("desk.photo", Some("skip-forward"), "Next picture", "", Mark::None, true, then(Action::NextPhoto)),
-            "pet" | "pet.friend" => {
-                let slot = u8::from(kind == "pet.friend");
+            _ if kind.starts_with("pet") => {
+                let slot: usize = kind.strip_prefix("pet.").and_then(|n| n.parse().ok()).unwrap_or(0);
                 let bed = col.ctx.config.pet.bed >= 0;
                 col.row("desk.pet.feed", Some("coffee"), "Feed them", "", Mark::None, true, then(Action::PetFeed));
                 col.row("desk.pet.play", Some("play"), "Play with a ball", "", Mark::None, true, then(Action::PetPlay));
                 col.row("desk.pet.yarn", Some("play"), "Play with yarn", "", Mark::None, true, then(Action::PetYarn));
                 col.row("desk.pet.bed", Some("sleep"), if bed { "Take the bed away" } else { "Give them a bed" }, "", Mark::None, true, then(Action::PetBed(!bed)));
                 col.row("desk.pet.next", Some("refresh"), "Another animal", "", Mark::None, true, then(Action::PetNext(slot)));
+                col.row("desk.pet.add", Some("add"), "Another pet", "", Mark::None, true, then(Action::PetAdd(String::new())));
+                col.row("desk.pet.settings", Some("paw"), "Its coat, sounds, size…", "", Mark::None, true, then(Action::PetSettings(slot)));
                 col.row("desk.pet.away", Some("close"), "Put it away", "", Mark::None, true, then(Action::PetAway(slot)));
             }
             _ => {}
@@ -1317,11 +1326,6 @@ pub fn day(ctx: &mut Ctx<'_>, room: f32) -> Built {
     header.prims.push(Prim::Text { x: 0.0, y: 0.0, text: name, font: big, color: t.color_text });
     header.prims.push(Prim::Text { x: 1.0, y: bh - 4.0, text: date, font: small, color: t.color_soft });
     col.push(header, bh + sh + 10.0);
-    col.separator();
-    col.gap(6.0);
-
-    // The month
-    calendar(&mut col);
     col.separator();
     col.gap(4.0);
 

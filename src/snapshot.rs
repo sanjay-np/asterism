@@ -281,7 +281,7 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
             let mut pieces = Vec::new();
             for _ in 0..3 {
                 let mut view = crate::widgets::View { model: &model, theme: &theme, text: &mut painter.text, now: chrono::Local::now(), lyrics: config.widgets.lyrics, requested: &requested, requests: Vec::new(), settings: &config.widgets, photo_step: 0 };
-                pieces = crate::widgets::arrange(&config.widgets.show, &mut view, &places, (dw, dh), editing);
+                pieces = crate::widgets::arrange(&config.widgets.show, &mut view, &places, (dw, dh), editing, &mut HashMap::new());
                 let requests = std::mem::take(&mut view.requests);
                 for request in requests {
                     match request {
@@ -298,7 +298,7 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
             if editing {
                 let top = if theme.on_top { theme.reserve() + 20.0 } else { 28.0 };
                 let active = options.hover.as_deref().and_then(|k| k.strip_prefix("widget.")).map(str::to_string);
-                pieces = crate::widgets::editor(pieces, &config.widgets.show, &places, active.as_deref(), &theme, &mut painter.text, dw, top);
+                pieces = crate::widgets::editor(pieces, &config.widgets.show, None, active.as_deref(), &theme, &mut painter.text, dw, top);
                 background = Some(theme.surface.alpha(0.6));
             }
             let mut desk = Surf::offscreen(dw, dh, scale);

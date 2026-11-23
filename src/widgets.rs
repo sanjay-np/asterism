@@ -1,8 +1,8 @@
 //! Desktop widgets: a clock, the weather, what's playing (with its lyrics, line by line), a
 //! visualizer of what the speakers play (in a card, or along the screen's foot), a month, the
 //! machine, a photo frame and a sticky note, on the wallpaper under your windows. Where each one
-//! stands, and how big it is, is kept in ~/.local/state/asterism/widgets.json (as shares of the
-//! screen), so a drag survives restarts and a different screen size.
+//! stands (as shares of the screen) and how big it is (a box, in pixels) is kept in
+//! ~/.local/state/asterism/widgets.json, so a drag survives restarts and a different screen size.
 //! The editor (`editor`) lays its own pieces over them: a frame and a remove button on each, and
 //! a strip at the top to add the ones not shown.
 
@@ -16,9 +16,12 @@ use std::path::PathBuf;
 /// Every kind there is, in the order they're offered.
 pub const KINDS: [&str; 9] = ["clock", "weather", "media", "visualizer", "edge", "calendar", "system", "photos", "note"];
 
-/// How much smaller or bigger a widget can be made.
+/// The scales an older places file may give (from when the wheel sized widgets); a box has none.
 pub const SMALLEST: f32 = 0.6;
 pub const BIGGEST: f32 = 2.0;
+
+/// The least a resized widget can be either way, so its handles can still be caught.
+pub const LEAST_SIDE: f32 = 32.0;
 
 /// A kind's name, as the settings and the editor say it.
 pub fn name(kind: &str) -> &'static str {
@@ -31,7 +34,7 @@ pub fn name(kind: &str) -> &'static str {
         "calendar" => "Calendar",
         "photos" => "Photo frame",
         "note" => "Sticky note",
-        "pet" | "pet.friend" => "Your pet",
+        k if k.starts_with("pet") => "Your pet",
         _ => "The machine",
     }
 }
@@ -68,28 +71,68 @@ pub fn default_place(kind: &str) -> (f32, f32) {
     }
 }
 
-/// Where a widget stands (shares of the screen) and how big it is (1 as built).
+/// Where a widget stands (shares of the screen) and how big it is: the box it was resized to, in
+/// logical pixels, or (never resized, or from an older file) a plain scale of it as built.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Place {
     pub x: f32,
     pub y: f32,
     pub scale: f32,
+    pub size: Option<(f32, f32)>,
 }
 
 /// A widget's place: as saved, else where it starts out.
 pub fn place_of(places: &HashMap<String, Place>, kind: &str) -> Place {
     places.get(kind).copied().unwrap_or_else(|| {
         let (x, y) = default_place(kind);
-        Place { x, y, scale: 1.0 }
+        Place { x, y, scale: 1.0, size: None }
     })
 }
 
-/// Places from their file: `[x, y, scale]` each (older files have no scale).
+/// Places from their file: `[x, y, scale, w, h]` each (older files stop after the scale, or
+/// before it).
 pub fn read_places(text: &str) -> HashMap<String, Place> {
     let raw: HashMap<String, Vec<f32>> = serde_json::from_str(text).unwrap_or_default();
     raw.into_iter()
-        .filter_map(|(kind, v)| Some((kind, Place { x: *v.first()?, y: *v.get(1)?, scale: v.get(2).copied().unwrap_or(1.0).clamp(SMALLEST, BIGGEST) })))
+        .filter_map(|(kind, v)| {
+            let size = match (v.get(3), v.get(4)) {
+                (Some(w), Some(h)) => Some((w.max(1.0), h.max(1.0))),
+                _ => None,
+            };
+            Some((kind, Place { x: *v.first()?, y: *v.get(1)?, scale: v.get(2).copied().unwrap_or(1.0).clamp(SMALLEST, BIGGEST), size }))
+        })
         .collect()
+}
+
+/// Whether a kind's card takes whatever box it's given; the clock (bare words) only grows and
+/// shrinks, and the bars along the screen's foot aren't sized at all.
+pub fn fills(kind: &str) -> bool {
+    !matches!(kind, "clock" | "edge")
+}
+
+/// How a widget came out last time it was laid out: its size as built (with no box asked) and
+/// the scale it was drawn at. Resizing starts from these.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fit {
+    pub natural: (f32, f32),
+    pub scale: f32,
+}
+
+/// A box of `size` for a widget that is `natural` as built: the largest scale at which it still
+/// fits (no limit either way), and the room, before scaling, that it lays itself out in (never
+/// less than it needs as built). So widening a card gives its words room, and only growing it
+/// both ways makes them bigger.
+pub fn fit_box(natural: (f32, f32), size: (f32, f32)) -> (f32, (f32, f32)) {
+    let k = (size.0 / natural.0.max(1.0)).min(size.1 / natural.1.max(1.0)).max(0.01);
+    (k, ((size.0 / k).max(natural.0), (size.1 / k).max(natural.1)))
+}
+
+/// A size as built, grown to the room asked for.
+fn grow(built: (f32, f32), room: Option<(f32, f32)>) -> (f32, f32) {
+    match room {
+        Some((w, h)) => (built.0.max(w), built.1.max(h)),
+        None => built,
+    }
 }
 
 pub fn load_places() -> HashMap<String, Place> {
@@ -101,10 +144,24 @@ pub fn save_places(places: &HashMap<String, Place>) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let raw: HashMap<&String, [f32; 3]> = places.iter().map(|(kind, p)| (kind, [p.x, p.y, p.scale])).collect();
-    if let Ok(text) = serde_json::to_string_pretty(&raw) {
+    if let Some(text) = write_places(places) {
         let _ = std::fs::write(path, text);
     }
+}
+
+/// Places as their file has them (`read_places` reads it back).
+pub fn write_places(places: &HashMap<String, Place>) -> Option<String> {
+    let raw: HashMap<&String, Vec<f32>> = places
+        .iter()
+        .map(|(kind, p)| {
+            let mut v = vec![p.x, p.y, p.scale];
+            if let Some((w, h)) = p.size {
+                v.extend([w.round(), h.round()]);
+            }
+            (kind, v)
+        })
+        .collect();
+    serde_json::to_string_pretty(&raw).ok()
 }
 
 /// Synced lyrics ("[01:23.45] a line") as times and lines, in order.
@@ -257,14 +314,15 @@ pub fn bars(piece: &mut Piece, t: &Theme, levels: &[f32], x: f32, width: f32, mi
 
 /// A widget with nothing to show yet (nothing playing, the weather not known), as the editor
 /// draws it: the size it will be, its name, and when it shows.
-pub fn placeholder(kind: &str, t: &Theme, text: &mut Text) -> Piece {
-    let (w, h) = match kind {
+pub fn placeholder(kind: &str, t: &Theme, text: &mut Text, room: Option<(f32, f32)>) -> Piece {
+    let built = match kind {
         "media" => (400.0, 112.0),
         "visualizer" => (420.0, 128.0),
         "weather" => (300.0, 116.0),
         "photos" => (336.0, 216.0),
         _ => (292.0, 112.0),
     };
+    let (w, h) = grow(built, room);
     let mut piece = Piece::new(format!("widget.{kind}"), w, h);
     card(&mut piece, t, w, h);
     if kind == "visualizer" {
@@ -291,8 +349,9 @@ pub fn placeholder(kind: &str, t: &Theme, text: &mut Text) -> Piece {
 }
 
 /// The widgets in `show`, placed on a desktop of `size` by their saved shares (kept 16 px in
-/// from every edge). In the editor, ones with nothing to show stand in as placeholders.
-pub fn arrange(show: &[String], v: &mut View<'_>, places: &HashMap<String, Place>, size: (f32, f32), editing: bool) -> Vec<Piece> {
+/// from every edge) and sized to their boxes; how each came out goes into `fits`. In the
+/// editor, ones with nothing to show stand in as placeholders.
+pub fn arrange(show: &[String], v: &mut View<'_>, places: &HashMap<String, Place>, size: (f32, f32), editing: bool, fits: &mut HashMap<String, Fit>) -> Vec<Piece> {
     let mut pieces = Vec::new();
     for kind in show {
         // Along the screen's foot, the whole width: it isn't placed, nor made bigger
@@ -300,16 +359,33 @@ pub fn arrange(show: &[String], v: &mut View<'_>, places: &HashMap<String, Place
             pieces.extend(edge(v, size, editing));
             continue;
         }
-        let piece = match build(kind, v) {
+        let made = |v: &mut View<'_>, room: Option<(f32, f32)>| match build(kind, v, room) {
             Some(piece) => Some(piece),
-            None if editing && KINDS.contains(&kind.as_str()) => Some(placeholder(kind, v.theme, v.text)),
+            None if editing && KINDS.contains(&kind.as_str()) => Some(placeholder(kind, v.theme, v.text, room)),
             None => None,
         };
-        let Some(mut piece) = piece else { continue };
+        let Some(built) = made(v, None) else { continue };
         let place = place_of(places, kind);
-        piece.scale(place.scale);
-        piece.x = (place.x * size.0).clamp(16.0, (size.0 - piece.w - 16.0).max(16.0)).round();
-        piece.y = (place.y * size.1).clamp(16.0, (size.1 - piece.h - 16.0).max(16.0)).round();
+        let natural = (built.w, built.h);
+        // A box asked for: built again in the room it leaves (what that asks to be fetched was
+        // asked the first time already)
+        let (mut piece, scale) = match place.size {
+            Some(want) => {
+                let (scale, room) = fit_box(natural, want);
+                let asked = v.requests.len();
+                let piece = if fills(kind) { made(v, Some(room)).unwrap_or(built) } else { built };
+                v.requests.truncate(asked);
+                (piece, scale)
+            }
+            None => (built, place.scale),
+        };
+        fits.insert(kind.clone(), Fit { natural, scale });
+        piece.scale(scale);
+        // Kept 16 px in from the edges, less when it's grown too big for that (up to the edges)
+        let inset = |room: f32, side: f32| 16.0f32.min(((room - side) / 2.0).max(0.0));
+        let (ix, iy) = (inset(size.0, piece.w), inset(size.1, piece.h));
+        piece.x = (place.x * size.0).clamp(ix, (size.0 - piece.w - ix).max(ix)).round();
+        piece.y = (place.y * size.1).clamp(iy, (size.1 - piece.h - iy).max(iy)).round();
         // A widget catches the pointer: to be moved, and for its menu on a right click
         piece.blocks = true;
         pieces.push(piece);
@@ -365,34 +441,84 @@ fn outline(x: f32, y: f32, w: f32, h: f32, r: f32, width: f32, color: crate::the
     Prim::Line { points, width, color }
 }
 
+/// The handles a widget is resized by, as (name, which way its edges move: -1 the left or top
+/// one, 1 the right or bottom one). Cards have all four sides and three corners (the fourth
+/// holds the ×); the clock, which only grows and shrinks, the corners alone.
+pub fn handles(kind: &str) -> &'static [(&'static str, (i8, i8))] {
+    const ALL: [(&str, (i8, i8)); 7] = [("n", (0, -1)), ("s", (0, 1)), ("w", (-1, 0)), ("e", (1, 0)), ("nw", (-1, -1)), ("sw", (-1, 1)), ("se", (1, 1))];
+    match kind {
+        "edge" => &[],
+        _ if fills(kind) => &ALL,
+        _ => &ALL[4..],
+    }
+}
+
+/// Which handle a piece is (`edit.size.KIND.DIR`): its widget and the way it moves.
+pub fn handle_of(key: &str) -> Option<(&str, (i8, i8))> {
+    let (kind, dir) = key.strip_prefix("edit.size.")?.rsplit_once('.')?;
+    handles(kind).iter().find(|(name, _)| *name == dir).map(|(_, way)| (kind, *way))
+}
+
 /// The editor over the widgets (already placed): a frame round each, lit when pointed at or
-/// carried; a button to take it off; and a strip at `top` to put the others on, and to finish.
+/// carried, with handles on its sides and corners to resize it (its size shown while
+/// `resizing`); a button to take it off; and a strip at `top` to put the others on, and to finish.
 #[allow(clippy::too_many_arguments)]
-pub fn editor(widgets: Vec<Piece>, show: &[String], places: &HashMap<String, Place>, active: Option<&str>, t: &Theme, text: &mut Text, w: f32, top: f32) -> Vec<Piece> {
+pub fn editor(widgets: Vec<Piece>, show: &[String], resizing: Option<&str>, active: Option<&str>, t: &Theme, text: &mut Text, w: f32, top: f32) -> Vec<Piece> {
     let mut frames = Vec::new();
+    let mut grips = Vec::new();
     let mut removes = Vec::new();
     for widget in &widgets {
         let Some(kind) = widget.key.strip_prefix("widget.") else { continue };
         let lit = active == Some(kind);
-        let mut frame = Piece::new(format!("edit.frame.{kind}"), widget.w + 16.0, widget.h + 16.0);
+        let (fw, fh) = (widget.w + 16.0, widget.h + 16.0);
+        let mut frame = Piece::new(format!("edit.frame.{kind}"), fw, fh);
+        // As round as the frames are, unless it's been made too small for that
+        let r = 26.0f32.min(fw.min(fh) / 2.0 - 1.0);
         if lit {
-            frame.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: frame.w, h: frame.h, radius: 26.0, color: t.primary.alpha(0.10) });
+            frame.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: fw, h: fh, radius: r, color: t.primary.alpha(0.10) });
         }
-        frame.prims.push(outline(0.75, 0.75, frame.w - 1.5, frame.h - 1.5, 26.0, 1.5, if lit { t.primary } else { t.outline.alpha(0.8) }));
-        // Its size, while it's pointed at and not as built
-        let scale = place_of(places, kind).scale;
-        if lit && (scale - 1.0).abs() > 0.01 {
-            let label = format!("{:.0}%", scale * 100.0);
+        frame.prims.push(outline(0.75, 0.75, fw - 1.5, fh - 1.5, r, 1.5, if lit { t.primary } else { t.outline.alpha(0.8) }));
+        frame.pad = 2.0;
+        // Where each handle is drawn and caught: a short bar on the middle of each side, a dot
+        // where the corner's curve is (the frame's radius in from the corner, at 45°)
+        let into = r * (1.0 - std::f32::consts::FRAC_1_SQRT_2);
+        // Small, the sides' handles shrink and the corners' take the rest
+        let (side_w, side_h) = ((fw - 44.0).max(0.0), (fh - 44.0).max(0.0));
+        for &(dir, (dx, dy)) in handles(kind) {
+            let (hx, hy, hw, hh) = match (dx, dy) {
+                (0, _) => ((fw - side_w) / 2.0, if dy < 0 { -6.0 } else { fh - 6.0 }, side_w, 12.0),
+                (_, 0) => (if dx < 0 { -6.0 } else { fw - 6.0 }, (fh - side_h) / 2.0, 12.0, side_h),
+                _ => (if dx < 0 { into - 11.0 } else { fw - into - 11.0 }, if dy < 0 { into - 11.0 } else { fh - into - 11.0 }, 22.0, 22.0),
+            };
+            if lit {
+                let (cx, cy) = (hx + hw / 2.0, hy + hh / 2.0);
+                let (gw, gh) = match (dx, dy) {
+                    (0, _) => (28.0, 5.0),
+                    (_, 0) => (5.0, 28.0),
+                    _ => (9.0, 9.0),
+                };
+                frame.prims.push(Prim::Rect { x: cx - gw / 2.0, y: cy - gh / 2.0, w: gw, h: gh, radius: gw.min(gh) / 2.0, color: t.primary });
+                frame.pad = 6.0;
+            }
+            let mut grip = Piece::new(format!("edit.size.{kind}.{dir}"), hw, hh);
+            grip.x = widget.x - 8.0 + hx;
+            grip.y = widget.y - 8.0 + hy;
+            grip.blocks = true;
+            grips.push(grip);
+        }
+        // Its size while it's being resized
+        if resizing == Some(kind) {
+            let label = format!("{:.0} × {:.0}", widget.w, widget.h);
             let font = Font::new(t.text - 2.0).weight(600).tnum();
             let (lw, lh) = text.measure(&label, font);
             let (bw, bh) = (lw + 16.0, lh + 4.0);
-            frame.prims.push(Prim::Rect { x: 14.0, y: frame.h - bh / 2.0 - 1.0, w: bw, h: bh, radius: bh / 2.0, color: t.primary });
-            frame.prims.push(Prim::Text { x: 22.0, y: frame.h - bh / 2.0 + 1.0, text: label, font, color: t.on_primary });
-            frame.pad = bh / 2.0 + 2.0;
+            let x = ((fw - bw) / 2.0).round();
+            frame.prims.push(Prim::Rect { x, y: fh + 10.0, w: bw, h: bh, radius: bh / 2.0, color: t.primary });
+            frame.prims.push(Prim::Text { x: x + 8.0, y: fh + 12.0, text: label, font, color: t.on_primary });
+            frame.pad = bh + 14.0;
         }
         frame.x = widget.x - 8.0;
         frame.y = widget.y - 8.0;
-        frame.pad = 2.0;
         frames.push(frame);
 
         let size = 30.0;
@@ -452,7 +578,7 @@ pub fn editor(widgets: Vec<Piece>, show: &[String], places: &HashMap<String, Pla
     done.y = top + pad;
     pieces_after.push(done);
 
-    let hint = "Drag a widget to move it · scroll on it to make it bigger or smaller · Esc or Done when finished";
+    let hint = "Drag a widget to move it · drag its sides or corners to resize it · Esc or Done when finished";
     let hint_font = Font::new(t.text - 2.0);
     let (hw, hh) = text.measure(hint, hint_font);
     // On a quiet pill, so it reads over a widget too
@@ -464,19 +590,20 @@ pub fn editor(widgets: Vec<Piece>, show: &[String], places: &HashMap<String, Pla
     under.y = top + ch + 12.0;
     pieces_after.push(under);
 
-    frames.into_iter().chain(widgets).chain(removes).chain(pieces_after).collect()
+    frames.into_iter().chain(widgets).chain(grips).chain(removes).chain(pieces_after).collect()
 }
 
-/// One widget, at the origin; `None` when it has nothing to show (nothing playing, say).
-pub fn build(kind: &str, v: &mut View<'_>) -> Option<Piece> {
-    let mut piece = build_widget(kind, v)?;
+/// One widget, at the origin, laid out in `room` when given (never smaller than as built);
+/// `None` when it has nothing to show (nothing playing, say).
+pub fn build(kind: &str, v: &mut View<'_>, room: Option<(f32, f32)>) -> Option<Piece> {
+    let mut piece = build_widget(kind, v, room)?;
     if v.theme.widget_shadow {
         shadow_words(&mut piece);
     }
     Some(piece)
 }
 
-fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
+fn build_widget(kind: &str, v: &mut View<'_>, room: Option<(f32, f32)>) -> Option<Piece> {
     let t = v.theme;
     let m = v.model;
     let key = format!("widget.{kind}");
@@ -499,24 +626,46 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
             if !w.available {
                 return None;
             }
-            let (cw, ch) = (300.0, 116.0);
+            let (cw, ch) = grow((300.0, 116.0), room);
             let mut piece = Piece::new(key, cw, ch);
             card(&mut piece, t, cw, ch);
-            piece.prims.push(Prim::Icon { x: 20.0, y: 22.0, size: 44.0, name: crate::weather::icon(w.code, w.is_day).into(), color: t.primary });
+            // Tall enough, the days ahead go along the foot; else today sits in the middle
+            const DAYS_H: f32 = 84.0;
+            let ahead = &w.days[w.days.len().min(1)..];
+            let columns = if ch >= 116.0 + DAYS_H - 12.0 { (((cw - 24.0) / 64.0).floor() as usize).min(ahead.len()) } else { 0 };
+            let oy = if columns > 0 { 0.0 } else { ((ch - 116.0) / 2.0).round() };
+            piece.prims.push(Prim::Icon { x: 20.0, y: oy + 22.0, size: 44.0, name: crate::weather::icon(w.code, w.is_day).into(), color: t.primary });
             let big = Font::new(34.0).weight(400).tnum();
             let temp = format!("{:.0}°", w.temperature);
             let (tw, th) = v.text.measure(&temp, big);
-            piece.prims.push(Prim::Text { x: 80.0, y: 16.0, text: temp, font: big, color: t.widget_strong });
+            piece.prims.push(Prim::Text { x: 80.0, y: oy + 16.0, text: temp, font: big, color: t.widget_strong });
             let what = Font::new(t.text + 1.0).weight(500);
-            piece.prims.push(Prim::Text { x: 88.0 + tw, y: 22.0, text: crate::weather::describe(w.code).into(), font: what, color: t.color_text });
+            let describe = crate::bar::Ctx::ellipsize_with(v.text, crate::weather::describe(w.code), what, cw - 108.0 - tw);
+            piece.prims.push(Prim::Text { x: 88.0 + tw, y: oy + 22.0, text: describe, font: what, color: t.color_text });
             let small = Font::new(t.text - 1.0);
-            piece.prims.push(Prim::Text { x: 88.0 + tw, y: 42.0, text: format!("feels like {:.0}°", w.feels_like), font: small, color: t.color_soft });
+            piece.prims.push(Prim::Text { x: 88.0 + tw, y: oy + 42.0, text: format!("feels like {:.0}°", w.feels_like), font: small, color: t.color_soft });
             let mut line = w.place.clone();
             if let Some(today) = w.days.first() {
                 line = format!("{}{}H {:.0}°  L {:.0}°", line, if line.is_empty() { "" } else { " · " }, today.max, today.min);
             }
             let line = crate::bar::Ctx::ellipsize_with(v.text, &line, small, cw - 40.0);
-            piece.prims.push(Prim::Text { x: 20.0, y: 16.0 + th + 14.0, text: line, font: small, color: t.color_soft });
+            piece.prims.push(Prim::Text { x: 20.0, y: oy + 16.0 + th + 14.0, text: line, font: small, color: t.color_soft });
+            if columns > 0 {
+                let col = (cw - 24.0) / columns as f32;
+                let top = ch - DAYS_H;
+                let day_font = Font::new(t.text - 2.0).weight(500);
+                let figures = Font::new(t.text - 2.0).tnum();
+                for (i, day) in ahead.iter().take(columns).enumerate() {
+                    let mid = 12.0 + col * (i as f32 + 0.5);
+                    let name = day.date.format("%a").to_string();
+                    let (nw, _) = v.text.measure(&name, day_font);
+                    piece.prims.push(Prim::Text { x: (mid - nw / 2.0).round(), y: top, text: name, font: day_font, color: t.widget_soft });
+                    piece.prims.push(Prim::Icon { x: (mid - 12.0).round(), y: top + 22.0, size: 24.0, name: crate::weather::icon(day.code, true).into(), color: t.primary });
+                    let range = format!("{:.0}° {:.0}°", day.max, day.min);
+                    let (rw, _) = v.text.measure(&range, figures);
+                    piece.prims.push(Prim::Text { x: (mid - rw / 2.0).round(), y: top + 52.0, text: range, font: figures, color: t.color_text });
+                }
+            }
             Some(piece)
         }
         "media" => {
@@ -533,17 +682,19 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
             let seconds = player.position_now() as f64 / 1_000_000.0;
             let (now_line, next_line) = lines.map(|l| lyric_at(l, seconds)).unwrap_or((None, None));
             let has_words = lines.is_some_and(|l| !l.is_empty());
-            let (cw, ch) = (400.0, if has_words { 172.0 } else { 112.0 });
+            let (cw, ch) = grow((400.0, if has_words { 172.0 } else { 112.0 }), room);
             let mut piece = Piece::new(key, cw, ch);
             card(&mut piece, t, cw, ch);
+            // The song at the top (in the middle when there are no words), the words at the foot
+            let oy = if has_words { 0.0 } else { ((ch - 112.0) / 2.0).round() };
             match m.art.get(&player.art_url) {
-                Some(image) => piece.prims.push(Prim::Image { x: 18.0, y: 18.0, w: 64.0, h: 64.0, image: image.clone(), tint: None, radius: 12.0 }),
+                Some(image) => piece.prims.push(Prim::Image { x: 18.0, y: oy + 18.0, w: 64.0, h: 64.0, image: image.clone(), tint: None, radius: 12.0 }),
                 None => {
                     if !player.art_url.is_empty() && !v.requested.contains(&player.art_url) {
                         v.requests.push(Command::FetchArt(player.art_url.clone()));
                     }
-                    piece.prims.push(Prim::Rect { x: 18.0, y: 18.0, w: 64.0, h: 64.0, radius: 12.0, color: t.container_high });
-                    piece.prims.push(Prim::Icon { x: 36.0, y: 36.0, size: 28.0, name: "music".into(), color: t.widget_strong });
+                    piece.prims.push(Prim::Rect { x: 18.0, y: oy + 18.0, w: 64.0, h: 64.0, radius: 12.0, color: t.container_high });
+                    piece.prims.push(Prim::Icon { x: 36.0, y: oy + 36.0, size: 28.0, name: "music".into(), color: t.widget_strong });
                 }
             }
             let title_font = Font::new(t.text + 2.0).weight(500);
@@ -551,12 +702,12 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
             let room = cw - 100.0 - 18.0;
             let title = crate::bar::Ctx::ellipsize_with(v.text, &player.title, title_font, room);
             let artist = crate::bar::Ctx::ellipsize_with(v.text, &player.artist, small, room);
-            piece.prims.push(Prim::Text { x: 98.0, y: 22.0, text: title, font: title_font, color: t.widget_strong });
-            piece.prims.push(Prim::Text { x: 98.0, y: 46.0, text: artist, font: small, color: t.color_soft });
+            piece.prims.push(Prim::Text { x: 98.0, y: oy + 22.0, text: title, font: title_font, color: t.widget_strong });
+            piece.prims.push(Prim::Text { x: 98.0, y: oy + 46.0, text: artist, font: small, color: t.color_soft });
             if player.length > 0 {
                 let done = (player.position_now() as f32 / player.length as f32).clamp(0.0, 1.0);
-                piece.prims.push(Prim::Rect { x: 98.0, y: 74.0, w: room, h: 4.0, radius: 2.0, color: t.outline_variant });
-                piece.prims.push(Prim::Rect { x: 98.0, y: 74.0, w: (room * done).max(4.0), h: 4.0, radius: 2.0, color: t.primary });
+                piece.prims.push(Prim::Rect { x: 98.0, y: oy + 74.0, w: room, h: 4.0, radius: 2.0, color: t.outline_variant });
+                piece.prims.push(Prim::Rect { x: 98.0, y: oy + 74.0, w: (room * done).max(4.0), h: 4.0, radius: 2.0, color: t.primary });
             }
             if has_words {
                 // The line now, bright; the next one, quiet
@@ -564,8 +715,8 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
                 let coming = Font::new(t.text);
                 let now_text = crate::bar::Ctx::ellipsize_with(v.text, now_line.unwrap_or("♪"), sung, cw - 36.0);
                 let next_text = crate::bar::Ctx::ellipsize_with(v.text, next_line.unwrap_or(""), coming, cw - 36.0);
-                piece.prims.push(Prim::Text { x: 18.0, y: 100.0, text: now_text, font: sung, color: t.primary });
-                piece.prims.push(Prim::Text { x: 18.0, y: 128.0, text: next_text, font: coming, color: t.color_soft });
+                piece.prims.push(Prim::Text { x: 18.0, y: ch - 72.0, text: now_text, font: sung, color: t.primary });
+                piece.prims.push(Prim::Text { x: 18.0, y: ch - 44.0, text: next_text, font: coming, color: t.color_soft });
             }
             Some(piece)
         }
@@ -575,7 +726,7 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
             if !player.playing {
                 return None;
             }
-            let (cw, ch) = (420.0, 128.0);
+            let (cw, ch) = grow((420.0, 128.0), room);
             let mut piece = Piece::new(key, cw, ch);
             card(&mut piece, t, cw, ch);
             bars(&mut piece, t, &m.spectrum, 24.0, cw - 48.0, ch / 2.0, (ch - 40.0) / 2.0);
@@ -591,7 +742,7 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
             if list.is_none() && !v.requested.contains(&format!("photos:{}", dir.display())) {
                 v.requests.push(Command::ListPhotos(dir.clone()));
             }
-            let (cw, ch) = (336.0, 216.0);
+            let (cw, ch) = grow((336.0, 216.0), room);
             let (iw, ih) = (cw - 16.0, ch - 16.0);
             let mut piece = Piece::new(key, cw, ch);
             card(&mut piece, t, cw, ch);
@@ -623,24 +774,26 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
         }
         "note" => {
             // In the accent's container colour, like a slip of paper; empty, it says how to write one
-            let cw = 260.0;
+            let (cw, room_h) = grow((260.0, 0.0), room);
             let font = Font::new(t.text + 1.0);
             let (_, lh) = v.text.measure("Ag", font);
+            // As many lines as the paper holds (a long note shows its start)
+            let most = (((room_h - 40.0) / lh).floor() as usize).max(14);
             let written = v.settings.note.trim();
             let mut lines = Vec::new();
             for paragraph in written.lines() {
                 if paragraph.trim().is_empty() {
                     lines.push(String::new());
                 } else {
-                    lines.extend(v.text.wrap(paragraph, font, cw - 40.0, 14));
+                    lines.extend(v.text.wrap(paragraph, font, cw - 40.0, most));
                 }
             }
-            lines.truncate(14);
+            lines.truncate(most);
             let empty = lines.is_empty();
             if empty {
                 lines = v.text.wrap("Right-click to write a note", font, cw - 40.0, 2);
             }
-            let ch = 40.0 + lines.len() as f32 * lh;
+            let ch = (40.0 + lines.len() as f32 * lh).max(room_h);
             let mut piece = Piece::new(key, cw, ch);
             // A paper of its own colour, as see-through as the other cards are asked to be
             let paper = (0.92 * t.widget_opacity / 0.6).min(0.92);
@@ -656,9 +809,11 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
             Some(piece)
         }
         "calendar" => {
-            let (cw, ch) = (292.0, 268.0);
+            let (cw, ch) = grow((292.0, 268.0), room);
             let mut piece = Piece::new(key, cw, ch);
             card(&mut piece, t, cw, ch);
+            // Six weeks' rows share the height below the weekdays' names
+            let row_h = ((ch - 88.0) / 6.0).max(30.0);
             let today = v.now.date_naive();
             let head = Font::new(t.text + 2.0).weight(500);
             piece.prims.push(Prim::Text { x: 20.0, y: 16.0, text: v.now.format("%B %Y").to_string(), font: head, color: t.widget_strong });
@@ -676,14 +831,15 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
             for d in 0..days_in_month {
                 let slot = offset + d;
                 let (col, row) = ((slot % 7) as f32, (slot / 7) as f32);
-                let (x, y) = (20.0 + col * cell, 74.0 + row * 30.0);
+                let (x, y) = (20.0 + col * cell, 74.0 + row * row_h);
+                let mid = (y + row_h / 2.0).round();
                 let label = (d + 1).to_string();
                 let (lw, lh) = v.text.measure(&label, day_font);
                 let is_today = d + 1 == today.day() as i64;
                 if is_today {
-                    piece.prims.push(Prim::Rect { x: x + cell / 2.0 - 13.0, y: y + 15.0 - 13.0, w: 26.0, h: 26.0, radius: 13.0, color: t.primary });
+                    piece.prims.push(Prim::Rect { x: x + cell / 2.0 - 13.0, y: mid - 13.0, w: 26.0, h: 26.0, radius: 13.0, color: t.primary });
                 }
-                piece.prims.push(Prim::Text { x: x + (cell - lw) / 2.0, y: y + 15.0 - lh / 2.0, text: label, font: day_font, color: if is_today { t.on_primary } else { t.color_text } });
+                piece.prims.push(Prim::Text { x: x + (cell - lw) / 2.0, y: mid - lh / 2.0, text: label, font: day_font, color: if is_today { t.on_primary } else { t.color_text } });
             }
             Some(piece)
         }
@@ -697,13 +853,15 @@ fn build_widget(kind: &str, v: &mut View<'_>) -> Option<Piece> {
                 let share = *used as f32 / (*total).max(1) as f32;
                 rows.push((if point == "/" { "Disk" } else { point.as_str() }, share, format!("{:.0}%", share * 100.0)));
             }
-            let (cw, ch) = (292.0, 32.0 + rows.len() as f32 * 40.0);
+            let (cw, ch) = grow((292.0, 32.0 + rows.len() as f32 * 40.0), room);
+            // The rows share the height, each in the middle of its share
+            let step = ((ch - 32.0) / rows.len() as f32).max(40.0);
             let mut piece = Piece::new(key, cw, ch);
             card(&mut piece, t, cw, ch);
             let font = Font::new(t.text - 1.0).weight(500);
             let figure = Font::new(t.text - 1.0).tnum();
             for (i, (name, value, label)) in rows.into_iter().enumerate() {
-                let y = 20.0 + i as f32 * 40.0;
+                let y = (20.0 + i as f32 * step + (step - 40.0) / 2.0).round();
                 piece.prims.push(Prim::Text { x: 20.0, y, text: name.to_string(), font, color: t.widget_strong });
                 let (lw, _) = v.text.measure(&label, figure);
                 piece.prims.push(Prim::Text { x: cw - 20.0 - lw, y, text: label, font: figure, color: t.color_soft });
@@ -740,11 +898,52 @@ mod tests {
     #[test]
     fn reads_places_old_and_new() {
         let places = read_places(r#"{"clock": [0.1, 0.2], "media": [0.3, 0.4, 1.5], "note": [0.5, 0.5, 9.0], "odd": [0.1]}"#);
-        assert_eq!(places["clock"], Place { x: 0.1, y: 0.2, scale: 1.0 });
+        assert_eq!(places["clock"], Place { x: 0.1, y: 0.2, scale: 1.0, size: None });
         assert_eq!(places["media"].scale, 1.5);
         assert_eq!(places["note"].scale, BIGGEST);
         assert!(!places.contains_key("odd"));
-        assert_eq!(place_of(&places, "calendar"), Place { x: 0.78, y: 0.10, scale: 1.0 });
+        assert_eq!(place_of(&places, "calendar"), Place { x: 0.78, y: 0.10, scale: 1.0, size: None });
+    }
+
+    #[test]
+    fn a_resized_place_keeps_its_box() {
+        let mut places = HashMap::new();
+        places.insert("media".to_string(), Place { x: 0.25, y: 0.5, scale: 1.0, size: Some((520.4, 180.0)) });
+        places.insert("clock".to_string(), Place { x: 0.5, y: 0.5, scale: 1.2, size: None });
+        let back = read_places(&write_places(&places).unwrap());
+        assert_eq!(back["media"].size, Some((520.0, 180.0)));
+        assert_eq!(back["clock"], places["clock"]);
+    }
+
+    #[test]
+    fn a_box_gives_room_before_it_makes_things_bigger() {
+        let natural = (300.0, 100.0);
+        // Wider only: the same size of words, with more room beside them
+        assert_eq!(fit_box(natural, (600.0, 100.0)), (1.0, (600.0, 100.0)));
+        // Twice as big both ways: twice the size, the room as built
+        assert_eq!(fit_box(natural, (600.0, 200.0)), (2.0, (300.0, 100.0)));
+        // Wide and a little taller: grown by the smaller share, the rest is room
+        let (k, room) = fit_box(natural, (900.0, 150.0));
+        assert_eq!(k, 1.5);
+        assert_eq!(room, (600.0, 100.0));
+        // Never past the limits, and never less room than it needs
+        // No limits: as small or as big as the box, still laid out in at least its own room
+        let (k, room) = fit_box(natural, (30.0, 10.0));
+        assert!((k - 0.1).abs() < 0.001);
+        assert_eq!(room, natural);
+        assert_eq!(fit_box(natural, (3000.0, 1000.0)).0, 10.0);
+    }
+
+    #[test]
+    fn handles_say_which_way_they_pull() {
+        assert_eq!(handle_of("edit.size.media.se"), Some(("media", (1, 1))));
+        assert_eq!(handle_of("edit.size.note.w"), Some(("note", (-1, 0))));
+        // The clock only by its corners; the ×'s corner has none; the edge bars none at all
+        assert_eq!(handle_of("edit.size.clock.e"), None);
+        assert_eq!(handle_of("edit.size.clock.nw"), Some(("clock", (-1, -1))));
+        assert_eq!(handle_of("edit.size.media.ne"), None);
+        assert!(handles("edge").is_empty());
+        assert_eq!(handle_of("widget.media"), None);
     }
 
     #[test]

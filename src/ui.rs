@@ -180,6 +180,10 @@ pub enum Action {
     ToggleSettings,
     CloseSettings,
     SettingsPage(usize),
+    /// On the Pets page: show this pet (by its place in the list), or the animals to add one.
+    SettingsPet(Option<usize>),
+    /// Settings open on the Pets page, showing this pet (from its right-click menu).
+    PetSettings(usize),
     SettingsEdit(Vec<String>),
     SetSetting(Vec<String>, crate::settings::Value),
     /// The window this piece is in follows the pointer (a window's title area).
@@ -199,10 +203,12 @@ pub enum Action {
     DayToggle(usize),
     DayRemove(usize),
     DayClearDone,
-    /// A pet (0 the first, 1 the second): another animal, put away. For them both: a bowl of
-    /// food, a ball or yarn to play with, a bed (put down or taken away).
-    PetNext(u8),
-    PetAway(u8),
+    /// A pet (by its place in `[pet] pets`): another animal, put away; another pet (this animal,
+    /// "panda" or "panda:brown"; empty: one not out yet). For them all: a bowl of food, a ball or
+    /// yarn to play with, a bed (put down or taken away).
+    PetNext(usize),
+    PetAway(usize),
+    PetAdd(String),
     PetFeed,
     PetPlay,
     PetYarn,

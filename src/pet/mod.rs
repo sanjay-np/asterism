@@ -1,5 +1,5 @@
-//! A pet living on the screen: a cat or a fox along its foot, or a bird flying about and
-//! perching on the bar. It behaves like one: it has energy (it naps when tired), hunger (fed
+//! A pet living on the screen: a cat, a fox, a panda, a tiger or a lion along its foot, or a
+//! bird flying about and perching on the bar (as many as you like, and they see each other). It behaves like one: it has energy (it naps when tired), hunger (fed
 //! from a bowl, it asks when it's empty) and wants attention (ignored a while, it comes to find
 //! you); it stretches and yawns when it wakes, loafs, grooms, stalks the pointer and pounces,
 //! gets the zoomies when the machine is busy, bats a ball about, purrs when petted, dangles when
@@ -28,16 +28,18 @@ pub enum Species {
     Cat,
     Fox,
     Bird,
+    Panda,
+    Tiger,
+    Lion,
 }
 
 impl Species {
+    /// Every animal there is, in the order they're offered.
+    pub const ALL: [Species; 6] = [Species::Cat, Species::Fox, Species::Bird, Species::Panda, Species::Tiger, Species::Lion];
+
     pub fn from_name(name: &str) -> Option<Species> {
-        match name.trim().to_lowercase().as_str() {
-            "cat" => Some(Species::Cat),
-            "fox" => Some(Species::Fox),
-            "bird" => Some(Species::Bird),
-            _ => None,
-        }
+        let name = name.trim().to_lowercase();
+        Species::ALL.into_iter().find(|s| s.name() == name)
     }
 
     pub fn name(self) -> &'static str {
@@ -45,21 +47,74 @@ impl Species {
             Species::Cat => "cat",
             Species::Fox => "fox",
             Species::Bird => "bird",
+            Species::Panda => "panda",
+            Species::Tiger => "tiger",
+            Species::Lion => "lion",
+        }
+    }
+
+    /// Its name as the menus and settings say it.
+    pub fn title(self) -> &'static str {
+        match self {
+            Species::Cat => "Cat",
+            Species::Fox => "Fox",
+            Species::Bird => "Bird",
+            Species::Panda => "Panda",
+            Species::Tiger => "Tiger",
+            Species::Lion => "Lion",
         }
     }
 
     /// The next one, for "Another animal".
     pub fn next(self) -> Species {
+        let at = Species::ALL.iter().position(|s| *s == self).unwrap_or(0);
+        Species::ALL[(at + 1) % Species::ALL.len()]
+    }
+
+    /// How big it's drawn beside a cat of the same size setting: a songbird true to size would
+    /// be a speck, and the big cats and the panda are bigger (though not true to size either).
+    pub fn scale(self) -> f32 {
         match self {
-            Species::Cat => Species::Fox,
-            Species::Fox => Species::Bird,
-            Species::Bird => Species::Cat,
+            Species::Bird => 1.35,
+            Species::Panda | Species::Tiger | Species::Lion => 1.25,
+            _ => 1.0,
         }
+    }
+
+    /// How quickly it goes: a panda ambles.
+    fn pace(self) -> f32 {
+        if self == Species::Panda { 0.7 } else { 1.0 }
     }
 
     fn grounded(self) -> bool {
         self != Species::Bird
     }
+}
+
+/// A pet's place in the list and its animal.
+pub type Placed = (usize, Species);
+
+/// The pets on the screen against the ones the list wants, each as (its place in the list, its
+/// animal): what becomes of every one shown (its new place and animal, or None: it goes) and
+/// the entries left over, to be made. A pet stays itself where it can: first one in the same
+/// place as the same animal, then the same animal from another place (one before it was taken
+/// out), then the same place as another animal ("Another animal").
+pub fn match_pets(shown: &[Placed], wanted: &[Placed]) -> (Vec<Option<Placed>>, Vec<Placed>) {
+    let mut fates: Vec<Option<Placed>> = vec![None; shown.len()];
+    let mut left: Vec<Option<Placed>> = wanted.iter().copied().map(Some).collect();
+    type Same = dyn Fn(Placed, Placed) -> bool;
+    let passes: [&Same; 3] = [&|a, b| a == b, &|a, b| a.1 == b.1, &|a, b| a.0 == b.0];
+    for same in passes {
+        for (i, pet) in shown.iter().enumerate() {
+            if fates[i].is_some() {
+                continue;
+            }
+            if let Some(entry) = left.iter_mut().find(|e| e.is_some_and(|e| same(*pet, e))) {
+                fates[i] = entry.take();
+            }
+        }
+    }
+    (fates, left.into_iter().flatten().collect())
 }
 
 /// What it says: a call (meow), hello or thanks (a trill), contentment (a purr), or a complaint.
@@ -97,6 +152,77 @@ pub enum Act {
     Fly,
     Hop,
     Peck,
+}
+
+/// A small movement on top of what it's doing, the kind that makes an animal look alive
+/// rather than posed: a look over its shoulder, up at a sound, down at a smell; an ear flicked,
+/// the tail tip flicked, its weight shifted, its head tilted.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Gesture {
+    LookBack,
+    LookUp,
+    Sniff,
+    EarFlick,
+    TailFlick,
+    Shift,
+    Tilt,
+}
+
+/// A gesture under way: how far in, how long it takes, which way (for a tilt or a shift).
+#[derive(Clone, Copy, Debug)]
+struct Doing {
+    what: Gesture,
+    at: f32,
+    length: f32,
+    side: f32,
+}
+
+impl Doing {
+    /// How much of it there is now: in, held, out, eased (a flick is quick in, slower out).
+    fn amount(&self) -> f32 {
+        let u = (self.at / self.length).clamp(0.0, 1.0);
+        let (rise, fall) = match self.what {
+            Gesture::EarFlick | Gesture::TailFlick => (0.2, 0.6),
+            _ => (0.3, 0.35),
+        };
+        let smooth = |k: f32| k * k * (3.0 - 2.0 * k);
+        if u < rise { smooth(u / rise) } else if u > 1.0 - fall { smooth((1.0 - u) / fall) } else { 1.0 }
+    }
+
+    /// Its offsets on a pose (`bird`: in the bird's smaller frame).
+    fn apply(&self, r: &mut Rig, bird: bool) {
+        let k = self.amount();
+        let s = if bird { 0.4 } else { 1.0 };
+        match self.what {
+            Gesture::LookBack => {
+                // The head swung back over the shoulder
+                r.head.0 -= 9.0 * s * k;
+                r.head.1 -= 1.5 * s * k;
+                r.tilt -= 0.25 * k;
+            }
+            Gesture::LookUp => {
+                r.head.1 -= 3.5 * s * k;
+                r.tilt -= 0.4 * k;
+                r.ears = r.ears.max(0.85 + 0.15 * k);
+            }
+            Gesture::Sniff => {
+                r.head.0 += 2.5 * s * k;
+                r.head.1 += 6.0 * s * k;
+                r.tilt += 0.5 * k;
+            }
+            Gesture::EarFlick => r.ears -= 0.45 * k,
+            Gesture::TailFlick => {
+                r.curl += 0.3 * k * self.side;
+                r.tail -= 0.25 * k;
+            }
+            Gesture::Shift => {
+                r.hip.0 += 1.6 * s * k * self.side;
+                r.shoulder.1 += 0.8 * s * k;
+                r.head.0 += 1.0 * s * k * self.side;
+            }
+            Gesture::Tilt => r.tilt += 0.32 * k * self.side,
+        }
+    }
 }
 
 /// What happened in a moment, for the app.
@@ -156,6 +282,22 @@ pub struct Pet {
     vy: f32,
     /// 1 faces right, −1 left.
     pub facing: f32,
+    /// How it's drawn turned: follows `facing` through a moment of facing you, so a turn is a
+    /// turn and not a flip.
+    turn: f32,
+    /// How fast it's going now (it speeds up and slows down rather than starting and stopping
+    /// dead), and how brisk this trip is.
+    speed: f32,
+    trip_pace: f32,
+    /// A pause on the way somewhere: seconds left of it.
+    pause: f32,
+    /// A small movement under way, and when the next one comes.
+    doing: Option<Doing>,
+    next_gesture: f32,
+    /// The pose has arrived (nothing moving toward another), or is far from it (going into a new
+    /// one, which wants every frame).
+    settled: bool,
+    changing: bool,
     pub act: Act,
     /// Seconds left of what it's doing.
     left: f32,
@@ -212,6 +354,17 @@ fn words(species: Species, mood: Mood, pick: usize) -> (Voice, &'static str) {
         (Species::Fox, Mood::Complain) => (Voice::Yip, pick_of(&["Yiiip!", "Ack!"])),
         (Species::Fox, _) => (Voice::Yip, pick_of(&["Yip!", "Yip yip!", "Yip?"])),
         (Species::Bird, _) => (Voice::Chirp, pick_of(&["Tweet!", "Chirp chirp!", "Pip?", "Tsip!"])),
+        (Species::Panda, Mood::Call) => (Voice::Bleat, pick_of(&["Mehh!", "Baa-ah?", "Mehhh"])),
+        (Species::Panda, Mood::Hello) => (Voice::Bleat, pick_of(&["Eep!", "Meh?"])),
+        (Species::Panda, Mood::Content) => (Voice::Bleat, pick_of(&["Mmm…", "Munch…"])),
+        (Species::Panda, Mood::Complain) => (Voice::Growl, pick_of(&["Hnngh!", "Grr!"])),
+        (Species::Tiger, Mood::Call) => (Voice::Roar, pick_of(&["Rrraawr!", "ROAR!", "Aoorr!"])),
+        (Species::Tiger, Mood::Hello | Mood::Content) => (Voice::Chuff, pick_of(&["Prff-prff!", "Pff-pff…"])),
+        (Species::Tiger, Mood::Complain) => (Voice::Growl, pick_of(&["Grrr!", "Grrrowl!"])),
+        (Species::Lion, Mood::Call) => (Voice::Roar, pick_of(&["ROAR!", "Rrroar!", "Hoo-ROAR!"])),
+        (Species::Lion, Mood::Hello) => (Voice::Chuff, pick_of(&["Mrrf!", "Hmf!"])),
+        (Species::Lion, Mood::Content) => (Voice::Chuff, pick_of(&["Hmmf…", "Mmrf…"])),
+        (Species::Lion, Mood::Complain) => (Voice::Growl, pick_of(&["Grrr!", "Grrraah!"])),
     }
 }
 
@@ -227,6 +380,14 @@ impl Pet {
             vx: 0.0,
             vy: 0.0,
             facing: -1.0,
+            turn: -1.0,
+            speed: 0.0,
+            trip_pace: 1.0,
+            pause: 0.0,
+            doing: None,
+            next_gesture: 2.5 + 3.0 * chance.unit(),
+            settled: true,
+            changing: false,
             act,
             left: 2.0,
             target: (x, y),
@@ -271,6 +432,7 @@ impl Pet {
             .map(|(i, act)| {
                 let mut pet = Pet::new(species, 0.0, 0.0, Chance::from_clock());
                 pet.facing = 1.0;
+                pet.turn = 1.0;
                 pet.act = *act;
                 pet.clock = 0.4 * i as f32;
                 pet.rig = pose(species, *act, 0.15 + 0.1 * i as f32, pet.clock, None);
@@ -366,13 +528,23 @@ impl Pet {
     /// a second while it sits (breathing, a tail tip), fewer asleep, fewer still when you're
     /// away. A frame costs most of a millisecond, so this is most of what the pet costs.
     pub fn delay(&self) -> std::time::Duration {
-        let calm = self.heart <= 0.0 && self.purr <= 0.0;
-        let ms = match self.act {
-            Act::Sleep if self.away => 500,
-            Act::Sleep => 200,
-            Act::Sit | Act::Loaf | Act::Lie | Act::Groom | Act::Stand | Act::Eat | Act::Peck if calm => 83,
-            Act::Walk | Act::Hop => 50,
-            _ => 33,
+        // Still and settled it's drawn seldom; going into a new pose or turning, every frame; a
+        // small gesture or the last of a settling, in between
+        let still = matches!(self.act, Act::Sit | Act::Loaf | Act::Lie | Act::Groom | Act::Stand | Act::Eat | Act::Peck | Act::Sleep);
+        let quiet = self.heart <= 0.0 && self.purr <= 0.0;
+        let ms = if !still || self.changing || self.turn.abs() < 0.999 || !quiet {
+            33
+        } else if self.doing.is_some() {
+            50
+        } else if !self.settled && !matches!(self.act, Act::Groom | Act::Eat | Act::Peck) {
+            // (Grooming and eating go on moving by their own clock: they keep their pace)
+            66
+        } else {
+            match self.act {
+                Act::Sleep if self.away => 500,
+                Act::Sleep => 200,
+                _ => 83,
+            }
         };
         std::time::Duration::from_millis(ms)
     }
@@ -451,7 +623,16 @@ impl Pet {
         } else {
             self.clock
         };
-        let mut target = pose(self.species, self.act, self.stride, self.frame_clock, world.beat);
+        // Stopped for a moment on the way: standing, looking about
+        let posed = if self.pause > 0.0 && self.act == Act::Walk { Act::Stand } else { self.act };
+        let mut target = pose(self.species, posed, self.stride, self.frame_clock, world.beat);
+        self.gestures(dt);
+        if let Some(doing) = &self.doing {
+            doing.apply(&mut target, self.species == Species::Bird);
+        }
+        // Turning round takes a moment (a fifth of a second, end to end)
+        let full = dt / 0.2 * 2.0;
+        self.turn += (self.facing - self.turn).clamp(-full, full);
         if self.alert > 0.0 {
             target.ears = 1.0;
         }
@@ -461,11 +642,18 @@ impl Pet {
         if self.blinking > 0.0 {
             target.eyes = 0.0;
         }
-        let k = 1.0 - (-dt * 10.0).exp();
+        // Into a new pose the head leads, the body follows and the tail comes last, not all at
+        // once like a puppet; small movements within a pose settle evenly (and so stop)
+        let rate = |r: f32| 1.0 - (-dt * r).exp();
         let moving = matches!(self.act, Act::Walk | Act::Run | Act::Pounce | Act::Fly | Act::Hop);
-        self.rig = self.rig.lerp(&target, k, if moving { 1.0 } else { 1.0 - (-dt * 14.0).exp() });
+        let changing = self.rig.distance(&target) > 1.5;
+        self.changing = changing;
+        let (head, body, tail) = if changing { (13.0, 8.0, 4.5) } else { (11.0, 11.0, 11.0) };
+        let rates = draw::Rates { head: rate(head), body: rate(body), tail: rate(tail), feet: if moving { 1.0 } else { rate(14.0) } };
+        self.rig = self.rig.lerp(&target, &rates);
         // Close enough is there: a pose that has arrived stops changing
-        if self.rig.distance(&target) < 0.08 {
+        self.settled = self.rig.distance(&target) < 0.08;
+        if self.settled {
             self.rig = target;
         }
         std::mem::take(&mut self.events)
@@ -615,11 +803,62 @@ impl Pet {
         let _ = dt;
     }
 
-    /// Off somewhere, walking, running or flying.
+    /// Off somewhere, walking, running or flying (each trip at its own pace).
     fn go(&mut self, act: Act, x: f32, y: f32) {
+        if !matches!(self.act, Act::Walk | Act::Run) {
+            self.trip_pace = 0.85 + 0.3 * self.chance.unit();
+        }
         self.act = act;
         self.target = (x, y);
         self.left = 20.0;
+    }
+
+    /// Now and then, while it's still (or stopped on its way), a small movement: which, by
+    /// what it's doing; one at a time, a few seconds apart, never on a beat.
+    fn gestures(&mut self, dt: f32) {
+        if let Some(doing) = &mut self.doing {
+            doing.at += dt;
+            if doing.at >= doing.length {
+                self.doing = None;
+            }
+            return;
+        }
+        let still = matches!(self.act, Act::Sit | Act::Stand | Act::Loaf | Act::Lie) || (self.act == Act::Walk && self.pause > 0.0);
+        if !still {
+            return;
+        }
+        self.next_gesture -= dt;
+        if self.next_gesture > 0.0 {
+            return;
+        }
+        self.next_gesture = 1.5 + 4.5 * self.chance.unit();
+        let lying = matches!(self.act, Act::Loaf | Act::Lie);
+        let roll = self.chance.unit();
+        let what = if self.species == Species::Bird {
+            [Gesture::LookBack, Gesture::Tilt, Gesture::TailFlick, Gesture::LookUp][(roll * 4.0) as usize % 4]
+        } else if lying {
+            // Lying down: mostly ears, tail and a look about
+            [Gesture::EarFlick, Gesture::TailFlick, Gesture::LookUp, Gesture::Tilt, Gesture::EarFlick][(roll * 5.0) as usize % 5]
+        } else {
+            let standing = self.act != Act::Sit;
+            match (roll * 9.0) as usize {
+                0 => Gesture::LookBack,
+                1 => Gesture::LookUp,
+                2 if standing => Gesture::Sniff,
+                2 | 3 => Gesture::EarFlick,
+                4 | 5 => Gesture::TailFlick,
+                6 => Gesture::Shift,
+                _ => Gesture::Tilt,
+            }
+        };
+        let length = match what {
+            Gesture::EarFlick => 0.35,
+            Gesture::TailFlick => 0.55 + 0.2 * self.chance.unit(),
+            Gesture::LookBack | Gesture::Sniff => 1.2 + 1.0 * self.chance.unit(),
+            _ => 0.9 + 0.9 * self.chance.unit(),
+        };
+        let side = if self.chance.unit() < 0.5 { -1.0 } else { 1.0 };
+        self.doing = Some(Doing { what, at: 0.0, length, side });
     }
 
     /// Movement for what it's doing.
@@ -643,23 +882,49 @@ impl Pet {
                 }
             }
             Act::Walk | Act::Run => {
-                let speed = match (self.act, fast) {
-                    (Act::Run, _) => 200.0,
-                    (_, true) => 120.0,
-                    _ => 42.0,
-                };
+                let running = self.act == Act::Run;
+                let top = self.species.pace()
+                    * self.trip_pace
+                    * match (self.act, fast) {
+                        (Act::Run, _) => 200.0,
+                        (_, true) => 120.0,
+                        _ => 42.0,
+                    };
                 let dx = self.target.0 - self.x;
-                if dx.abs() < 3.0 {
+                if dx.abs() < 1.5 {
+                    self.speed = 0.0;
+                    self.pause = 0.0;
                     (self.act, self.left) = self.after.take().unwrap_or((Act::Stand, 1.0 + 2.0 * self.chance.unit()));
+                    // Arrived: a look about, as often as not
+                    if self.doing.is_none() && self.chance.unit() < 0.5 {
+                        self.next_gesture = 0.3;
+                    }
                 } else {
-                    self.facing = dx.signum();
-                    let step = (speed * dt).min(dx.abs());
+                    // The other way: it slows and turns round first
+                    if dx.signum() != self.facing {
+                        self.facing = dx.signum();
+                        self.speed *= 0.25;
+                    }
+                    // Now and then on a longer walk it stops a moment to look about or sniff
+                    self.pause = (self.pause - dt).max(0.0);
+                    if !running && self.pause <= 0.0 && dx.abs() > 150.0 && self.chance.unit() < dt * 0.12 {
+                        self.pause = 0.8 + 1.4 * self.chance.unit();
+                        self.next_gesture = 0.15;
+                    }
+                    // Up to its pace, and slowing to stop just where it's going
+                    let (speed_up, brake) = if running { (650.0, 520.0) } else { (150.0, 120.0) };
+                    let can_stop = (2.0 * brake * dx.abs()).sqrt();
+                    let want = if self.pause > 0.0 { 0.0 } else { top.min(can_stop.max(8.0)) };
+                    self.speed = if want > self.speed { (self.speed + speed_up * dt).min(want) } else { (self.speed - brake * 1.6 * dt).max(want) };
+                    let step = (self.speed * dt).min(dx.abs());
                     self.x += step * self.facing;
                     // Legs go round once every ~34 pixels walking, ~60 running (a longer reach)
-                    self.stride += step / if self.act == Act::Run { 60.0 } else { 34.0 };
+                    self.stride += step / if running { 60.0 } else { 34.0 };
                 }
                 self.y = world.floor;
-                self.left -= dt;
+                if self.pause <= 0.0 {
+                    self.left -= dt;
+                }
             }
             Act::Crouch => {
                 self.left -= dt;
@@ -848,7 +1113,11 @@ impl Pet {
         (self.act, self.left) = if r < 0.22 {
             (Act::Sit, 4.0 + 6.0 * self.chance.unit())
         } else if r < 0.46 {
-            self.target = (anywhere, world.floor);
+            // Mostly a stroll nearby; now and then across the screen
+            let side = if self.chance.unit() < 0.5 { -1.0 } else { 1.0 };
+            let near = (self.x + side * (80.0 + 340.0 * self.chance.unit())).clamp(60.0, (w - 60.0).max(60.0));
+            self.target = (if self.chance.unit() < 0.25 { anywhere } else { near }, world.floor);
+            self.trip_pace = 0.85 + 0.3 * self.chance.unit();
             (Act::Walk, 30.0)
         } else if r < 0.58 {
             (Act::Loaf, 8.0 + 10.0 * self.chance.unit())
@@ -879,11 +1148,25 @@ impl Pet {
         }
     }
 
+    /// The animal sitting (a bird perched) and looking out, in its coat: a 240×180 piece with
+    /// its feet at `FEET`, for the settings' pictures.
+    pub fn portrait(species: Species, coat: &str, t: &Theme) -> Piece {
+        let mut pet = Pet::new(species, 0.0, 0.0, Chance::new(7));
+        pet.facing = 1.0;
+        pet.turn = 1.0;
+        pet.act = if species.grounded() { Act::Sit } else { Act::Stand };
+        pet.rig = pose(species, pet.act, 0.0, 0.0, None);
+        pet.look = (0.5, 0.15);
+        pet.draw(t, &draw::coat(species, coat, t), 1.0, 0.0)
+    }
+
     /// Its picture on its surface, with what's round it.
     pub fn draw(&self, t: &Theme, coat: &draw::Coat, size: f32, floor: f32) -> Piece {
         let mut piece = Piece::new("pet", W, H);
         // A songbird drawn true to size next to a cat would be a speck
-        let fr = Frame { feet: FEET, f: self.facing, s: if self.species == Species::Bird { size * 1.35 } else { size } };
+        // Mid-turn it's drawn narrower, as if turned toward you, never quite edge-on
+        let f = self.turn.signum() * (0.22 + 0.78 * self.turn.abs());
+        let fr = Frame { feet: FEET, f, s: size * self.species.scale() };
         let extras = Extras {
             heart: self.heart,
             alert: self.alert > 0.0,
@@ -895,14 +1178,65 @@ impl Pet {
         };
         let mut prims: Vec<Prim> = Vec::new();
         match self.species {
-            Species::Cat | Species::Fox => draw::quadruped(&mut prims, &fr, &self.rig, coat, self.species == Species::Fox, self.frame_clock, &extras),
             Species::Bird => draw::bird(&mut prims, &fr, &self.rig, coat, self.frame_clock, &extras),
+            _ => draw::quadruped(&mut prims, &fr, &self.rig, coat, self.species, self.frame_clock, &extras),
         }
-        let top = (FEET.0 + self.rig.head.0 * self.facing * size, FEET.1 + (self.rig.head.1 - 10.0) * size);
+        let top = (FEET.0 + self.rig.head.0 * f * fr.s, FEET.1 + (self.rig.head.1 - 10.0) * fr.s);
         draw::extras(&mut prims, t, top, (W, H), &extras, self.frame_clock);
         piece.prims = prims;
         piece
     }
+}
+
+/// The picture cut down to what's drawn in it (and placed there on the surface): a sparrow
+/// takes a corner of its 240×180 surface, and only that corner is painted, composed and sent
+/// when it moves. Left whole if it holds anything it can't measure.
+pub fn tighten(piece: &mut Piece) {
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    let mut grow = |x: f32, y: f32, pad: f32| {
+        x0 = x0.min(x - pad);
+        y0 = y0.min(y - pad);
+        x1 = x1.max(x + pad);
+        y1 = y1.max(y + pad);
+    };
+    for prim in &piece.prims {
+        match prim {
+            Prim::Shape { points, .. } => points.iter().for_each(|&(x, y)| grow(x, y, 1.0)),
+            Prim::Line { points, width, .. } => points.iter().for_each(|&(x, y)| grow(x, y, width / 2.0 + 1.0)),
+            Prim::Rect { x, y, w, h, .. } => {
+                grow(*x, *y, 1.0);
+                grow(x + w, y + h, 1.0);
+            }
+            Prim::Text { x, y, text, font, .. } => {
+                // Generously: a little wider and taller than any of these letters are
+                grow(*x, *y, 2.0);
+                grow(x + font.size * 0.75 * text.chars().count() as f32, y + font.size * 1.5, 2.0);
+            }
+            _ => return,
+        }
+    }
+    if x0 > x1 {
+        return;
+    }
+    let (x0, y0) = (x0.floor().max(0.0), y0.floor().max(0.0));
+    let (x1, y1) = (x1.ceil().min(piece.w), y1.ceil().min(piece.h));
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    for prim in &mut piece.prims {
+        match prim {
+            Prim::Shape { points, .. } | Prim::Line { points, .. } => points.iter_mut().for_each(|p| *p = (p.0 - x0, p.1 - y0)),
+            Prim::Rect { x, y, .. } | Prim::Text { x, y, .. } => {
+                *x -= x0;
+                *y -= y0;
+            }
+            _ => {}
+        }
+    }
+    piece.x += x0;
+    piece.y += y0;
+    piece.w = x1 - x0;
+    piece.h = y1 - y0;
 }
 
 /// The pose for what it's doing (in the animal's coordinates; see `draw::Rig`), moving with its
@@ -1004,9 +1338,10 @@ fn pose(species: Species, act: Act, stride: f32, clock: f32, beat: Option<f32>) 
         Act::Walk => {
             gait(&mut r, 6.5, 3.5);
             let bob = (stride * tau * 2.0).sin();
+            // The body rises and falls; the head, a little behind, rides it more steadily
             r.hip.1 += bob * 0.7;
-            r.shoulder.1 += bob * 0.7;
-            r.head.1 += bob * 0.9;
+            r.shoulder.1 += bob * 0.6;
+            r.head.1 += (stride * tau * 2.0 - 0.6).sin() * 0.35;
             r.tail = -2.15;
             r.curl = 0.2;
         }
@@ -1158,11 +1493,26 @@ fn pose(species: Species, act: Act, stride: f32, clock: f32, beat: Option<f32>) 
         }
         _ => {}
     }
-    // A fox carries its brush low and straight back, not up in a curl like a cat
-    if species == Species::Fox && matches!(act, Act::Stand | Act::Walk | Act::Eat | Act::Stretch | Act::Groom) {
-        r.tail = pi - 0.3;
-        r.curl = 0.04;
-        r.sway = 0.15;
+    let carried = matches!(act, Act::Stand | Act::Walk | Act::Eat | Act::Stretch | Act::Groom);
+    match species {
+        // A fox carries its brush low and straight back, not up in a curl like a cat
+        Species::Fox if carried => {
+            r.tail = pi - 0.3;
+            r.curl = 0.04;
+            r.sway = 0.15;
+        }
+        // The big cats let the tail hang, its end turned up (a lion's tuft, a tiger's tip)
+        Species::Tiger | Species::Lion if carried => {
+            r.tail = pi - 0.75;
+            r.curl = 0.13;
+            r.sway = 0.12;
+        }
+        _ => {}
+    }
+    // Heavier: the big cats and the panda stand lower on their legs and hold the head lower
+    if matches!(species, Species::Panda | Species::Tiger | Species::Lion) && matches!(act, Act::Stand | Act::Walk | Act::Run | Act::Eat) {
+        r.head.1 += 3.0;
+        r.shoulder.1 += 1.0;
     }
     r
 }
@@ -1173,6 +1523,102 @@ mod tests {
 
     fn world() -> World {
         World { size: (1920.0, 1200.0), floor: 1200.0, perch: Some(36.0), pointer: None, idle: false, busy: 0.1, beat: None, bowl: None, ball: None, bed: None, friends: Vec::new() }
+    }
+
+    #[test]
+    fn a_pet_is_painted_only_where_it_is() {
+        let theme = Theme::new(&crate::config::Config::default());
+        for species in Species::ALL {
+            let pet = Pet::new(species, 500.0, 1200.0, Chance::new(3));
+            let whole = pet.draw(&theme, &draw::coat(species, "", &theme), 0.7, 1200.0);
+            let mut tight = whole.clone();
+            tighten(&mut tight);
+            // Much smaller than its surface, and every point drawn is still inside it, where it was
+            assert!(tight.w * tight.h < whole.w * whole.h * 0.5, "{species:?}: {}×{}", tight.w, tight.h);
+            for (a, b) in whole.prims.iter().zip(&tight.prims) {
+                if let (Prim::Shape { points: pa, .. }, Prim::Shape { points: pb, .. }) = (a, b) {
+                    for (p, q) in pa.iter().zip(pb) {
+                        assert!(q.0 >= 0.0 && q.1 >= 0.0 && q.0 <= tight.w && q.1 <= tight.h);
+                        assert!((q.0 + tight.x - p.0).abs() < 0.01 && (q.1 + tight.y - p.1).abs() < 0.01);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn walks_ease_in_and_out_and_turns_take_a_moment() {
+        let w = world();
+        let mut pet = Pet::new(Species::Cat, 500.0, w.floor, Chance::new(21));
+        pet.next_gesture = 1000.0;
+        pet.facing = 1.0;
+        pet.turn = 1.0;
+        pet.go(Act::Walk, 700.0, w.floor);
+        let mut speeds = Vec::new();
+        for _ in 0..400 {
+            pet.step(0.033, &w);
+            speeds.push(pet.speed);
+            if pet.act != Act::Walk {
+                break;
+            }
+        }
+        // It got there, starting slowly, at its pace in the middle, slowing at the end
+        assert!((pet.x - 700.0).abs() < 2.0 && pet.act != Act::Walk, "at {} doing {:?}", pet.x, pet.act);
+        let top = speeds.iter().cloned().fold(0.0, f32::max);
+        assert!(speeds[0] < top * 0.3, "starts at {} of {top}", speeds[0]);
+        let last_moving = speeds.iter().rev().find(|v| **v > 0.0).copied().unwrap_or(0.0);
+        assert!(last_moving < top * 0.5, "ends at {last_moving} of {top}");
+        // Back the other way: drawn turning through narrow, not flipped at once
+        pet.go(Act::Walk, 300.0, w.floor);
+        pet.step(0.033, &w);
+        assert!(pet.turn > -0.9 && pet.turn < 1.0, "mid-turn at {}", pet.turn);
+        for _ in 0..10 {
+            pet.step(0.033, &w);
+        }
+        assert_eq!(pet.turn, -1.0);
+    }
+
+    #[test]
+    fn a_still_pet_moves_a_little_now_and_then() {
+        let w = world();
+        let mut pet = Pet::new(Species::Fox, 900.0, w.floor, Chance::new(22));
+        pet.act = Act::Sit;
+        pet.left = 1000.0;
+        let mut gestures = 0;
+        let mut was = false;
+        for _ in 0..(40.0 / 0.05) as usize {
+            pet.step(0.05, &w);
+            let now = pet.doing.is_some();
+            if now && !was {
+                gestures += 1;
+            }
+            was = now;
+        }
+        // Every few seconds, not all the time, and each one ends
+        assert!((4..=25).contains(&gestures), "{gestures} gestures in 40 s");
+        pet.next_gesture = 1000.0;
+        run(&mut pet, &w, 3.0);
+        assert!(pet.doing.is_none() && pet.settled);
+    }
+
+    #[test]
+    fn pets_keep_themselves_as_the_list_changes() {
+        use Species::*;
+        // Nothing changed: everyone stays
+        let shown = [(0, Cat), (1, Fox), (2, Panda)];
+        assert_eq!(match_pets(&shown, &shown), (vec![Some((0, Cat)), Some((1, Fox)), Some((2, Panda))], vec![]));
+        // The fox taken out: it goes, the panda moves up a place and stays the panda
+        assert_eq!(match_pets(&shown, &[(0, Cat), (1, Panda)]), (vec![Some((0, Cat)), None, Some((1, Panda))], vec![]));
+        // The fox turned into a lion: the same pet, another animal
+        assert_eq!(match_pets(&shown, &[(0, Cat), (1, Lion), (2, Panda)]).0[1], Some((1, Lion)));
+        // A fourth added, and two of a kind
+        let (fates, new) = match_pets(&shown, &[(0, Cat), (1, Fox), (2, Panda), (3, Cat)]);
+        assert!(fates.iter().all(Option::is_some));
+        assert_eq!(new, vec![(3, Cat)]);
+        // Any number at all
+        let many: Vec<(usize, Species)> = (0..40).map(|i| (i, Species::ALL[i % Species::ALL.len()])).collect();
+        let (fates, new) = match_pets(&many[..10], &many);
+        assert_eq!((fates.iter().flatten().count(), new.len()), (10, 30));
     }
 
     #[test]
@@ -1229,6 +1675,8 @@ mod tests {
         // blink meanwhile (a blink is a real change, and is drawn)
         run(&mut pet, &w, 3.0);
         pet.blink = 100.0;
+        pet.next_gesture = 100.0;
+        pet.doing = None;
         run(&mut pet, &w, 1.0);
         let hash = |pet: &Pet| pet.draw(&theme, &coat, 1.0, 1200.0).content_hash(1.0);
         let mut same = 0;
@@ -1252,7 +1700,7 @@ mod tests {
 
     #[test]
     fn sleeps_while_you_are_away_and_wakes_with_a_stretch() {
-        for species in [Species::Cat, Species::Fox, Species::Bird] {
+        for species in Species::ALL {
             let mut pet = Pet::new(species, 900.0, 1200.0, Chance::new(1));
             let mut w = world();
             w.idle = true;
@@ -1331,7 +1779,7 @@ mod tests {
 
     #[test]
     fn stays_on_the_screen_and_speaks_now_and_then() {
-        for species in [Species::Cat, Species::Fox, Species::Bird] {
+        for species in Species::ALL {
             let mut pet = Pet::new(species, 960.0, 1200.0, Chance::new(9));
             let mut w = world();
             let mut said = 0;
@@ -1352,7 +1800,7 @@ mod tests {
     fn frame_cost() {
         let theme = Theme::new(&crate::config::Config::default());
         let mut painter = crate::render::Painter::new("Google Sans Flex", "outline");
-        for species in [Species::Cat, Species::Fox, Species::Bird] {
+        for species in Species::ALL {
             let coat = draw::coat(species, "", &theme);
             let mut pet = Pet::new(species, 900.0, 1200.0, Chance::new(2));
             let mut w = world();
@@ -1380,7 +1828,7 @@ mod tests {
     #[test]
     fn draws_every_pose_in_every_coat() {
         let theme = Theme::new(&crate::config::Config::default());
-        for species in [Species::Cat, Species::Fox, Species::Bird] {
+        for species in Species::ALL {
             for name in draw::coats(species) {
                 let coat = draw::coat(species, name, &theme);
                 let mut pet = Pet::new(species, 500.0, 1200.0, Chance::new(4));
@@ -1394,6 +1842,8 @@ mod tests {
         }
         assert_eq!(Species::from_name("Fox"), Some(Species::Fox));
         assert_eq!(Species::from_name("none"), None);
-        assert_eq!(Species::Bird.next(), Species::Cat);
+        assert_eq!(Species::from_name("Panda"), Some(Species::Panda));
+        assert_eq!(Species::Bird.next(), Species::Panda);
+        assert_eq!(Species::Lion.next(), Species::Cat);
     }
 }

@@ -38,7 +38,8 @@ asterism msg COMMAND
     widgets [edit|done]            Arrange the desktop's widgets (add, remove, move), or finish
     pet feed|play|yarn             Put down food, a ball or yarn for the pets
     pet bed|nobed                  Give them a bed, or take it away
-    pet [friend] next|away         Another animal for the first pet (or the second), or put it away
+    pet add [ANIMAL[:COAT]]        Another pet (cat, fox, bird, panda, tiger, lion), as many as you like
+    pet [N|friend] next|away       Another animal for the first pet (or the Nth, or the second), or put it away
     screenshot [region|screen|window]  Take a screenshot (a region you choose, by default)
     screen-text                    Copy the text in a region you choose (grim, slurp, tesseract)
     record [audio]                 Start recording the screen (with sound), or stop
@@ -98,7 +99,10 @@ pub fn parse(words: &[&str]) -> Result<Request, String> {
         ["settings", "open"] => Request::Settings(Some(true)),
         ["settings", "close"] => Request::Settings(Some(false)),
         ["pet", what @ ("feed" | "play" | "yarn" | "bed" | "nobed" | "next" | "away")] => Request::Pet(what.to_string()),
-        ["pet", "friend", what @ ("next" | "away")] => Request::Pet(format!("friend {what}")),
+        ["pet", "friend", what @ ("next" | "away")] => Request::Pet(format!("2 {what}")),
+        ["pet", "add"] => Request::Pet("add".into()),
+        ["pet", "add", animal] => Request::Pet(format!("add {animal}")),
+        ["pet", n, what @ ("next" | "away")] if n.parse::<usize>().is_ok_and(|n| n > 0) => Request::Pet(format!("{n} {what}")),
         ["widgets"] => Request::Widgets(None),
         ["widgets", "edit"] => Request::Widgets(Some(true)),
         ["widgets", "done"] => Request::Widgets(Some(false)),
@@ -233,7 +237,11 @@ mod tests {
         assert_eq!(parse(&["widgets"]), Ok(Request::Widgets(None)));
         assert_eq!(parse(&["pet", "feed"]), Ok(Request::Pet("feed".into())));
         assert!(parse(&["pet", "bite"]).is_err());
-        assert_eq!(parse(&["pet", "friend", "away"]), Ok(Request::Pet("friend away".into())));
+        assert_eq!(parse(&["pet", "friend", "away"]), Ok(Request::Pet("2 away".into())));
+        assert_eq!(parse(&["pet", "add"]), Ok(Request::Pet("add".into())));
+        assert_eq!(parse(&["pet", "add", "panda:brown"]), Ok(Request::Pet("add panda:brown".into())));
+        assert_eq!(parse(&["pet", "7", "next"]), Ok(Request::Pet("7 next".into())));
+        assert!(parse(&["pet", "0", "away"]).is_err());
         assert_eq!(parse(&["widgets", "edit"]), Ok(Request::Widgets(Some(true))));
         assert_eq!(parse(&["widgets", "done"]), Ok(Request::Widgets(Some(false))));
         assert!(parse(&["volume", "up", "lots"]).is_err());

@@ -235,10 +235,8 @@ impl Ctx<'_> {
         }
         piece.glow = true;
         piece.lift = true;
-        // A click opens the day panel (the month, timers, to-do, notes); a right click the
-        // calendar alone
-        piece.actions.left = Some(Action::ToggleDay);
-        piece.actions.right = menu(Kind::Calendar);
+        // A click opens the calendar; your day (timers, to-do, notes) has a button of its own
+        piece.actions.left = menu(Kind::Calendar);
         Module { pieces: vec![piece], spacing: 0.0 }
     }
 
@@ -631,6 +629,19 @@ impl Ctx<'_> {
             "tray" => self.tray(),
             "tools" => self.tools(),
             "status" => self.status(),
+            "day" => {
+                // Your day: a checklist, with how many tasks are still to do
+                let open = self.model.day.tasks.iter().filter(|task| !task.done).count();
+                let value = if open > 0 { open.to_string() } else { String::new() };
+                let mut piece = self.icon_text("day", "checklist", &value, self.theme.icon_tint(Icons::Tools), self.theme.color_soft);
+                piece.actions.left = Some(Action::ToggleDay);
+                piece.label = Some(match open {
+                    0 => "Your day: timers, to-do, notes".into(),
+                    1 => "Your day · 1 thing to do".into(),
+                    n => format!("Your day · {n} things to do"),
+                });
+                Module { pieces: vec![piece], spacing: 0.0 }
+            }
             "launcher" => {
                 let mut piece = self.icon_text("launcher", "apps", "", self.theme.icon_tint(Icons::Status), self.theme.color_soft);
                 piece.actions.left = Some(Action::ToggleLauncher);

@@ -80,7 +80,7 @@ impl Default for Layout {
     fn default() -> Self {
         Self {
             left: vec!["launcher".into(), "pages".into()],
-            center: vec!["resources".into(), "clock".into(), "weather".into(), "media".into()],
+            center: vec!["resources".into(), "clock".into(), "day".into(), "weather".into(), "media".into()],
             right: vec!["tools".into(), "tray".into(), "status".into()],
         }
     }
@@ -388,11 +388,14 @@ impl Default for DockSettings {
     }
 }
 
-/// The pet on the screen.
+/// The pets on the screen.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PetSettings {
-    /// cat, fox, bird, or none.
+    /// Every pet, as many as you like: "cat", or with its coat, "cat:ginger" (`pet::draw::coats`).
+    /// Not there at all, the older `animal` and `friend` keys say (an empty list is no pets).
+    pub pets: Option<Vec<String>>,
+    /// The first pet, before `pets`: cat, fox, bird, panda, tiger, lion, or none.
     pub animal: String,
     /// Its coat (`pet::draw::coats`): empty is the animal's own first one.
     pub coat: String,
@@ -401,7 +404,7 @@ pub struct PetSettings {
     pub volume: u32,
     /// How big, in percent (70 to 140).
     pub size: u32,
-    /// A second pet, and its coat: none, cat, fox or bird.
+    /// A second pet, and its coat, before `pets`.
     pub friend: String,
     pub friend_coat: String,
     /// Where their bed is, in thousandths of the screen's width; below 0, no bed.
@@ -410,8 +413,30 @@ pub struct PetSettings {
 
 impl Default for PetSettings {
     fn default() -> Self {
-        Self { animal: "none".into(), coat: String::new(), sounds: true, volume: 40, size: 100, friend: "none".into(), friend_coat: String::new(), bed: -1 }
+        Self { pets: None, animal: "none".into(), coat: String::new(), sounds: true, volume: 40, size: 100, friend: "none".into(), friend_coat: String::new(), bed: -1 }
     }
+}
+
+impl PetSettings {
+    /// The pets as written, one entry each ("animal" or "animal:coat"): the `pets` list, or the
+    /// older two keys turned into one. Entries keep their places (a pet is known by its place),
+    /// even ones naming no animal there is.
+    pub fn entries(&self) -> Vec<String> {
+        if let Some(list) = &self.pets {
+            return list.clone();
+        }
+        [(&self.animal, &self.coat), (&self.friend, &self.friend_coat)]
+            .into_iter()
+            .filter(|(animal, _)| !animal.trim().is_empty() && !animal.trim().eq_ignore_ascii_case("none"))
+            .map(|(animal, coat)| if coat.trim().is_empty() { animal.trim().to_lowercase() } else { format!("{}:{}", animal.trim().to_lowercase(), coat.trim().to_lowercase()) })
+            .collect()
+    }
+}
+
+/// One entry of `[pet] pets` as its animal and coat (empty: the animal's own).
+pub fn pet_entry(entry: &str) -> (String, String) {
+    let (animal, coat) = entry.split_once(':').unwrap_or((entry, ""));
+    (animal.trim().to_lowercase(), coat.trim().to_lowercase())
 }
 
 /// When the screen locks by itself.

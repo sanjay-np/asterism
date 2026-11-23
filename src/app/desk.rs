@@ -4,8 +4,8 @@
 //!
 //! Arranging them (`edit_widgets`) lifts the same surfaces above everything, dims the screen,
 //! takes the whole pointer and the keyboard, and lays the editor over the widgets: a frame and
-//! a remove button on each, a strip to add the others; the wheel on one makes it bigger or
-//! smaller. Widgets with nothing to show stand in as placeholders there, so they can be placed
+//! a remove button on each, handles on its sides and corners to resize it freely, a strip to
+//! add the others. Widgets with nothing to show stand in as placeholders there, so they can be placed
 //! before they're needed.
 //!
 //! A right click on a widget, or on the wallpaper itself (the backdrop's surface), opens the
@@ -87,12 +87,33 @@ pub(super) struct WidgetDrag {
     pub kind: String,
     pub grab: (f32, f32),
     pub at: (f32, f32),
+    /// Held by a handle: resized, not moved.
+    pub resize: Option<Resize>,
+}
+
+/// A widget being resized by one of its handles: which way its edges move (-1 the left or top
+/// one, 1 the right or bottom one), where the pointer was pressed, and the widget's rectangle then.
+#[derive(Clone)]
+pub(super) struct Resize {
+    pub way: (i8, i8),
+    pub press: (f32, f32),
+    pub from: (f32, f32, f32, f32),
+}
+
+impl Resize {
+    /// The cursor for it: arrows along the way it pulls.
+    fn shape(way: (i8, i8)) -> Shape {
+        match way {
+            (0, _) => Shape::NsResize,
+            (_, 0) => Shape::EwResize,
+            (x, y) if x == y => Shape::NwseResize,
+            _ => Shape::NeswResize,
+        }
+    }
 }
 
 /// While arranging, widgets land on a grid this fine, so they line up easily.
 const SNAP: f32 = 8.0;
-/// Each click of the wheel makes a widget this much bigger or smaller.
-const STEP: f32 = 0.1;
 /// Room round a widget's surface for its shadow, its hover glow, its frame and ×.
 const ROOM: f32 = 12.0;
 
@@ -104,7 +125,11 @@ pub(super) struct DeskMenu {
 
 /// Which surface a piece goes on: its widget's, or the strip's.
 fn group_of(key: &str) -> &str {
-    key.strip_prefix("widget.").or_else(|| key.strip_prefix("edit.frame.")).or_else(|| key.strip_prefix("edit.remove.")).unwrap_or("strip")
+    key.strip_prefix("widget.")
+        .or_else(|| key.strip_prefix("edit.frame."))
+        .or_else(|| key.strip_prefix("edit.remove."))
+        .or_else(|| crate::widgets::handle_of(key).map(|(kind, _)| kind))
+        .unwrap_or("strip")
 }
 
 /// A surface filled with one colour by a single pixel the compositor stretches (the viewporter),
@@ -269,7 +294,7 @@ impl App {
             settings: &self.config.widgets,
             photo_step: self.photo_step,
         };
-        let mut pieces = crate::widgets::arrange(&self.config.widgets.show, &mut view, &self.widget_places, (w, h), editing);
+        let mut pieces = crate::widgets::arrange(&self.config.widgets.show, &mut view, &self.widget_places, (w, h), editing, &mut self.widget_fits);
         for request in std::mem::take(&mut view.requests) {
             match &request {
                 Command::FetchArt(url) => {
@@ -292,10 +317,11 @@ impl App {
             // The one being carried or pointed at, lit
             let active = self.widget_drag.as_ref().map(|d| d.kind.clone()).or_else(|| {
                 let hovered = self.desks[index].parts.iter().find_map(|p| p.surf.hovered.clone())?;
-                hovered.strip_prefix("widget.").or_else(|| hovered.strip_prefix("edit.remove.")).map(str::to_string)
+                hovered.strip_prefix("widget.").or_else(|| hovered.strip_prefix("edit.remove.")).or_else(|| crate::widgets::handle_of(&hovered).map(|(kind, _)| kind)).map(str::to_string)
             });
+            let resizing = self.widget_drag.as_ref().filter(|d| d.resize.is_some()).map(|d| d.kind.clone());
             let top = if self.theme.on_top { self.theme.reserve() + 20.0 } else { 28.0 };
-            pieces = crate::widgets::editor(pieces, &self.config.widgets.show, &self.widget_places, active.as_deref(), &self.theme, &mut self.painter.text, w, top);
+            pieces = crate::widgets::editor(pieces, &self.config.widgets.show, resizing.as_deref(), active.as_deref(), &self.theme, &mut self.painter.text, w, top);
         }
 
         // Pieces by the surface they go on, in drawing order
@@ -381,7 +407,7 @@ impl App {
                 list.iter()
                     .filter_map(|p| {
                         let kind = p.key.strip_prefix("widget.")?;
-                        let radius = crate::widgets::card_radius(kind)? * crate::widgets::place_of(&self.widget_places, kind).scale;
+                        let radius = crate::widgets::card_radius(kind)? * self.widget_fits.get(kind).map_or(1.0, |f| f.scale);
                         Some(crate::widgets::rounded_rows(p.x, p.y, p.w, p.h, radius))
                     })
                     .flatten()
@@ -442,6 +468,7 @@ impl App {
     fn desk_hover(&mut self, index: usize, x: f32, y: f32) {
         let hit = self.desk_hit(index, x, y);
         let shape = match &hit {
+            Some((_, p)) if let Some((_, way)) = crate::widgets::handle_of(&p.key) => Resize::shape(way),
             Some((_, p)) if p.key.starts_with("widget.") => Shape::Grab,
             Some((_, p)) if p.actions.left.is_some() => Shape::Pointer,
             _ => Shape::Default,
@@ -464,8 +491,9 @@ impl App {
             PointerEventKind::Enter { serial } => {
                 self.enter_serial = serial;
                 self.cursor_shape = None;
-                if self.widget_drag.is_some() {
-                    self.set_cursor(Shape::Grabbing);
+                if let Some(drag) = &self.widget_drag {
+                    let shape = drag.resize.as_ref().map_or(Shape::Grabbing, |r| Resize::shape(r.way));
+                    self.set_cursor(shape);
                 } else {
                     self.desk_hover(index, x, y);
                 }
@@ -479,14 +507,31 @@ impl App {
                 }
             }
             PointerEventKind::Press { button, serial, .. } => {
-                let Some((_, piece)) = self.desk_hit(index, x, y) else { return };
+                let Some((part, piece)) = self.desk_hit(index, x, y) else { return };
+                // A handle: the widget is resized from its rectangle as it is now
+                if button == BTN_LEFT
+                    && let Some((kind, way)) = crate::widgets::handle_of(&piece.key)
+                {
+                    let held = &self.desks[index].parts[part];
+                    let key = format!("widget.{kind}");
+                    let Some(widget) = held.surf.pieces.iter().find(|p| p.key == key) else { return };
+                    let from = (widget.x + held.at.0 as f32, widget.y + held.at.1 as f32, widget.w, widget.h);
+                    let output = self.desks[index].output.clone();
+                    let resize = Resize { way, press: (x, y), from };
+                    self.widget_drag = Some(WidgetDrag { output, kind: kind.to_string(), grab: (0.0, 0.0), at: (x, y), resize: Some(resize) });
+                    self.set_cursor(Resize::shape(way));
+                    for desk in &mut self.desks {
+                        desk.dirty = true;
+                    }
+                    return;
+                }
                 let widget = piece.key.strip_prefix("widget.").map(str::to_string);
                 // The edge visualizer stays where it is
                 if button == BTN_LEFT
                     && let Some(kind) = widget.as_deref().filter(|k| *k != "edge")
                 {
                     let output = self.desks[index].output.clone();
-                    self.widget_drag = Some(WidgetDrag { output, kind: kind.to_string(), grab: (x - piece.x, y - piece.y), at: (x, y) });
+                    self.widget_drag = Some(WidgetDrag { output, kind: kind.to_string(), grab: (x - piece.x, y - piece.y), at: (x, y), resize: None });
                     self.set_cursor(Shape::Grabbing);
                     return;
                 }
@@ -498,24 +543,6 @@ impl App {
                     && let Some(action) = piece.actions.left
                 {
                     self.act(action, None, serial);
-                }
-            }
-            PointerEventKind::Axis { vertical, .. } if self.desk_edit => {
-                // The wheel on a widget, while arranging: bigger (up) or smaller (down)
-                let steps = self.wheel_steps(&vertical);
-                let Some(kind) = self.desk_hit(index, x, y).and_then(|(_, p)| p.key.strip_prefix("widget.").filter(|k| *k != "edge").map(str::to_string)) else { return };
-                if steps == 0 {
-                    return;
-                }
-                let mut place = crate::widgets::place_of(&self.widget_places, &kind);
-                let scale = (place.scale - steps as f32 * STEP).clamp(crate::widgets::SMALLEST, crate::widgets::BIGGEST);
-                if (scale - place.scale).abs() > 0.001 {
-                    place.scale = (scale * 10.0).round() / 10.0;
-                    self.widget_places.insert(kind, place);
-                    crate::widgets::save_places(&self.widget_places);
-                    for desk in &mut self.desks {
-                        desk.dirty = true;
-                    }
                 }
             }
             PointerEventKind::Motion { .. } => {
@@ -540,15 +567,27 @@ impl App {
     pub(super) fn move_widget(&mut self, x: f32, y: f32) {
         let Some(drag) = self.widget_drag.as_mut() else { return };
         drag.at = (x, y);
-        let (output, kind, grab) = (drag.output.clone(), drag.kind.clone(), drag.grab);
+        let (output, kind, grab, resize) = (drag.output.clone(), drag.kind.clone(), drag.grab, drag.resize.clone());
         let (w, h) = self.output_size(&output);
+        let mut place = crate::widgets::place_of(&self.widget_places, &kind);
+        if let Some(resize) = &resize {
+            let (left, top, size) = resized(resize, (x, y), crate::widgets::fills(&kind), (w, h));
+            place.size = Some(size);
+            place.x = (left / w.max(1.0)).clamp(0.0, 1.0);
+            place.y = (top / h.max(1.0)).clamp(0.0, 1.0);
+            self.widget_places.insert(kind, place);
+            for desk in &mut self.desks {
+                desk.dirty = true;
+            }
+            return;
+        }
         let (mut left, mut top) = (x - grab.0, y - grab.1);
         if self.desk_edit {
             left = (left / SNAP).round() * SNAP;
             top = (top / SNAP).round() * SNAP;
         }
-        let scale = crate::widgets::place_of(&self.widget_places, &kind).scale;
-        let place = crate::widgets::Place { x: (left / w.max(1.0)).clamp(0.0, 1.0), y: (top / h.max(1.0)).clamp(0.0, 1.0), scale };
+        place.x = (left / w.max(1.0)).clamp(0.0, 1.0);
+        place.y = (top / h.max(1.0)).clamp(0.0, 1.0);
         self.widget_places.insert(kind, place);
         for desk in &mut self.desks {
             desk.dirty = true;
@@ -627,7 +666,7 @@ impl App {
         }
     }
 
-    /// Let go of a widget being moved: where it is now is kept.
+    /// Let go of a widget being moved or resized: where it is now, and its size, are kept.
     fn drop_widget(&mut self) {
         if self.widget_drag.take().is_some() {
             crate::widgets::save_places(&self.widget_places);
@@ -635,5 +674,75 @@ impl App {
                 desk.dirty = true;
             }
         }
+    }
+}
+
+/// Where a widget held by a handle stands and how big it is with the pointer at `at`: its
+/// rectangle at the press, its pulled edges moved by as much as the pointer has (in grid steps),
+/// the far ones staying put. A card takes any box at all, from a sliver its handles can still be
+/// caught by (LEAST_SIDE) to the whole screen; the clock, which only grows and shrinks, keeps
+/// its shape (by how far the pointer went either way), within the same bounds.
+fn resized(r: &Resize, at: (f32, f32), fills: bool, screen: (f32, f32)) -> (f32, f32, (f32, f32)) {
+    use crate::widgets::LEAST_SIDE;
+    let (left, top, w0, h0) = r.from;
+    let (mut dx, mut dy) = (at.0 - r.press.0, at.1 - r.press.1);
+    if fills {
+        dx = (dx / SNAP).round() * SNAP;
+        dy = (dy / SNAP).round() * SNAP;
+    }
+    let pulled = |from: f32, way: i8, by: f32| from + way as f32 * by;
+    let (mut w, mut h) = (pulled(w0, r.way.0, dx), pulled(h0, r.way.1, dy));
+    if fills {
+        w = w.clamp(LEAST_SIDE, screen.0.max(LEAST_SIDE));
+        h = h.clamp(LEAST_SIDE, screen.1.max(LEAST_SIDE));
+    } else {
+        let k = (w / w0.max(1.0) + h / h0.max(1.0)) / 2.0;
+        let lo = (LEAST_SIDE / w0.max(1.0)).max(LEAST_SIDE / h0.max(1.0));
+        let hi = (screen.0 / w0.max(1.0)).min(screen.1 / h0.max(1.0));
+        let k = k.clamp(lo.min(hi), hi);
+        (w, h) = (w0 * k, h0 * k);
+    }
+    // The left or top edge pulled: the right or bottom one stays where it was
+    let x = if r.way.0 < 0 { left + w0 - w } else { left };
+    let y = if r.way.1 < 0 { top + h0 - h } else { top };
+    (x, y, (w, h))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn held(way: (i8, i8)) -> Resize {
+        Resize { way, press: (500.0, 400.0), from: (400.0, 300.0, 300.0, 100.0) }
+    }
+
+    #[test]
+    fn a_handle_pulls_its_own_edges() {
+        let screen = (1920.0, 1200.0);
+        // The right side: wider, nothing else moves
+        assert_eq!(resized(&held((1, 0)), (580.0, 450.0), true, screen), (400.0, 300.0, (380.0, 100.0)));
+        // Pressed and not moved (or less than a grid step): just as it was
+        assert_eq!(resized(&held((1, 1)), (502.0, 401.0), true, screen), (400.0, 300.0, (300.0, 100.0)));
+        // The left side: the left edge follows, the right one stays
+        assert_eq!(resized(&held((-1, 0)), (420.0, 400.0), true, screen), (320.0, 300.0, (380.0, 100.0)));
+        // The top-left corner up and in: taller, the bottom edge stays
+        assert_eq!(resized(&held((-1, -1)), (500.0, 336.0), true, screen), (400.0, 236.0, (300.0, 164.0)));
+        // Down to a sliver its handles can be caught by, up to the whole screen
+        let (_, _, size) = resized(&held((1, 1)), (0.0, 0.0), true, screen);
+        assert_eq!(size, (crate::widgets::LEAST_SIDE, crate::widgets::LEAST_SIDE));
+        let (_, _, size) = resized(&held((1, 1)), (9000.0, 9000.0), true, screen);
+        assert_eq!(size, screen);
+    }
+
+    #[test]
+    fn the_clock_keeps_its_shape() {
+        let screen = (1920.0, 1200.0);
+        // Out to the right only: bigger both ways, by half the pull
+        let (x, y, (w, h)) = resized(&held((1, 1)), (800.0, 400.0), false, screen);
+        assert_eq!((x, y), (400.0, 300.0));
+        assert!((w / h - 3.0).abs() < 0.001 && (w - 450.0).abs() < 0.01, "{w} {h}");
+        // As big as the screen lets it be, keeping its shape (here the width runs out first)
+        let (_, _, (w, h)) = resized(&held((1, 1)), (9000.0, 9000.0), false, screen);
+        assert!((w - 1920.0).abs() < 0.01 && (h - 640.0).abs() < 0.01, "{w} {h}");
     }
 }

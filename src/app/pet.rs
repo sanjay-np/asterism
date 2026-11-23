@@ -1,7 +1,7 @@
 //! The pets as the app runs them: each a small Overlay layer surface, above every window, moved
 //! about the output by its margins as it goes; only its body takes the pointer, so clicks
 //! everywhere else pass through. One timer moves them all on (quickly while they move, slowly
-//! asleep). There can be two (`[pet] animal` and `friend`), and they see each other.
+//! asleep). There can be as many as you like (`[pet] pets`), and they see each other.
 //!
 //! They see the pointer only where the shell does: over the wallpaper, the desktop's widgets, the
 //! bar and the pets themselves (`saw_pointer`). They sleep after a minute without input (an idle
@@ -14,8 +14,8 @@ use super::*;
 use crate::pet::{Event, FEET, Friend, H, Pet, Species, W, World};
 use smithay_client_toolkit::reexports::protocols::ext::idle_notify::v1::client::ext_idle_notification_v1::{self, ExtIdleNotificationV1};
 
-/// Which pet: the first (`[pet] animal`) or the second (`friend`).
-pub(super) type Slot = u8;
+/// Which pet: its place in `[pet] pets` (from 0).
+pub(super) type Slot = usize;
 
 pub(super) struct PetSurface {
     pub slot: Slot,
@@ -86,33 +86,54 @@ impl Dispatch2<ExtIdleNotificationV1, App> for PetIdle {
 
 impl App {
     /// Which animal and coat a slot is set to.
-    fn pet_wanted(&self, slot: Slot) -> (Option<Species>, &str) {
-        let pet = &self.config.pet;
-        if slot == 0 { (Species::from_name(&pet.animal), &pet.coat) } else { (Species::from_name(&pet.friend), &pet.friend_coat) }
+    fn pet_wanted(&self, slot: Slot) -> (Option<Species>, String) {
+        let entries = self.config.pet.entries();
+        let (animal, coat) = entries.get(slot).map(|e| crate::config::pet_entry(e)).unwrap_or_default();
+        (Species::from_name(&animal), coat)
     }
 
-    /// The pets follow the config: come, go, or turn into other animals; the bed too.
+    /// How many pets the config asks for (entries naming an animal there is).
+    pub(super) fn pets_wanted(&self) -> usize {
+        self.config.pet.entries().iter().filter(|e| Species::from_name(&crate::config::pet_entry(e).0).is_some()).count()
+    }
+
+    /// The pets follow the config: come, go, or turn into other animals; the bed too. A pet on
+    /// the screen stays itself (where it is, how it feels) as long as there's an entry for its
+    /// animal, even when others before it in the list come or go.
     pub(super) fn sync_pet(&mut self) {
-        for slot in [0, 1] {
-            let (species, _) = self.pet_wanted(slot);
-            let index = self.pets.iter().position(|p| p.slot == slot);
-            match (species, index) {
-                (None, Some(index)) => {
+        let wanted: Vec<(Slot, Species)> = self.config.pet.entries().iter().enumerate().filter_map(|(slot, e)| Some((slot, Species::from_name(&crate::config::pet_entry(e).0)?))).collect();
+        let shown: Vec<(Slot, Species)> = self.pets.iter().map(|p| (p.slot, p.pet.species)).collect();
+        let (fates, new) = crate::pet::match_pets(&shown, &wanted);
+        let mut turned = Vec::new();
+        // From the back, so taking one away leaves the places before it as they were
+        for (index, fate) in fates.into_iter().enumerate().rev() {
+            match fate {
+                None => {
                     let gone = self.pets.remove(index);
                     self.painter.forget_surface(gone.surf.id);
                 }
-                (Some(species), Some(index)) => {
+                Some((slot, species)) => {
                     let shown = &mut self.pets[index];
+                    shown.slot = slot;
                     if shown.pet.species != species {
                         let (x, y) = (shown.pet.x, shown.pet.y);
                         shown.pet = Pet::new(species, x, y, crate::transition::Chance::from_clock());
+                        turned.push(shown.surf.id);
                     }
                     // A new coat or size: drawn again
                     shown.surf.last = None;
                 }
-                (Some(species), None) => self.add_pet(slot, species),
-                (None, None) => {}
             }
+        }
+        // Another animal is another size: its region follows (found again, since pets before it
+        // may have gone)
+        for id in turned {
+            if let Some(index) = self.pets.iter().position(|p| p.surf.id == id) {
+                self.pet_region(index);
+            }
+        }
+        for (slot, species) in new {
+            self.add_pet(slot, species);
         }
         if self.pets.is_empty() {
             if let Some(watch) = self.pet_idle_watch.take() {
@@ -161,7 +182,8 @@ impl App {
         let (w, h) = self.output_size(&output);
         let (surf, layer) = self.small_layer(&output, Layer::Overlay, "asterism-pet", W, H);
         let floor = self.pet_floor(h);
-        let x = if slot == 0 { w * 0.7 } else { w * 0.3 };
+        // Spread out along the floor, each new one somewhere else (by the golden ratio)
+        let x = w * (0.1 + 0.8 * (0.7 + slot as f32 * 0.618).fract());
         let pet = Pet::new(species, x, floor, crate::transition::Chance::from_clock());
         self.pets.push(PetSurface { slot, surf, layer, output, pet, stepped: Instant::now(), placed: None, press: None, at: (0.0, 0.0) });
         if !self.pet_timer {
@@ -218,43 +240,62 @@ impl App {
 
     /// Every pet's moment: moved on, its props too, placed, drawn. Returns when to come back,
     /// or None when there are no pets.
+    /// Each pet moves on by its own clock (a sleeping one a few times a second, a running one
+    /// thirty), the props by theirs: one busy pet, or a rolling ball, doesn't make every pet
+    /// step and draw as often as it does. The timer comes back when the next is due.
     fn step_pets(&mut self) -> Option<Duration> {
         if self.pets.is_empty() {
             return None;
         }
-        let mut next = self.props_delay();
-        let mut longest = 0.0f32;
+        let now = Instant::now();
+        let mut next = Duration::from_secs(1);
         for index in 0..self.pets.len() {
+            let since = now.saturating_duration_since(self.pets[index].stepped);
+            let delay = self.pets[index].pet.delay();
+            // Up to a third early is on time: pets nearly due go with the one that is, so several
+            // pets don't each wake the shell on their own (held, it follows the pointer every time)
+            if since + delay / 3 < delay && self.pets[index].press.is_none() {
+                next = next.min(delay - since);
+                continue;
+            }
             let world = self.pet_world(index);
             let shown = &mut self.pets[index];
-            let dt = shown.stepped.elapsed().as_secs_f32();
-            shown.stepped = Instant::now();
-            longest = longest.max(dt);
-            let events = shown.pet.step(dt, &world);
+            shown.stepped = now;
+            let events = shown.pet.step(since.as_secs_f32(), &world);
             next = next.min(shown.pet.delay());
             for event in events {
                 self.pet_event(index, event);
             }
             self.draw_pet(index, &world);
         }
-        if let Some(world) = (!self.pets.is_empty()).then(|| self.pet_world(0)) {
-            self.step_props(longest, &world);
+        if !self.props.is_empty() {
+            let since = now.saturating_duration_since(self.props_stepped);
+            let delay = self.props_delay();
+            if since + delay / 3 >= delay {
+                self.props_stepped = now;
+                let world = self.pet_world(0);
+                self.step_props(since.as_secs_f32().min(0.25), &world);
+                next = next.min(self.props_delay());
+            } else {
+                next = next.min(delay - since);
+            }
         }
         Some(next)
     }
 
     fn draw_pet(&mut self, index: usize, world: &World) {
+        // Nothing to do until the compositor wants a frame (hidden, it may not for a while)
+        if !self.pets[index].surf.configured || self.pets[index].surf.frame_pending {
+            return;
+        }
         let (species, coat) = {
             let (_, coat) = self.pet_wanted(self.pets[index].slot);
-            (self.pets[index].pet.species, coat.to_string())
+            (self.pets[index].pet.species, coat)
         };
         let coat = crate::pet::draw::coat(species, &coat, &self.theme);
         let size = self.config.pet.size.clamp(70, 140) as f32 / 100.0;
         let (w, h) = world.size;
         let shown = &mut self.pets[index];
-        if !shown.surf.configured || shown.surf.frame_pending {
-            return;
-        }
         // Its square on the output (it may hang off an edge a little rather than jump)
         let left = ((shown.pet.x - FEET.0).round() as i32).clamp(-(W as i32) / 3, (w - W * 2.0 / 3.0) as i32);
         let top = ((shown.pet.y - FEET.1).round() as i32).clamp(-(H as i32) / 2, (h - H) as i32 + 30);
@@ -263,7 +304,8 @@ impl App {
             shown.layer.set_margin(top, 0, 0, left);
             shown.placed = Some((left, top));
         }
-        let piece = shown.pet.draw(&self.theme, &coat, size, world.floor);
+        let mut piece = shown.pet.draw(&self.theme, &coat, size, world.floor);
+        crate::pet::tighten(&mut piece);
         shown.surf.dirty = false;
         shown.surf.anim.begin();
         match shell::render_panel(&mut shown.surf, vec![piece], &mut self.painter, &self.theme, None, 0.0) {
@@ -499,10 +541,18 @@ impl App {
         shown.surf.configured = true;
         shown.surf.dirty = true;
         shown.surf.frame_pending = false;
-        if let Some(wl) = &shown.surf.wl
+        self.pet_region(index);
+    }
+
+    /// Only the animal's body takes the pointer (as big as the animal is drawn); clicks round it
+    /// pass through.
+    fn pet_region(&mut self, index: usize) {
+        let k = (self.pets[index].pet.species.scale() * self.config.pet.size.clamp(70, 140) as f32 / 100.0).min(1.9);
+        let (half, tall) = ((44.0 * k).min(FEET.0), (58.0 * k).min(FEET.1));
+        if let Some(wl) = &self.pets[index].surf.wl
             && let Ok(region) = Region::new(&self.compositor)
         {
-            region.add((FEET.0 - 44.0) as i32, (FEET.1 - 58.0) as i32, 88, 64);
+            region.add((FEET.0 - half) as i32, (FEET.1 - tall) as i32, (half * 2.0) as i32, (tall + 6.0) as i32);
             wl.set_input_region(Some(region.wl_region()));
         }
     }
@@ -548,7 +598,7 @@ impl App {
                     None => {}
                 }
             }
-            PointerEventKind::Press { button: BTN_RIGHT, .. } => self.open_desk_menu(output, (x, y), Some(if slot == 0 { "pet".into() } else { "pet.friend".into() })),
+            PointerEventKind::Press { button: BTN_RIGHT, .. } => self.open_desk_menu(output, (x, y), Some(format!("pet.{slot}"))),
             _ => {}
         }
     }
@@ -582,10 +632,48 @@ impl App {
 
     /// "Another animal" and "Put it away", from a pet's menu.
     pub(super) fn pet_action(&mut self, slot: Slot, next: bool) {
-        let key = if slot == 0 { "animal" } else { "friend" };
-        let (species, _) = self.pet_wanted(slot);
-        let animal = if next { species.map_or("cat", |s| s.next().name()) } else { "none" };
-        self.set_setting(&["pet".into(), key.into()], &crate::settings::Value::Str(animal.into()));
+        let mut entries = self.config.pet.entries();
+        if slot >= entries.len() {
+            return;
+        }
+        if next {
+            // The next animal, in its own first coat (the coats differ by animal)
+            let (species, _) = self.pet_wanted(slot);
+            entries[slot] = species.map_or(Species::Cat, Species::next).name().to_string();
+        } else {
+            entries.remove(slot);
+        }
+        self.write_pets(entries);
+    }
+
+    /// Another pet: this animal (and coat, "panda:brown"), or when none is named, one not out
+    /// yet (else the next after the last).
+    pub(super) fn pet_add(&mut self, entry: &str) {
+        let mut entries = self.config.pet.entries();
+        let entry = if Species::from_name(&crate::config::pet_entry(entry).0).is_some() {
+            entry.trim().to_lowercase()
+        } else {
+            let out: Vec<Species> = entries.iter().filter_map(|e| Species::from_name(&crate::config::pet_entry(e).0)).collect();
+            let pick = Species::ALL.into_iter().find(|s| !out.contains(s)).unwrap_or_else(|| out.last().map_or(Species::Cat, |s| s.next()));
+            pick.name().to_string()
+        };
+        entries.push(entry);
+        self.write_pets(entries);
+    }
+
+    /// Which pet the Settings' Pets page shows (when Settings is open).
+    pub(super) fn settings_pet(&mut self, pick: crate::settings::PetPick) {
+        if let Some(settings) = self.settings.as_mut() {
+            settings.pet = pick;
+        }
+        if let Some(index) = self.panel_index(PanelKind::Settings) {
+            self.panels[index].surf.dirty = true;
+        }
+    }
+
+    /// The pets, written as the config's list (from then on the older two keys are left alone).
+    fn write_pets(&mut self, entries: Vec<String>) {
+        self.set_setting(&["pet".into(), "pets".into()], &crate::settings::Value::List(entries));
     }
 }
 

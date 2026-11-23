@@ -1,7 +1,7 @@
 //! The pet's voice, made here from nothing (no recordings): a fundamental and its harmonics,
 //! shaped by vowel formants that move through the sound, the way a cat's "m-ee-ow" opens and
 //! closes; a purr from a low rumble pulsing about 25 times a second; a fox's sharp yip; a bird's
-//! quick chirps. Each comes in a few variants, written once as a WAV into the cache and played
+//! quick chirps; a big cat's roar, growl and friendly chuff; a panda's bleat. Each comes in a few variants, written once as a WAV into the cache and played
 //! with `pw-play` (or `paplay`) by the services.
 
 use std::f32::consts::TAU;
@@ -19,6 +19,14 @@ pub enum Voice {
     Complain,
     Yip,
     Chirp,
+    /// A big cat's call: low, rough, swelling and falling away.
+    Roar,
+    /// A big cat's hello: two or three breathy puffs through the nose.
+    Chuff,
+    /// A low, rattling warning.
+    Growl,
+    /// A panda's call, wavering like a goat's.
+    Bleat,
 }
 
 impl Voice {
@@ -30,8 +38,15 @@ impl Voice {
             Voice::Complain => "complain",
             Voice::Yip => "yip",
             Voice::Chirp => "chirp",
+            Voice::Roar => "roar",
+            Voice::Chuff => "chuff",
+            Voice::Growl => "growl",
+            Voice::Bleat => "bleat",
         }
     }
+
+    #[cfg(test)]
+    pub const ALL: [Voice; 10] = [Voice::Meow, Voice::Trill, Voice::Purr, Voice::Complain, Voice::Yip, Voice::Chirp, Voice::Roar, Voice::Chuff, Voice::Growl, Voice::Bleat];
 }
 
 /// How many takes of each sound there are.
@@ -206,6 +221,53 @@ pub fn synth(voice: Voice, variant: u32) -> Vec<f32> {
             }
             out
         }
+        Voice::Roar => {
+            // An open "aa-oo" from a low, rough voice: up into it, then down and away
+            let seconds = 1.25 + 0.15 * k;
+            let pitch = move |u: f32| track(&[(0.0, 120.0), (0.25, 210.0 + 15.0 * k), (0.6, 170.0), (1.0, 95.0)], u) * (1.0 + 0.03 * (TAU * 7.0 * u * seconds).sin());
+            let vowel = |u: f32| {
+                let f1 = track(&[(0.0, 450.0), (0.3, 800.0), (0.7, 650.0), (1.0, 420.0)], u);
+                let f2 = track(&[(0.0, 900.0), (0.3, 1250.0), (0.7, 1000.0), (1.0, 750.0)], u);
+                [(f1, 220.0, 1.0), (f2, 300.0, 0.6), (2400.0, 500.0, 0.2)]
+            };
+            let loud = |u: f32| envelope(u, 0.18, 0.45) * track(&[(0.0, 0.5), (0.3, 1.0), (1.0, 0.7)], u);
+            voiced(&Voiced { seconds, pitch: &pitch, vowel: &vowel, loudness: &loud, breath: 0.35, rough: 0.7, tilt: 0.55 }, 61 + variant)
+        }
+        Voice::Growl => {
+            // Low and steady, rattling about 18 times a second
+            let seconds = 0.9 + 0.1 * k;
+            let pitch = move |u: f32| 82.0 + 8.0 * k + 6.0 * (TAU * 1.5 * u).sin();
+            let vowel = |_: f32| [(430.0, 180.0, 1.0), (880.0, 260.0, 0.5), (2200.0, 500.0, 0.15)];
+            let loud = move |u: f32| envelope(u, 0.12, 0.3) * (0.55 + 0.45 * (TAU * 18.0 * u * seconds).sin().abs());
+            voiced(&Voiced { seconds, pitch: &pitch, vowel: &vowel, loudness: &loud, breath: 0.45, rough: 0.9, tilt: 0.5 }, 67 + variant)
+        }
+        Voice::Chuff => {
+            // Puffs of breath with a little voice under them
+            let mut out = Vec::new();
+            let puffs = 2 + (variant % 2) as usize;
+            for n in 0..puffs {
+                let seconds = 0.13;
+                let pitch = move |_: f32| 110.0 + 10.0 * n as f32;
+                let vowel = |_: f32| [(700.0, 300.0, 1.0), (1250.0, 400.0, 0.5), (2600.0, 600.0, 0.2)];
+                let loud = |u: f32| envelope(u, 0.1, 0.6);
+                out.extend(voiced(&Voiced { seconds, pitch: &pitch, vowel: &vowel, loudness: &loud, breath: 2.2, rough: 0.2, tilt: 0.9 }, 71 + variant * 3 + n as u32));
+                if n + 1 < puffs {
+                    out.extend(std::iter::repeat_n(0.0, (0.06 * RATE as f32) as usize));
+                }
+            }
+            out
+        }
+        Voice::Bleat => {
+            // "Mehh": a nasal "eh" whose pitch and loudness waver about 9 times a second
+            let seconds = 0.55 + 0.1 * k;
+            let pitch = move |u: f32| track(&[(0.0, 380.0 + 20.0 * k), (0.2, 460.0), (1.0, 400.0)], u) * (1.0 + 0.05 * (TAU * 9.0 * u * seconds).sin());
+            let vowel = |u: f32| {
+                let f1 = track(&[(0.0, 300.0), (0.15, 560.0), (1.0, 520.0)], u);
+                [(f1, 150.0, 1.0), (1850.0, 240.0, 0.7), (2700.0, 400.0, 0.25)]
+            };
+            let loud = move |u: f32| envelope(u, 0.1, 0.35) * (0.7 + 0.3 * (TAU * 9.0 * u * seconds).sin());
+            voiced(&Voiced { seconds, pitch: &pitch, vowel: &vowel, loudness: &loud, breath: 0.1, rough: 0.15, tilt: 0.65 }, 79 + variant)
+        }
     };
     // As loud as it can be without clipping, then a touch under
     let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs())).max(1e-6);
@@ -259,7 +321,7 @@ mod tests {
 
     #[test]
     fn every_voice_sounds() {
-        for voice in [Voice::Meow, Voice::Trill, Voice::Purr, Voice::Complain, Voice::Yip, Voice::Chirp] {
+        for voice in Voice::ALL {
             for variant in 0..VARIANTS {
                 let samples = synth(voice, variant);
                 let seconds = samples.len() as f32 / RATE as f32;
@@ -302,7 +364,7 @@ mod tests {
     fn write_samples_to_listen_to() {
         let Some(dir) = std::env::var_os("ASTERISM_SOUNDS") else { return };
         let dir = PathBuf::from(dir);
-        for voice in [Voice::Meow, Voice::Trill, Voice::Purr, Voice::Complain, Voice::Yip, Voice::Chirp] {
+        for voice in Voice::ALL {
             for variant in 0..VARIANTS {
                 file_in(&dir, voice, variant).expect("written");
             }

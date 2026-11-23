@@ -422,6 +422,10 @@ pub struct App {
     /// Desktop widgets: a surface per output, where each widget stands, and one being moved.
     desks: Vec<desk::Desk>,
     widget_places: HashMap<String, crate::widgets::Place>,
+    /// How each widget came out when last laid out (its size as built, its scale).
+    widget_fits: HashMap<String, crate::widgets::Fit>,
+    /// The to-do list has been asked for once, for the bar's day button.
+    day_asked: bool,
     widget_drag: Option<desk::WidgetDrag>,
     /// The widgets are being arranged (the desks raised above the windows, with the editor).
     desk_edit: bool,
@@ -453,6 +457,8 @@ pub struct App {
     pet_pointer: Option<((f32, f32), Instant)>,
     /// The pet's bowl and ball, while they're out.
     props: Vec<pet::Prop>,
+    /// When the props last moved on (they have their own clock).
+    props_stepped: Instant,
     /// The clipboard: the compositor's data-control, our device on the seat, the selection we
     /// offer (when one was chosen from the history), the picker, and where reads come back.
     clip_manager: Option<smithay_client_toolkit::reexports::protocols::ext::data_control::v1::client::ext_data_control_manager_v1::ExtDataControlManagerV1>,
@@ -788,7 +794,13 @@ impl App {
         if self.config.dock.enabled && self.panel_index(PanelKind::Dock).is_none() {
             self.sync_dock();
         }
-        let wanted = [&self.config.pet.animal, &self.config.pet.friend].iter().filter(|a| crate::pet::Species::from_name(a).is_some()).count();
+        // The bar's day button counts the tasks left: read them once at the start (the panel
+        // reads them again each time it opens)
+        if !self.model.day.loaded && !self.day_asked && self.config.layout.left.iter().chain(&self.config.layout.center).chain(&self.config.layout.right).any(|m| m == "day") {
+            self.day_asked = true;
+            self.send(Command::DayLoad(self.day_folder()));
+        }
+        let wanted = self.pets_wanted();
         if wanted > 0 && (self.pets.len() < wanted || self.pet_idle_watch.is_none()) {
             self.sync_pet();
         }
@@ -1077,6 +1089,28 @@ impl App {
             Action::WidgetRemove(kind) => self.show_widget(&kind, false),
             Action::PetNext(slot) => self.pet_action(slot, true),
             Action::PetAway(slot) => self.pet_action(slot, false),
+            Action::PetAdd(entry) => {
+                // The new one is the last; in Settings it's the one shown next
+                let at = self.config.pet.entries().len();
+                self.pet_add(&entry);
+                self.settings_pet(crate::settings::PetPick { selected: at, adding: false });
+            }
+            Action::SettingsPet(which) => {
+                let pick = match which {
+                    Some(selected) => crate::settings::PetPick { selected, adding: false },
+                    None => crate::settings::PetPick { selected: 0, adding: true },
+                };
+                self.settings_pet(pick);
+            }
+            Action::PetSettings(slot) => {
+                self.toggle_settings(Some(true));
+                if let Some(settings) = self.settings.as_mut() {
+                    settings.page = crate::settings::PETS_PAGE;
+                    settings.scroll = 0.0;
+                    settings.query.clear();
+                }
+                self.settings_pet(crate::settings::PetPick { selected: slot, adding: false });
+            }
             Action::PetFeed => self.pet_feed(),
             Action::PetPlay => self.pet_play(),
             Action::PetYarn => self.pet_yarn(),
@@ -2605,6 +2639,8 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         overview: None,
         desks: Vec::new(),
         widget_places: crate::widgets::load_places(),
+        widget_fits: HashMap::new(),
+        day_asked: false,
         widget_drag: None,
         desk_edit: false,
         spectrum_on: false,
@@ -2624,6 +2660,7 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         pet_idle_watch: None,
         pet_pointer: None,
         props: Vec::new(),
+        props_stepped: Instant::now(),
         clip_manager: clipboard::bind_clipboard(&globals, &qh),
         clip_device: None,
         clip_source: None,

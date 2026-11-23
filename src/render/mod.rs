@@ -404,15 +404,24 @@ impl Painter {
                 }
                 Prim::Image { x, y, w, h, image, tint: tint_with, radius } => {
                     let (pw, ph) = ((w * scale).round() as u32, (h * scale).round() as u32);
-                    if let Some(sized) = self.image(image, pw, ph, *tint_with) {
+                    // A rounded picture fills its shape and is cut to it, not stretched (a photo
+                    // frame resized to any shape); a square one isn't, it's drawn as given
+                    let (cw, ch) = if *radius > 0.0 && image.width > 0 && image.height > 0 {
+                        let k = (pw as f32 / image.width as f32).max(ph as f32 / image.height as f32);
+                        (((image.width as f32 * k).round() as u32).max(pw), ((image.height as f32 * k).round() as u32).max(ph))
+                    } else {
+                        (pw, ph)
+                    };
+                    if let Some(sized) = self.image(image, cw, ch, *tint_with) {
                         let (dx, dy) = ((ox + x) * scale, (oy + y) * scale);
                         if *radius > 0.0 {
+                            let (cut_x, cut_y) = ((cw - pw) / 2, (ch - ph) / 2);
                             let pattern = tiny_skia::Pattern::new(
                                 sized.as_ref().as_ref(),
                                 tiny_skia::SpreadMode::Pad,
                                 tiny_skia::FilterQuality::Nearest,
                                 1.0,
-                                Transform::from_translate(dx.round(), dy.round()),
+                                Transform::from_translate(dx.round() - cut_x as f32, dy.round() - cut_y as f32),
                             );
                             if let Some(path) = rounded_rect(dx.round(), dy.round(), pw as f32, ph as f32, radius * scale) {
                                 let paint = Paint { shader: pattern, anti_alias: true, ..Default::default() };

@@ -13,7 +13,7 @@ notifications, lock screen (with fingerprint), polkit/Wi-Fi/Bluetooth prompts, w
 its changer (pictures, and live video/GIF wallpapers), desktop widgets (solid to see-through),
 optional frosted-glass blur by the compositor, settings app, dashboard, a day panel (to-do,
 notes), clipboard history, screenshots and recording, timers, weather, night light,
-keyboard-shortcut sheet, pets. README.md is the user-facing
+keyboard-shortcut sheet, pets (any number; cat, fox, bird, panda, tiger, lion). README.md is the user-facing
 tour, grouped by what you're doing; this file is how it works and where it stands.
 
 **The look is Asterism's own ("hairline"), chosen 2026-11-20** after the user dropped ETEA's
@@ -68,7 +68,8 @@ and Poppins (OFL), Material outline icons and Material Symbols (Apache 2.0), Pho
 
 Asterism **is** the user's shell now: niri starts `/home/uncore/.local/bin/asterism`
 (`spawn-at-startup`; Noctalia's line is commented out; the original config is saved as
-`~/.config/niri/config.kdl.before-asterism`). Binds (all `asterism msg …`): Mod+Space launcher,
+`~/.config/niri/config.kdl.before-asterism`). The bar's middle is `["resources", "clock", "day", "weather", "media"]` (`day` added
+2026-11-23). Binds (all `asterism msg …`): Mod+Space launcher,
 Mod+A control centre, Mod+Shift+D day panel, Mod+D dock, Mod+N notifications, Mod+W wallpaper changer, Mod+Shift+W random
 wallpaper, Mod+Shift+Escape session menu, Mod+Alt+L lock, Mod+Ctrl+V clipboard,
 Mod+Shift+Slash shortcuts sheet, Mod+O overview; volume/brightness/media keys stay on
@@ -107,7 +108,7 @@ history (etea-bar) was removed on request; keep the ETEA Shell credit in the REA
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 88 tests (+3 opt-in, --ignored), see below
+cargo test --release                            # 100 tests (+3 opt-in, --ignored), see below
 ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
 cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
 cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
@@ -249,7 +250,7 @@ main.rs ── CLI: run | msg … | --snapshot …
    │     timer.rs   timer actions and the once-a-second tick
    │     day.rs     the day panel: open/close (a card centred under the bar), its keys
    │               (task field, notes), tick/remove/clear, a save 1 s after the last change
-   │     pet.rs     the pets (`Vec<PetSurface>`, slot 0/1): 240×180 Overlay surfaces moved by
+   │     pet.rs     the pets (`Vec<PetSurface>`, slot = place in `[pet] pets`, no limit): 240×180 Overlay surfaces moved by
    │               margins, one timer, idle watch, drag, sounds; props (bowl, ball, yarn, bed) on Top
    │     peek.rs    the workspace card under a hovered page dot
    │     dock.rs    the dock's surface: Top layer on its edge (PanelKind::Dock), out/in
@@ -442,7 +443,7 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (88, +3 opt-in)
+### Tests (100, +3 opt-in)
 
 `live` (which files move, ffmpeg's arguments and frame size, a GIF cut/widened/shrunk to the
 screen, a GIF played round with transparency and delays, a one-frame GIF doesn't play).
@@ -481,8 +482,208 @@ fingerprint, Wi-Fi passwords, Bluetooth pairing, the window overview, the deskto
 pets, an optimization round, the drag fix, the small everyday round, the day panel, the
 temperature gauge, the dock, live wallpapers, see-through widgets and blur; newest first)
 
-**State of the tree**: the user's commits up to 26336fc (the dock) hold everything up to it.
-After it, uncommitted: live wallpapers, see-through widgets, widget blur and panel blur below.
+**State of the tree**: the user's commits up to ec587a8 (live wallpapers, blur and see-through
+widgets) hold everything up to it. After it, uncommitted: free widget resizing and any number
+of pets (with the panda, tiger and lion) below.
+
+### Less memory and CPU, round two (2026-11-23, the user: "optimize this code so that it uses
+less memory and cpu")
+
+Measured first on the user's shell (ten birds then, five by the time of the A/B): 43 MB RSS
+(16.8 MB of it the binary's pages, 10 MB heap, 5 MB shm), 5.4 % CPU, all on the Wayland thread.
+A temporary probe (timings round dispatch, flush, the pets' step, render_panel, present;
+removed after) showed the pets' drawing was nearly all of it: ~0.17 ms a pet frame, of which
+~0.12 ms painting and composing (tiny-skia filling the animal's shapes), ~0.01 ms present.
+
+- **Each pet on its own clock** (`step_pets`): it was one timer stepping and drawing every pet
+  at the busiest one's rate (one flying bird → all ten drew 30 times a second; a rolling ball →
+  60). Now a pet steps when its own `delay` is due, up to a third early so nearly-due pets go
+  together (wake-ups stayed ~60/s with five birds, as before); the props have their own clock
+  (`App::props_stepped`).
+- **Painted only where it is** (`pet::tighten`, tested): the pet's piece is cut to what its
+  prims cover (shapes, lines, rects, text generously), so only that corner of the 240×180
+  surface is painted, composed and sent.
+- **draw_pet** returns before any work when no frame is wanted (it read the config's pet list
+  and made the coat first).
+- **Frame pacing** (`Pet::delay`): 33 ms only going into a new pose, turning or moving; 50 ms
+  for a gesture, 66 ms for the last of a settling, 83/200/500 once settled (grooming and eating
+  keep 83).
+- **Fonts**: the four embedded fonts were copied into the heap (`load_font_data(to_vec())`,
+  ~4.5 MB); now `load_font_source(Source::Binary(Arc::new(&'static)))`.
+- Tried and left: fat LTO with one codegen unit (.text 11.8 → 10.5 MB, build 45 s → 3 min 40 s;
+  little of the binary is resident, kept thin); caching pet frames (a moving pet never repeats a
+  picture: 120 different in 120 frames walking; making it repeat would bring back the looping,
+  mechanical look the user had just asked to lose).
+
+A/B in nested niri, the user's config (five birds, sounds off), 30 s after 15 s to settle:
+CPU 3.2 → 1.8 % and 4.0 → 2.3 % (birds awake), 0.53 → 0.57 % (birds asleep: the nested seat
+had gone idle); RSS 34.7 → 24.6 MB, anon 11.4 → 5.2 MB, shm 18.9 → 15.1 MB (nested shm is
+inflated by the wallpaper waiting for frames). Their real screen after the restart (five
+birds, a minute in): 27.3 MB RSS (6.2 anon, 19.1 file, 2.1 shm), 2.2 % CPU; before, with ten
+birds, 43 MB (15.7 anon, 21.6 file, 5.2 shm) and 5.4 %, so part of that drop is half the birds.
+
+### Your day, apart from the calendar (2026-11-23, the user: "make it separate instead of adding
+it in calendar")
+
+- A bar module `day` (`bar.rs`): the `checklist` icon in the tools' tint and the number of open
+  tasks (none: just the icon), tooltip "Your day · N things to do", click `ToggleDay`. In the
+  default `center` after the clock; added to the user's own config the same way (their
+  `[layout] center` lists the modules, so a new default wouldn't reach it).
+- The clock's click opens the calendar menu again (it opened the day panel; no right click now).
+- The day panel no longer has the month (`popups::day`: today, timers, to-do, notes).
+- The count needs the tasks before the panel was ever opened: `tick` sends `DayLoad` once
+  (`App::day_asked`) when a bar has the module; `day_changed` redraws the bars.
+- Settings → Bar → What it shows → "Your day" (`settings::day_button`: in after the clock in
+  whichever part of the bar holds it, out from wherever it is; tested).
+
+Verified: 99 tests; snapshots of the bar (hovered: "Your day · 2 things to do") and the panel
+with a scratch todo.md. **Not verified (needs the user)**: clicks.
+
+### Settings, regrouped (2026-11-23, the user: "fix the user experience of all the settings")
+
+Audit first (every page by snapshot at width 2400): flat cards of up to 19 alike rows, the bar's
+layout on Look, rows that do nothing in the state you're in, the same description on every app
+row, empty fields saying "Not set", vague labels ("Size", "Icons", "Widgets").
+
+- **Groups**: `Control::Section` rows (`section(title, about)`) start a new card under a small
+  spaced-capital title in the accent and an optional line under it (`close` in `build` inserts
+  each card behind its rows; dividers only between rows of one card; `max_scroll` from the last
+  card). Search skips them and says where a row is ("Bar › Corners · …").
+- **Pages**: Look = Colours, Frosted glass (all seven blur switches, the widgets' too), Your
+  apps' colours. Bar = Layout (style, edge, size, icon set, workspaces: moved from Look), What it
+  shows, Clock (the date choices drawn as today), Corners, Day panel. Wallpaper = Picture,
+  Changing, Moving wallpapers, Other. Desktop = Widgets (arrange + on/off), Their look, then
+  Sticky note / Photo frame / What's playing only while that widget is shown. Dock = the switch,
+  Behaviour, Look, Apps. Pets = gallery…, All of them. Night light, Lock (+ the fingerprint
+  switch, which had no row), Notifications (Pop-ups, Battery warnings, Apps: one explanation for
+  all), Weather, Timers (Focus rounds).
+- **Only what applies**: night light's warmth unless off, its hours only on a schedule; animation
+  length unless "none"; the live wallpaper knobs only while they play; everything but the switch
+  when the shell doesn't draw the wallpaper (or the dock is off, or the weather is); the hide
+  delay only when hiding.
+- `Control::Text(value, placeholder)`: empty shows what's used instead (~/Pictures,
+  ~/Documents/Asterism, "Your time zone's city"). No page is lit in the sidebar while searching.
+
+Verified: tests `rows_that_do_nothing_are_left_out`, `search_finds_settings_and_says_where_they_are`;
+snapshots of all eleven pages, a narrow window (760) and a search. **Not verified (needs the
+user)**: by pointer.
+
+### Livelier pets and a Pets page (2026-11-23, the user: "the pets seem too mechanical… and the
+user experience is bad while adding the pets in settings")
+
+- **Motion** (`pet/mod.rs`): walks ease in and out (`speed` toward the trip's pace with
+  `speed_up`, braking so it stops on its mark; each trip ±15 % pace, `trip_pace`); turning round
+  slows it and is drawn through a narrow "facing you" (`turn` follows `facing` in 0.2 s; the
+  frame's `f` = sign × (0.22 + 0.78 |turn|)); longer walks pause now and then to look about or
+  sniff (`pause`, posed as Stand); arriving, a look about half the time. Gestures (`Gesture`,
+  `Doing`: look back, look up, sniff, ear flick, tail flick, weight shift, head tilt) every
+  1.5–6 s while still, eased in/held/out, offsets on the target pose (smaller for the bird).
+  Into a new pose (rig distance > 1.5) the parts move at their own rates (`draw::Rates`: head
+  13, body 8, tail 4.5); small movements settle evenly (11) so a still pet still stops
+  repainting. Tail sway is two incommensurate swings, not one sine. Walking head steadier and
+  lagging the body. Strolls are mostly nearby (80–420 px), a quarter across the screen. Frames
+  every 33 ms whenever anything moves (gesture, turn, pose on its way, walking: was 50 ms), the
+  calm 83/200 ms only once settled.
+- **Settings → Pets** (page 5, `PETS_PAGE`; the pages after it moved up one; icon `paw`, new in
+  all three packs): `Control::Gallery(Vec<Tile>)` (pictures in wrapping lines under the label,
+  `TILE` 124×140; a tile: portrait or icon, name, word under it, lit ring, a × `remove`).
+  "Your pets" (each pet drawn by `Pet::portrait`, sitting, in its coat; click selects, ×
+  `PetAway`; a + tile), then for the chosen pet "Animal" (pills) and "Coat" (a gallery of the
+  coats drawn), or when adding "Add which animal?" (the six drawn; `PetAdd` selects the new
+  one); sounds, volume, size, a bed button. State `Settings.pet: PetPick { selected, adding }`
+  (`Action::SettingsPet`), passed to `rows`/`search`. Desktop has a "Pets → Choose" row; the
+  pet's menu "Its coat, sounds, size…" (`Action::PetSettings(slot)`). Snapshot `--panel
+  settings --query pets:N|pets:add`. `Chance::new` is no longer test-only (portraits).
+
+Verified: 96 tests (`walks_ease_in_and_out_and_turns_take_a_moment`,
+`a_still_pet_moves_a_little_now_and_then`; the calm-frames test still holds with gestures held
+off); `frame_cost`: 0.05–0.26 ms a frame (bird–tiger); snapshots of the Pets page (a pet
+chosen with its coats, and adding). **Not verified (needs the user)**: how the motion looks on
+their screen; the page by pointer.
+
+### Any number of pets; panda, tiger, lion (2026-11-23, the user: "add pets without any count…
+and add any other animals like panda, tiger, lion too")
+
+- **Config**: `[pet] pets` (`Option<Vec<String>>`), each "animal" or "animal:coat"; absent →
+  the older `animal`/`coat` + `friend`/`friend_coat` (`PetSettings::entries()`, which every
+  reader uses; `config::pet_entry` splits one). Any write goes to `pets` (`App::write_pets`),
+  after which the old keys are ignored (left in the file). The user's config still has the old
+  two keys (cat + fox) until they first change a pet.
+- **App** (`app/pet.rs`): `Slot` = usize, the place in the list. `sync_pet` asks the pure
+  `pet::match_pets(shown, wanted)` (tested) what becomes of each pet on screen: same place and
+  animal, then the same animal elsewhere (one before it removed), then the same place as
+  another animal ("Another animal"), else it goes; leftovers are made, spread along the floor
+  by the golden ratio. `pet_region` sizes the input region to the animal. `pet_action(slot,
+  next)` rewrites that entry or removes it; `pet_add(entry)` appends (empty: an animal not out
+  yet, else the next after the last). Menu key `pet.N` (the menu says "Your panda", and has
+  *Another pet*); `Action::PetNext/PetAway(usize)`, `PetAdd(String)`.
+- **msg**: `pet add [ANIMAL[:COAT]]`, `pet N next|away` (N from 1); `pet friend …` = `pet 2 …`.
+- **Settings**: (replaced the same day by the Pets page, above.) Choices write the whole list
+  with one entry changed (`Value::List`).
+- **Animals** (`pet/mod.rs` `Species::{Panda, Tiger, Lion}`, `ALL`, `title`, `scale` (bird
+  1.35, the three 1.25), `pace` (panda 0.7)); poses: the big cats' tails hang with the end up,
+  heavy animals hold the head lower. Words and voices: tiger roars/chuffs/growls, lion
+  roars/chuffs/growls, panda bleats (growls when complaining).
+- **Drawing** (`pet/draw.rs`): `Build` per animal (round or pointed ears, `Tail` Thin/Brush/
+  Tuft/Stub, heft, skull, whiskers, slit pupils); `Pattern::Stripes` (body, legs, brow, cheeks,
+  tail rings, black tip), `Pattern::Panda` (dark legs, shoulders, ears, eye patches), `Coat.mane`
+  (a shaggy ring behind the head). Round ears are drawn in front of the skull (a panda's black
+  ears hid behind it on a dark wallpaper). Coats: panda giant/brown, tiger bengal/white, lion
+  lion/lioness, all + wallpaper.
+- **Voices** (`pet/sound.rs`): `Roar` (low, rough, swelling), `Growl` (82–90 Hz, 18 Hz rattle),
+  `Chuff` (2–3 breathy puffs), `Bleat` (nasal "eh", 9 Hz waver). Not listened to by anyone yet.
+
+Verified: 94 tests (`pets_keep_themselves_as_the_list_changes`; the sleep, stay-on-screen and
+every-pose-every-coat tests and every voice now run for all six; ipc `pet add`, `pet 7 next`);
+snapshots of every pose of the three in each coat, and Settings (search "pet") with four pets;
+nested niri with sounds off: 3 pets → `msg pet add` ×4 → 7 surfaces, `add` (none named) → 8,
+`pet 2 away` → 7 with the rest kept, `pet 1 next` cat → fox; the list written each time; no
+errors; ~37 MB with seven; CPU about 1.5 % of a core per pet awake. **Not verified (needs the
+user)**: hearing the new voices, the menus by pointer (Another pet, Remove in Settings), many
+pets on their visible screen.
+
+### Free widget resizing (2026-11-23, the user: "resize freely instead of zooming with scroll")
+
+- **Model**: `Place` gained `size: Option<(w, h)>`, the box in logical px (saved as
+  `[x, y, scale, w, h]`; older `[x, y]`/`[x, y, scale]` still read, `scale` stays for them).
+  `widgets::fit_box(natural, size)`: the scale is the largest at which the widget as built fits
+  the box (no limits: the user asked for none, after first meeting 60–200 %), and the rest is
+  room it lays itself out in. SMALLEST/BIGGEST now only bound old files' scales. So widening gives
+  room, only growing both ways makes words bigger. `arrange` builds each widget once with no
+  room (its natural size), then again in the room when it has a box (requests from the second
+  build are dropped), and reports `Fit { natural, scale }` per kind (`App::widget_fits`, used
+  for the blur radius and to start a resize).
+- **Builders take `room`** (`build(kind, v, room)`, `placeholder(…, room)`; never smaller than
+  as built, `grow`): weather centres today, and once tall enough lists the days ahead along
+  the foot; media keeps the song at the top (centred with no words) and the words at the foot;
+  visualizer and photos fill; the note wraps to the width and shows as many lines as fit;
+  calendar rows share the height; system rows too. The clock (`fills` false) only zooms.
+- **Rounded pictures now cover their shape** (render/mod.rs, `Prim::Image` with radius > 0):
+  scaled to fill and cut, not stretched, so a resized photo frame keeps the picture's
+  proportions. Square ones (album art, icons) look the same as before.
+- **Editor**: `widgets::handles(kind)` (n, s, w, e, nw, sw, se; the ne corner is the ×'s; the
+  clock only corners; edge none) as `edit.size.KIND.DIR` pieces (blocks, no action) on the
+  widget's surface (`group_of`); on the lit frame, short accent bars mid-side and dots on the
+  corner curves; while resizing, a "W × H" pill under the frame. Cursors: Ns/Ew/Nwse/Nesw.
+- **Drag** (`app/desk.rs`): a press on a handle makes `WidgetDrag.resize = Some(Resize { way,
+  press, from })`; `move_widget` → `resized()` (pure, tested): pulled edges move by the
+  pointer's motion in 8 px steps, the far edges stay, from `LEAST_SIDE` (32 px, so the handles
+  can still be caught) to the whole screen; the clock keeps its shape (the mean of both pulls).
+  `arrange` keeps widgets 16 px in only while they fit that (then up to the edges); the
+  editor's frame radius and side handles shrink for tiny widgets. Saved on release like a move.
+  The wheel no longer resizes (STEP gone).
+- Docs: README (arranging widgets), config.example.toml.
+
+Verified: 93 tests (new: `a_resized_place_keeps_its_box`, `a_box_gives_room_before_it_makes_
+things_bigger`, `handles_say_which_way_they_pull`, desk `a_handle_pulls_its_own_edges`,
+`the_clock_keeps_its_shape`); snapshots with boxes in a scratch widgets.json (wide weather,
+tall weather with four days ahead, a portrait photo frame cropped not squashed, wide/short
+system, the lit frame's handles); nested niri: `msg widgets edit` maps the dim, strip and four
+widget surfaces with their handles, `done` puts them back, no errors. **Not verified (needs
+the user)**: dragging the handles for real (cursor shapes, the surface following while it
+grows, left/top handles keeping the far edge still), the result after Done.
+`cargo clippy` shows one warning, in appcolors.rs (a needless range loop), already there
+before this round.
 
 ### Blur behind the control centre and notifications (2026-11-22, the user asked "too")
 
@@ -951,8 +1152,7 @@ How each works, where it lives, and how it was checked:
   wallpaper, Another wallpaper, Settings. `open_panel_on` opens a panel on a given output.
 - **Widget sizes**: places are now `widgets::Place { x, y, scale }`, saved as `[x, y, scale]`
   (old `[x, y]` files read as scale 1). `Piece::scale(k)` (ui.rs) multiplies every prim, text
-  included. In the editor the wheel on a widget changes it by 10% (`STEP`), 60–200%
-  (`SMALLEST`/`BIGGEST`), with a percentage badge on its frame while pointed at.
+  included. (The wheel resizing first done here was replaced by free resizing, 2026-11-23.)
 - **Photo frame** (`"photos"`): `[widgets] photos` (empty → ~/Pictures), `photo_minutes`;
   folder listed on the services thread (`Command::ListPhotos`), pictures through the existing
   thumbnail cache (384×240); which one = (minutes / photo_minutes + photo_step) × a large prime
@@ -1202,6 +1402,8 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 - The day panel by pointer and keys: the clock and top-left corner, adding/ticking/removing
   tasks, writing notes, Mod+Shift+D; the files landing in ~/Documents/Asterism.
 - The dock by pointer: the edge reveal, magnify, clicks, menus, drag to reorder/pin/unpin, trash.
+- Resizing widgets by their handles (sides and corners) while arranging.
+- The new pets' voices (roar, chuff, growl, bleat) heard; adding and removing pets by pointer.
 - Day-to-day use as the only shell (since 2026-11-21): the user hasn't reported back yet.
 
 ### Known limits

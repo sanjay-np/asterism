@@ -17,7 +17,7 @@ no GTK, Qt or QML.
 | | |
 |---|---|
 | **Compositors** | niri, and Hyprland (both the Lua config of 0.55+ and older hyprlang) |
-| **Footprint** | ~32 MB of memory with wallpaper and widgets up, ~0.3 % of one core at rest |
+| **Footprint** | ~27 MB of memory with the wallpaper, dock and pets up, ~0.3 % of one core at rest |
 | **Dependencies** | one system library (libxkbcommon); everything else optional, found at run time |
 | **Configuration** | a Settings app, or one commented TOML file, reloaded live |
 | **Licence** | GPL-3.0-or-later |
@@ -44,10 +44,10 @@ no GTK, Qt or QML.
 |---|---|
 | 🎨 **Colour from your wallpaper** | A Material 3 scheme grown from each new wallpaper, applied to the bar, menus, widgets — and, if you like, your terminal and GTK apps; frosted-glass blur behind panels, the dock and widgets |
 | 🧭 **Everything in reach** | App launcher with maths, emoji and SSH; a dock that hides until you want it; window overview; workspace previews on hover; clipboard history; keyboard-shortcut sheet |
-| 🗓️ **Your day** | Calendar, timers, a to-do list and notes, kept as plain Markdown files |
+| 🗓️ **Your day** | Timers, a to-do list and notes, a button of its own in the bar, kept as plain Markdown files |
 | 🖼️ **A living desktop** | Wallpaper changer with animated transitions, live video and GIF wallpapers, desktop widgets you arrange by hand (solid, see-through or frosted), a music visualizer |
 | 🔒 **The serious parts** | Lock screen (with fingerprint), polkit agent, Wi-Fi password prompts, Bluetooth pairing, notification daemon |
-| 🐈 **A little life** | Optional pets — a cat, a fox or a bird — that live on the screen and react to you |
+| 🐈 **A little life** | Optional pets, as many as you like — cats, foxes, birds, pandas, tigers, lions — that live on the screen and react to you |
 | ⚙️ **Scriptable** | Every panel and action through `asterism msg …`, for keybindings and scripts |
 
 ## Look and feel
@@ -79,8 +79,8 @@ Phosphor), and motion is kept quick.
 
 **Frosted glass, if you like it.** The compositor can blur what's behind the dock, the app
 grid, the overview, the wallpaper picker, the control centre, notifications (pop-ups and the
-notification centre) and the desktop widgets. Each is a switch: Settings → Look (the widgets':
-Settings → Desktop), or in the config:
+notification centre) and the desktop widgets. Each is a switch, all together in Settings → Look →
+Frosted glass, or in the config:
 
 ```toml
 [blur]
@@ -109,7 +109,8 @@ the `frame` style the control centre is joined to the frame, so it stays solid.
 |---|---|---|---|---|
 | `launcher` | An apps button | Launcher | | |
 | `pages` | Workspaces; hover one for a card of its windows | Go there | Window overview | Next / previous |
-| `clock` | Time and date | [Your day](#your-day) | Calendar | |
+| `clock` | Time and date | Calendar | | |
+| `day` | A checklist, with how many tasks are left | [Your day](#your-day) | | |
 | `weather` | Current weather | Forecast | | |
 | `media` | What's playing (MPRIS) | Player menu | Play / pause | |
 | `resources` | CPU, memory and temperature rings (the heat fills from 30 to 100 °C, warns past 85), network speed | Dashboard, traffic | | |
@@ -159,12 +160,13 @@ Esc or a click beside the card closes it.
 
 ## Your day
 
-A click on the clock, the top-left corner, Mod+Shift+D, or `asterism msg day`. It opens in the
-middle, under the clock.
+A click on its own button in the bar (a checklist beside the clock, with how many tasks are
+left), the top-left corner, Mod+Shift+D, or `asterism msg day`. It opens in the middle, under
+the bar. The clock opens the calendar.
 
 <p align="center"><img src="screenshots/readme/day.png" alt="The day panel: date, month calendar, timers, a to-do list and notes"></p>
 
-- **Today and the month**: the weekday, date and ISO week; a calendar you page with the arrows or the wheel.
+- **Today**: the weekday, date and ISO week.
 - **Timers**: start a focus session or a 5 / 10 / 25-minute countdown; running timers show here with Pause and Stop.
 - **To do**: click *Add a task* (or just start typing) and press Enter. Click a task to tick it, × to remove it, *Clear done* to sweep ticked ones away.
 - **Notes**: click and write. Tab moves between the task field and the notes; Esc leaves a field, then closes.
@@ -297,17 +299,20 @@ Settings → Desktop, or run `asterism msg widgets edit`. The screen dims and ea
 frame:
 
 - Drag a widget to move it (it snaps to an 8 px grid).
-- Scroll on it to resize it (60–200 %).
+- Drag its sides or corners to resize it, to any width and height: a wider or taller card gives
+  its contents room (a tall weather card shows the days ahead, a big note more lines), and the
+  words grow as far as both ways allow. No limit but the screen (and a sliver small enough to
+  still catch). The clock keeps its shape.
 - × takes it off; the strip at the top adds the others.
 - Esc, Enter or Done finishes.
 
 <p align="center"><img src="screenshots/readme/arrange.png" alt="Arranging widgets: frames with close buttons and a strip to add more"></p>
 
 **Their background** can be anything from solid to see-through: `[widgets] opacity` (0–100 %,
-60 by default, or Settings → Desktop → Widget background). Below 40 % the words get a soft
+60 by default, or Settings → Desktop → Their look → Background). Below 40 % the words get a soft
 shadow so a busy wallpaper doesn't swallow them; at 0 only the words (and the hairline round
 each card, unless `outline = false`) are left. The sticky note's paper fades with them.
-**Blur** (`blur = true`, Settings → Desktop → Blur behind widgets) frosts what's behind each card,
+**Blur** (`blur = true`, Settings → Look → Frosted glass → Desktop widgets) frosts what's behind each card,
 shaped to its corners; it's the compositor's, so niri 26 or another that offers
 ext-background-effect (on Hyprland: `layerrule = blur, asterism-desktop`). With a light
 background (20–40 %) it reads as frosted glass.
@@ -339,10 +344,11 @@ only while warming, so calibration tools keep working the rest of the time.
 
 ## Pets
 
-An optional companion that lives on the screen above your windows: a **cat**, a **fox** or a
-**bird**, drawn by Asterism itself. Each has real coats to choose from (tabby, ginger, black,
-white, tuxedo or Siamese cat; red or arctic fox; sparrow, robin or bluebird) or the wallpaper's
-colours.
+Optional companions that live on the screen above your windows, as many as you like: a **cat**,
+a **fox**, a **bird**, a **panda**, a **tiger** or a **lion**, drawn by Asterism itself. Each has
+real coats to choose from (tabby, ginger, black, white, tuxedo or Siamese cat; red or arctic fox;
+sparrow, robin or bluebird; giant or brown panda; Bengal or white tiger; lion or lioness) or the
+wallpaper's colours.
 
 <p align="center">
   <img src="screenshots/readme/pet-fox.png" alt="The red fox in every pose" width="49%">
@@ -357,21 +363,26 @@ colours.
   gets the zoomies when the machine is busy, sways to music, and perks up at notifications.
 - **Your pointer:** over the desktop and the bar, it chases the pointer, and crouches and
   pounces when it's near.
+- **Small movements:** it eases into a walk and slows to a stop, turns round rather than
+  flipping, stops on the way to look about or sniff, and while still it glances back, looks up,
+  flicks an ear or the tip of its tail, tilts its head, shifts its weight.
 
 **What you can do with it:**
 - **Click** it to stroke it: it purrs.
 - **Drag** it to pick it up: it dangles and lands on its feet.
 - **Right-click** it to *feed* it, *play* (a ball or yarn), give it a *bed*, choose *another
-  animal*, or *put it away*.
+  animal*, add *another pet*, open its settings, or *put it away*.
 
-It speaks now and then with synthesized meows, trills, purrs, yips or chirps. They're quiet, and
-silent in do-not-disturb and while the screen is locked.
+It speaks now and then with synthesized meows, trills, purrs, yips, chirps, roars, chuffs,
+growls or bleats. They're quiet, and silent in do-not-disturb and while the screen is locked.
 
-A **second pet** (`[pet] friend`) keeps the first company: hellos, games of chase, naps side by
-side. While the pets sit still their frames step rather than glide, so they cost almost nothing.
+**More pets** keep each other company: hellos, games of chase, naps side by side. There's no
+limit (`[pet] pets = ["cat:ginger", "panda", "lion"]`); each one costs about half a percent of
+a core while it moves, and very little while it sits or sleeps. While the pets sit still their frames step rather than glide, so they cost almost nothing.
 
-Set them up in Settings → Desktop → Pet or in `[pet]`; the commands are in the
-[Command reference](#command-reference).
+Set them up in Settings → Pets: your pets as pictures of themselves (click one to change its
+animal or coat, × to put it away, + to add one from a gallery of the animals), or in `[pet]`;
+the commands are in the [Command reference](#command-reference).
 
 ## Notifications and on-screen cards
 
@@ -396,11 +407,19 @@ Other cards, from left to right after the pop-ups:
 
 The control centre's Settings tile, the gear in the bar, or `asterism msg settings`. Settings is
 an ordinary window, tiled and moved like any app. Its pages: Look, Bar, Wallpaper, Desktop,
-Night light, Lock, Notifications, Weather and Timers.
+Dock, Pets, Night light, Lock, Notifications, Weather and Timers.
 
 <p align="center"><img src="screenshots/readme/settings.png" alt="The Settings window on its Look page"></p>
 
-- **Search:** type anywhere in the window to search every page.
+- **Grouped:** each page is split into titled groups, each on a card of its own (Bar has Layout,
+  What it shows, Clock, Corners and Day panel, for instance).
+- **Only what applies:** a setting appears when it does something: night light's hours only on
+  a schedule, the moving wallpaper's frame rate only while they play, a widget's own settings
+  only while it's on the desktop, and so on. Empty fields show what's used instead.
+- **Pets** are chosen by picture: your pets drawn as themselves, the coats drawn too, and a
+  gallery of the animals to add one.
+- **Search:** type anywhere in the window to search every page; each result says where it lives
+  ("Bar › Corners").
 - **Saving:** each change is written to `config.toml` at once, keeping your comments and order.
 - **Window rules:** the app id is `asterism-settings`. For example, to open it floating on niri:
 
@@ -528,13 +547,13 @@ never written to disk; passwords are zeroed in memory after use and never logged
 
 ## Performance
 
-Measured on a 1920×1200 laptop with the wallpaper, three widgets and a pet:
+Measured on a 1920×1200 laptop with the wallpaper, the dock and five pets out:
 
 | | |
 |---|---|
-| Memory | ~32 MB resident, of which ~21 MB is the program and its fonts (file-backed, shared) |
+| Memory | ~27 MB resident, of which ~19 MB is the program and its fonts (file-backed, shared); ~6 MB its own |
 | CPU at rest | ~0.3 % of one core |
-| CPU with a pet about | +1–2 % (less while it sits or sleeps) |
+| CPU with pets about | about 0.5 % for each one moving (much less while they sit or sleep) |
 | Wallpaper transition | 2–6 ms per frame at 1920×1200 |
 | Live wallpaper, video | about ¼ of a core and 75–150 MB in `ffmpeg` at half size and 30 fps; nothing while held still |
 | Live wallpaper, GIF | decoded in the shell; a full-HD GIF adds ~20 MB, small ones next to nothing |
@@ -545,6 +564,9 @@ How it stays light:
   sent.
 - **Buffers:** large surfaces get buffers of their own, which are freed when the surface goes.
 - **Pictures:** decoded wallpapers are handed back to the system as soon as they've been painted.
+- **Pets:** each moves on by its own clock (a sleeping one a few times a second, a running one
+  thirty), and only the corner of its surface it covers is painted and sent. Built-in fonts are
+  read where they lie in the program, not copied.
 - **Out of sight, out of work:** the dock draws and sends nothing while it's down, and wakes
   only for news it shows (windows, icons, the trash). A live wallpaper gets no frames while
   windows cover it, holds still on battery, locked or while you're away, and after a minute of
@@ -759,7 +781,7 @@ scripts. `asterism msg help` prints this list.
 | `lock` | Lock the screen |
 | `screenshot [region\|screen\|window]` · `screen-text` · `record [audio]` | Capture · copy text from a region · start or stop recording |
 | `timer MINUTES` · `timer pause\|cancel` · `focus` · `stopwatch [lap\|reset]` | Timers |
-| `pet feed\|play\|yarn\|bed\|nobed` · `pet [friend] next\|away` | Pets and their things |
+| `pet feed\|play\|yarn\|bed\|nobed` · `pet add [ANIMAL[:COAT]]` · `pet [N] next\|away` | Pets and their things |
 | `reload` · `ping` | Re-read the config · check the shell is running |
 
 Other entry points: `asterism lock` runs the lock screen alone, `asterism unlock` releases it

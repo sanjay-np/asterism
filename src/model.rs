@@ -528,7 +528,8 @@ pub enum Request {
     Overview(Option<bool>),
     /// Arranging the desktop's widgets: start, finish, or (None) the other way.
     Widgets(Option<bool>),
-    /// Something for the pets: feed, play, yarn, bed, nobed, next, away, friend next, friend away.
+    /// Something for the pets: feed, play, yarn, bed, nobed, next, away, "N next", "N away" (N from
+    /// 1), add, "add ANIMAL[:COAT]".
     Pet(String),
     /// The text in a region of the screen onto the clipboard.
     ScreenText,

@@ -71,8 +71,9 @@ pub struct Clip {
 impl Text {
     pub fn new(family: &str) -> Self {
         let mut fonts = FontSystem::new();
+        // Read where they are in the program, not copied (Google Sans Flex alone is 4 MB)
         for data in FONTS {
-            fonts.db_mut().load_font_data(data.to_vec());
+            fonts.db_mut().load_font_source(cosmic_text::fontdb::Source::Binary(std::sync::Arc::new(data)));
         }
         Self { fonts, swash: SwashCache::new(), family: family.to_string(), layouts: HashMap::new(), frame: 0 }
     }

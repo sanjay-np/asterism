@@ -20,7 +20,7 @@ pub(super) const TASK_FIELD: u8 = 1;
 pub(super) const NOTES_FIELD: u8 = 2;
 
 impl App {
-    fn day_folder(&self) -> std::path::PathBuf {
+    pub(super) fn day_folder(&self) -> std::path::PathBuf {
         crate::day::folder(&self.config.day.folder)
     }
 
@@ -55,6 +55,10 @@ impl App {
     pub(super) fn day_changed(&mut self) {
         self.day_dirty = Some(Instant::now());
         self.redraw_day();
+        // The bar's day button counts what's left to do
+        for bar in &mut self.bars {
+            bar.surf.dirty = true;
+        }
     }
 
     pub(super) fn redraw_day(&mut self) {

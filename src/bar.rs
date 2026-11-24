@@ -165,11 +165,19 @@ impl Ctx<'_> {
         let t = self.theme;
         let state = &self.model.compositor;
         let mut cells: Vec<(i64, i64, Option<Workspace>)> = Vec::new();
+        // niri keeps only the workspaces in use and one empty one after them; the bar still
+        // shows `pages` of them, the ones niri doesn't have yet as places that all lead to that
+        // empty one (niri numbers it next in line once something opens there)
+        let mut empty_one = None;
         match state.kind {
             CompositorKind::Niri => {
                 let mut on: Vec<&Workspace> = state.workspaces_on(self.output).collect();
                 on.sort_by_key(|w| w.idx);
+                empty_one = on.last().map(|w| w.id);
+                let next = on.last().map_or(1, |w| w.idx + 1);
                 cells.extend(on.into_iter().map(|w| (w.id, w.idx, Some(w.clone()))));
+                // Their ids are made up (below zero), so nothing takes them for real ones
+                cells.extend((next..=self.config.pages as i64).map(|idx| (-idx, idx, None)));
             }
             _ => {
                 // Hyprland: a group of pages, the one holding this output's workspace
@@ -203,7 +211,12 @@ impl Ctx<'_> {
             let w = if t.numbers { t.page_width.max(self.text.measure(&figure, figure_font).0 + 14.0) } else { t.page_width };
             let mut piece = Piece::new(&key, w, h);
             piece.pad = 24.0;
-            piece.actions.left = send(Command::FocusWorkspace(WorkspaceTarget::Id(id)));
+            let to_come = state.kind == CompositorKind::Niri && id < 0;
+            let go = if to_come { empty_one.unwrap_or(id) } else { id };
+            piece.actions.left = send(Command::FocusWorkspace(WorkspaceTarget::Id(go)));
+            if to_come {
+                piece.opacity = 0.6;
+            }
             piece.actions.right = Some(Action::ToggleOverview);
             piece.actions.up = send(Command::FocusWorkspace(WorkspaceTarget::Step(output.clone(), -1)));
             piece.actions.down = send(Command::FocusWorkspace(WorkspaceTarget::Step(output.clone(), 1)));
@@ -219,22 +232,28 @@ impl Ctx<'_> {
                 }
             }
             let names: Vec<String> = names.into_iter().map(|(n, times)| if times > 1 { format!("{n} ×{times}") } else { n }).collect();
-            piece.label = Some(if names.is_empty() { format!("Workspace {idx}") } else { format!("{idx} · {}", names.join(", ")) });
+            piece.label = Some(if names.is_empty() { format!("Workspace {idx} · empty") } else { format!("{idx} · {}", names.join(", ")) });
             piece.lift = true;
             if t.numbers {
                 let (tw, th) = self.text.measure(&figure, figure_font);
                 if t.kanji {
-                    // The one you're on takes the accent and a bōten (傍点), the emphasis dot set
-                    // over a character in Japanese type; both fade across, nothing moves
+                    // The one you're on takes the accent and a bōten (傍点), the emphasis dot of
+                    // Japanese type, set under the character (as in horizontal text, beside the
+                    // underline's place rather than over the figure); both fade across
                     let fade = self.anim.value(&format!("{key}.fill"), if active { 1.0 } else { 0.0 }, t.normal, Ease::OutCubic);
                     let rest = if count > 0 { t.icon_tint(Icons::Status) } else { t.outline };
                     let color = rest.mix(t.color_text, light * 0.5 * (1.0 - fade)).mix(t.primary, fade);
                     let (x, y) = (((w - tw) / 2.0).round(), ((h - th) / 2.0).round());
                     piece.prims.push(Prim::Text { x, y, text: figure, font: figure_font, color });
+                    // The dot takes the underline's place: the one you're on is marked already
+                    piece.lift = !active;
                     if fade > 0.01 {
-                        let r = 1.9;
-                        let top = (h - (t.text + 2.0)) / 2.0 - 2.0;
-                        piece.prims.push(Prim::Rect { x: w / 2.0 - r, y: top - r, w: r * 2.0, h: r * 2.0, radius: r, color: t.primary.alpha(fade) });
+                        // Well clear of the character's ink (二's lower stroke reaches about 0.47
+                        // of the size below the middle): at 1× a nearer dot read as part of it
+                        let r = (2.2 * t.scale).max(1.8);
+                        let ink = h / 2.0 + (t.text + 2.0) * 0.47;
+                        let below = ink + 4.0 * t.scale + r;
+                        piece.prims.push(Prim::Rect { x: w / 2.0 - r, y: below - r, w: r * 2.0, h: r * 2.0, radius: r, color: t.primary.alpha(fade) });
                     }
                     pieces.push(piece);
                     continue;
@@ -512,6 +531,47 @@ impl Ctx<'_> {
         Module { pieces, spacing: (t.spacing * 0.8).round() }
     }
 
+    // ------------------------------------------------------------ privacy
+
+    /// The privacy pill: a tonal capsule holding an icon for each sense an app is using, so it
+    /// shows from across the room without shouting. A paused screencast is drawn faint.
+    fn privacy(&mut self) -> Option<Piece> {
+        let t = self.theme;
+        let model = self.model;
+        let using = crate::privacy::InUse::of(model, &self.config.privacy);
+        if using.is_empty() {
+            return None;
+        }
+        let mut senses: Vec<(&str, bool)> = Vec::new();
+        if !using.microphone.is_empty() {
+            senses.push((if model.audio.mic_muted { "microphone-off" } else { "microphone" }, true));
+        }
+        if !using.camera.is_empty() {
+            senses.push(("camera", true));
+        }
+        if !using.screen.is_empty() {
+            senses.push(("screen-share", using.screen.iter().any(|c| c.active)));
+        }
+        let size = (t.icon - 3.0).round();
+        let (pad, gap) = (7.0, 4.0);
+        let h = (t.icon + 4.0).round();
+        let n = senses.len() as f32;
+        let w = pad * 2.0 + size * n + gap * (n - 1.0);
+        let mut piece = Piece::new("status.privacy", w, h);
+        piece.prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, radius: h / 2.0, color: t.primary_container });
+        for (i, (icon, lit)) in senses.into_iter().enumerate() {
+            let color = if lit { t.on_primary_container } else { t.on_primary_container.fade(0.45) };
+            piece.prims.push(Prim::Icon { x: pad + i as f32 * (size + gap), y: ((h - size) / 2.0).round(), size, name: icon.into(), color });
+        }
+        piece.lift = true;
+        piece.label = Some(using.summary());
+        piece.actions.left = menu(Kind::Privacy);
+        if !using.microphone.is_empty() {
+            piece.actions.right = send(Command::ToggleMicMute);
+        }
+        Some(piece)
+    }
+
     // ------------------------------------------------------------ status
 
     fn status(&mut self) -> Module {
@@ -533,11 +593,8 @@ impl Ctx<'_> {
             piece.actions.left = send(Command::RecordStop);
             pieces.push(piece);
         }
-        // Someone is listening: the microphone lights up
-        if !model.audio.listening.is_empty() {
-            let mut piece = self.icon_text("status.listening", "microphone", "", t.mic, t.mic);
-            piece.label = Some(format!("Listening: {}", model.audio.listening.join(", ")));
-            piece.actions.left = menu(Kind::Sound);
+        // An app using the microphone, a camera or the screen: a pill with one icon for each
+        if let Some(piece) = self.privacy() {
             pieces.push(piece);
         }
         let percent = self.config.percent;

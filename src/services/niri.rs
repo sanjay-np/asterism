@@ -2,11 +2,11 @@
 //! first, then each change), and every action gets a connection of its own. Requests and
 //! replies are one JSON line each.
 
-use super::{Out, xkb};
-use crate::model::{Command, CompositorKind, CompositorState, Update, Window, Workspace, WorkspaceTarget};
+use super::{Out, privacy, xkb};
+use crate::model::{Cast, CastTarget, Command, CompositorKind, CompositorState, Update, Window, Workspace, WorkspaceTarget};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -89,11 +89,31 @@ struct Layouts {
     current_idx: u8,
 }
 
+/// A screencast as niri tells it.
+#[derive(Deserialize, Clone, Default)]
+#[serde(default)]
+struct NiriCast {
+    stream_id: u64,
+    session_id: u64,
+    /// {"Output":{"name":…}}, {"Window":{"id":…}} or {"Nothing":{}}
+    target: Value,
+    is_active: bool,
+    /// The taker's process, known only for wlr-screencopy.
+    pid: Option<i32>,
+    /// The stream's PipeWire node, once there is one.
+    pw_node_id: Option<u64>,
+}
+
 #[derive(Default)]
 struct Niri {
     workspaces: Vec<NiriWorkspace>,
     windows: HashMap<u64, NiriWindow>,
     layouts: Layouts,
+    casts: BTreeMap<u64, NiriCast>,
+    /// Which app takes each cast (by stream), once found.
+    cast_apps: HashMap<u64, String>,
+    /// A cast came or changed since its app was last looked for.
+    casts_changed: bool,
 }
 
 impl Niri {
@@ -155,6 +175,22 @@ impl Niri {
             "KeyboardLayoutSwitched" => {
                 self.layouts.current_idx = data.get("idx").and_then(Value::as_u64).unwrap_or(0) as u8;
             }
+            "CastsChanged" => {
+                let casts: Vec<NiriCast> = serde_json::from_value(parse("casts")).unwrap_or_default();
+                self.casts = casts.into_iter().map(|c| (c.stream_id, c)).collect();
+                self.casts_changed = true;
+            }
+            "CastStartedOrChanged" => {
+                if let Ok(cast) = serde_json::from_value::<NiriCast>(parse("cast")) {
+                    self.casts.insert(cast.stream_id, cast);
+                    self.casts_changed = true;
+                }
+            }
+            "CastStopped" => {
+                let id = data.get("stream_id").and_then(Value::as_u64).unwrap_or(0);
+                self.casts.remove(&id);
+                self.cast_apps.remove(&id);
+            }
             _ => return false,
         }
         true
@@ -200,7 +236,55 @@ impl Niri {
         state.layout_names = self.layouts.names.clone();
         state.layouts = self.layouts.names.iter().map(|n| xkb::code_of(n)).collect();
         state.layout = self.layouts.current_idx as usize;
+        state.casts = self
+            .casts
+            .values()
+            .map(|c| Cast {
+                stream: c.stream_id,
+                session: Some(c.session_id),
+                app: self.cast_apps.get(&c.stream_id).cloned().unwrap_or_default(),
+                target: self.cast_target(&c.target),
+                active: c.is_active,
+            })
+            .collect();
         state
+    }
+
+    fn cast_target(&self, target: &Value) -> CastTarget {
+        if let Some(name) = target.pointer("/Output/name").and_then(Value::as_str) {
+            CastTarget::Output(name.into())
+        } else if let Some(id) = target.pointer("/Window/id").and_then(Value::as_u64) {
+            let window = self.windows.get(&id);
+            CastTarget::Window(window.and_then(|w| w.title.clone().or(w.app_id.clone())).unwrap_or_default())
+        } else {
+            CastTarget::Nothing
+        }
+    }
+
+    /// Looks for the app taking each cast not named yet: the taker's process for
+    /// wlr-screencopy, what reads the stream in PipeWire's graph for the rest. Returns whether
+    /// every cast has a name now (a stream's reader is linked a moment after it starts).
+    async fn name_casts(&mut self) -> bool {
+        self.cast_apps.retain(|id, _| self.casts.contains_key(id));
+        let unnamed: Vec<&NiriCast> = self.casts.values().filter(|c| !self.cast_apps.contains_key(&c.stream_id)).collect();
+        if unnamed.is_empty() {
+            return true;
+        }
+        let graph = if unnamed.iter().any(|c| c.pid.is_none() && c.pw_node_id.is_some()) { privacy::graph().await } else { None };
+        let mut named = Vec::new();
+        for cast in &unnamed {
+            let app = match (cast.pid, cast.pw_node_id, &graph) {
+                (Some(pid), _, _) => privacy::process_name(pid as u32),
+                (None, Some(node), Some(graph)) => graph.readers(node).join(", "),
+                _ => String::new(),
+            };
+            if !app.is_empty() {
+                named.push((cast.stream_id, app));
+            }
+        }
+        let all = named.len() == unnamed.len();
+        self.cast_apps.extend(named);
+        all
     }
 }
 
@@ -242,8 +326,11 @@ pub async fn run(out: Out, mut commands: UnboundedReceiver<Command>) {
         let mut lines = BufReader::new(stream).lines();
         let mut niri = Niri::default();
         let mut pending = false;
+        // Looking again for the app taking a cast: three times, a second apart
+        let mut look_again = 0;
         loop {
             let settle = tokio::time::sleep(Duration::from_millis(if pending { 12 } else { 3_600_000 }));
+            let again = tokio::time::sleep(Duration::from_secs(1));
             tokio::select! {
                 line = lines.next_line() => match line {
                     Ok(Some(line)) => {
@@ -271,11 +358,25 @@ pub async fn run(out: Out, mut commands: UnboundedReceiver<Command>) {
                     }
                     Command::SetLayout(index) => action(&socket, json!({ "SwitchLayout": { "layout": { "Index": index } } })).await,
                     Command::Quit => action(&socket, json!({ "Quit": { "skip_confirmation": false } })).await,
+                    Command::StopCast(session) => action(&socket, json!({ "StopCast": { "session_id": session } })).await,
                     _ => {}
                 },
                 _ = settle, if pending => {
                     pending = false;
+                    if std::mem::take(&mut niri.casts_changed) {
+                        look_again = if niri.name_casts().await { 0 } else { 3 };
+                    }
                     out.send(Update::Compositor(niri.state()));
+                }
+                _ = again, if look_again > 0 && !pending => {
+                    look_again -= 1;
+                    let before = niri.cast_apps.len();
+                    if niri.name_casts().await {
+                        look_again = 0;
+                    }
+                    if niri.cast_apps.len() != before {
+                        out.send(Update::Compositor(niri.state()));
+                    }
                 }
             }
         }
@@ -348,5 +449,27 @@ mod tests {
         assert!(two[0].focused);
         assert!(state.workspace(1).unwrap().windows.iter().all(|w| !w.focused), "focus moved to the new window");
         assert_eq!(state.layout, 1);
+    }
+
+    #[test]
+    fn follows_casts() {
+        let mut niri = started();
+        assert!(niri.state().casts.is_empty());
+        // A screen shared through the portal, then a window recorded by wlr-screencopy
+        assert!(niri.apply(event(r#"{"CastStartedOrChanged":{"cast":{"stream_id":7,"session_id":3,"kind":"PipeWire","target":{"Output":{"name":"eDP-1"}},"is_dynamic_target":false,"is_active":false,"pid":null,"pw_node_id":null}}}"#)));
+        assert!(niri.apply(event(r#"{"CastStartedOrChanged":{"cast":{"stream_id":8,"session_id":4,"kind":"WlrScreencopy","target":{"Window":{"id":11}},"is_dynamic_target":false,"is_active":true,"pid":1,"pw_node_id":null}}}"#)));
+        assert!(niri.casts_changed);
+        let casts = niri.state().casts;
+        assert_eq!(casts.len(), 2);
+        assert_eq!((casts[0].stream, casts[0].session, &casts[0].target, casts[0].active), (7, Some(3), &CastTarget::Output("eDP-1".into()), false));
+        assert_eq!(casts[1].target, CastTarget::Window("Shell".into()), "a window by its title");
+        // It starts sending, then stops; the whole list replaces what was known
+        assert!(niri.apply(event(r#"{"CastStartedOrChanged":{"cast":{"stream_id":7,"session_id":3,"kind":"PipeWire","target":{"Output":{"name":"eDP-1"}},"is_dynamic_target":false,"is_active":true,"pid":null,"pw_node_id":90}}}"#)));
+        assert!(niri.state().casts[0].active);
+        assert!(niri.apply(event(r#"{"CastStopped":{"stream_id":7}}"#)));
+        assert_eq!(niri.state().casts.iter().map(|c| c.stream).collect::<Vec<_>>(), [8]);
+        assert!(niri.apply(event(r#"{"CastsChanged":{"casts":[{"stream_id":9,"session_id":5,"kind":"PipeWire","target":{"Nothing":{}},"is_dynamic_target":true,"is_active":false,"pid":null,"pw_node_id":null}]}}"#)));
+        let casts = niri.state().casts;
+        assert_eq!((casts.len(), casts[0].stream, &casts[0].target), (1, 9, &CastTarget::Nothing));
     }
 }

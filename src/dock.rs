@@ -60,7 +60,7 @@ pub fn entry<'a>(apps: &'a [Entry], app_id: &str) -> Option<&'a Entry> {
 }
 
 /// A readable name when no desktop file gives one: "org.gnome.Nautilus" → "Nautilus".
-fn pretty(id: &str) -> String {
+pub fn pretty(id: &str) -> String {
     let last = id.rsplit('.').next().unwrap_or(id);
     let mut chars = last.chars();
     chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()

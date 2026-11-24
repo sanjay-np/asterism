@@ -322,6 +322,7 @@ impl App {
                     requested: &self.requested,
                     requests: Vec::new(),
                     current: &current,
+                    settings: &self.config.wallpaper,
                     w,
                     h,
                 };
@@ -1186,6 +1187,7 @@ impl App {
             "machine" | "cpu" => (Kind::Machine, "res.cpu"),
             "traffic" => (Kind::Traffic, "res.network"),
             "keyboard" => (Kind::Keyboard, "status.keyboard"),
+            "privacy" => (Kind::Privacy, "status.privacy"),
             "notifications" => {
                 if !self.model.notifications.own {
                     self.send(Command::NotificationsToggle);
@@ -1413,9 +1415,21 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
         }
         "wallpapers" => {
             let mut picker = crate::wallpapers::Picker::new(&config.wallpaper);
+            // `--query moving` or `pictures` shows that kind; `folders` opens the folder list;
+            // `find:WORDS` as if typed
+            match query {
+                "moving" => picker.set_show(crate::wallpapers::Show::Moving),
+                "pictures" => picker.set_show(crate::wallpapers::Show::Pictures),
+                "folders" => picker.folders = true,
+                _ => {
+                    if let Some(words) = query.strip_prefix("find:") {
+                        picker.type_text(words);
+                    }
+                }
+            }
             let current = crate::config::expand_home(config.wallpaper.image.trim());
             let requested = HashSet::new();
-            let mut view = crate::wallpapers::View { theme, text: &mut painter.text, model, requested: &requested, requests: Vec::new(), current: &current, w, h };
+            let mut view = crate::wallpapers::View { theme, text: &mut painter.text, model, requested: &requested, requests: Vec::new(), current: &current, settings: &config.wallpaper, w, h };
             let pieces = picker.build(&mut view);
             (Surf::offscreen(w, h, scale), pieces, Some(theme.surface.alpha(0.92)))
         }

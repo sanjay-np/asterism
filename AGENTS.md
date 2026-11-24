@@ -13,7 +13,8 @@ notifications, lock screen (with fingerprint), polkit/Wi-Fi/Bluetooth prompts, w
 its changer (pictures, and live video/GIF wallpapers), desktop widgets (solid to see-through),
 optional frosted-glass blur by the compositor, settings app, dashboard, a day panel (to-do,
 notes), clipboard history, screenshots and recording, timers, weather, night light,
-keyboard-shortcut sheet, pets (any number; cat, fox, bird, panda, tiger, lion). README.md is the user-facing
+keyboard-shortcut sheet, pets (any number; cat, fox, bird, panda, tiger, lion), a privacy pill
+(microphone, camera, screen in use). README.md is the user-facing
 tour, grouped by what you're doing; this file is how it works and where it stands.
 
 **The look is Asterism's own ("hairline"), chosen 2026-11-20** after the user dropped ETEA's
@@ -87,9 +88,14 @@ through adw-gtk3-dark (gtk.css is a symlink to the theme). The user's config has
 `[wallpaper] interval = 5` (asked for 2026-11-21) with the default random animation, `fit =
 "stretch"`, `live = true` and `live_battery = true` (set by the user in Settings on 2026-11-22;
 their folder has one GIF, street2.gif, so the rotation can land on it); widgets: only the
-visualizer (so nothing shows unless music plays); pets (as of 2026-11-23): `pets = ["bird",
-"bird", "bird:wallpaper", "bird:bluebird", "bird:robin"]` (the old `animal`/`friend` keys are
-still in the file, ignored), `size = 70`, no bed, `sounds = false`. `[blur]`: dock, launcher,
+visualizer (so nothing shows unless music plays); pets: none since 2026-11-24 (`pets = []`;
+five birds before), `size = 70`, no bed, `sounds = false`. The bar (as of 2026-11-24):
+`style = "transparent"` (so the bar's ink follows the wallpaper under each item),
+`page_style = "kanji"`, `pages = 8`, `[colors] bar_icons = "colourful"`. Wallpapers: folder
+`~/Pictures/Wallpapers` (234 pictures, one GIF; they also keep videos in `~/Videos`, e.g. a
+1080p and a 4K h264, and switched to it once), `live_scale = 100` (set by the user after the
+default went to 75), the picture on screen often street2.gif or a video. The HDMI monitor
+isn't always plugged in (eDP-1 alone on 2026-11-24). `[blur]`: dock, launcher,
 overview, wallpapers, control and notifications all on; widget blur off. One VPN saved in NetworkManager
 ("client"); BlueZ off; no slurp/grim/tesseract. The dock (since 2026-11-22), set by the user in
 Settings: `pinned = ["kitty", "com.microsoft.VSCode"]`, `magnify = false`, `corners =
@@ -101,7 +107,9 @@ How the user works: short requests, picks from offered options; after each round
 the build installed and the shell restarted. **Ask before restarting** (they've said yes every
 time): it briefly takes the bar away and empties the clipboard history, which lives in memory.
 They try things by hand afterwards, so end with what needs their pointer or keys. They commit
-themselves (the latest: 26336fc, the dock); commit only when asked. The project's rename
+themselves (the latest: 9bf9d80, the bar's arrangement); commit only when asked. When they
+send a screenshot of something still wrong, reproduce it with their own wallpaper and state
+at scale 1 before fixing (two fixes on 2026-11-24 looked right only in a 4× or made-up shot). The project's rename
 history (etea-bar) was removed on request; keep the ETEA Shell credit in the README.
 
 ## Build, run, test
@@ -110,7 +118,7 @@ history (etea-bar) was removed on request; keep the ETEA Shell credit in the REA
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 104 tests (+3 opt-in, --ignored), see below
+cargo test --release                            # 119 tests (+3 opt-in, --ignored), see below
 ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
 cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
 cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
@@ -131,6 +139,7 @@ visual change and look at the result:
 asterism --snapshot out.png [--width 1920] [--scale 2] [--hover KEY] [--wait 3]
 asterism --snapshot out.png --menu NAME [--focus KEY] [--room PX --scroll PX]
 asterism --snapshot out.png --panel launcher|toasts|osd|control|auth|wallpaper [--query TEXT]
+asterism --snapshot out.png --panel wallpapers [--query moving|pictures|find:WORDS]   # the picker
 asterism --snapshot out.png --panel day [--query typing|notes]            # the day panel (reads [day] folder)
 asterism --snapshot out.png --panel wallpaper --menu NAME|control|day   # whole desktop, menu in place
 asterism --snapshot out.png --panel widgets [--hover widget.KIND]  # the desktop while arranging widgets
@@ -148,7 +157,8 @@ asterism --snapshot out.png --demo      # made-up workspaces, windows, networks 
 menu or control centre where they'd really sit. Plain `--panel control` shows the card alone.
 
 Menu names: calendar, media, sound, network, bluetooth, power, session, machine, traffic,
-keyboard, notifications, tray (first tray item). Piece keys for `--hover`/`--focus` look like
+keyboard, notifications, privacy, tray (first tray item). `--menu privacy` and `--hover
+status.privacy` inject sample use (`privacy::sample`) when nothing is really in use. Piece keys for `--hover`/`--focus` look like
 `clock`, `page.1`, `status.volume`, `media.pause`, `tray.entry.3`. Snapshots inject sample
 notifications when none exist. Run `examples/fixtures` first to get media and tray content.
 
@@ -174,17 +184,45 @@ afterwards (they're named by the time; check the newest is yours).
 
 Things a script can't do (real clicks, key presses, grabs) must be listed for the user to try.
 
-**README screenshots** (`screenshots/readme/`, remade 2026-11-21; the README is public, so
-nothing of the user's may show). How they were made, to redo after visual changes:
+**README screenshots** (`screenshots/readme/`, all 29 remade 2026-11-24, with dock.png,
+privacy.png, pet-panda/tiger/lion.png new; the README is public, so nothing of the user's may
+show). How they were made, to redo after visual changes:
 
 - Wallpapers: original abstract gradients, never the user's (their folder is mostly third-party
-  art). Each one `magick -size 960x600 xc: -sparse-color Shepards "<5 dark points>" -blur 0x40`,
+  art). They aren't kept in the repo: remake them (2026-11-24's had Shepards points per colour,
+  e.g. dusk `0,0 #0f0f24 960,0 #241638 480,300 #1d1533 0,600 #2a1a3a 960,600 #4a2236` with a
+  `#d08070` stroke along `bezier 0,420 320,300 640,480 960,330`), plus a made-up `drift.gif` (8
+  frames of a gradient whose stroke shifts by ±60 px, 640×400, `-delay 14`) so the picker shows
+  a GIF badge and Moving 1. Each one `magick -size 960x600 xc: -sparse-color Shepards "<5 dark points>" -blur 0x40`,
   screened with a blurred bezier stroke of a lighter colour at 55 % (`-strokewidth 70 … -blur
   0x45`), resized to 1920×1200: dusk, lagoon, bloom, amber, night, moss.
 - A scratch config: those pictures as `image`/`directory`, `grain = 0.0`, `[weather] city =
   "Lisbon"` (the default would show the user's city; the old widgets.png did), `lyrics = false`,
   `[day] folder = ""`. `XDG_STATE_HOME` scratch, with a hand-written `widgets.json` per layout
   (places are screen fractions `[x, y]`).
+- `XDG_CACHE_HOME` scratch too (the picker's thumbnails go to the cache). And a scratch
+  `XDG_DATA_DIRS` holding copies of a dozen common apps' desktop files (firefox, kitty, Nautilus,
+  mpv, LibreOffice ×3, Chrome, nvim, btop, pavucontrol, imv, VS Code, plus `code.desktop` and
+  `spotify.desktop` for the demo's windows) with `icons`/`pixmaps` linked to /usr/share's: the
+  2026-11-21 launcher shot showed the user's own installed apps. `XDG_CONFIG_HOME` scratch with
+  niri's `/usr/share/doc/niri/default-config.kdl` plus Asterism's binds from the README, for the
+  shortcuts sheet (it read the user's real binds before).
+- Widgets: `$XDG_STATE_HOME/asterism/widgets.json` = clock 0.05,0.10 · weather 0.05,0.36 ·
+  media 0.05,0.58 · visualizer 0.05,0.78 · note 0.42,0.64 · calendar 0.78,0.10 · system
+  0.78,0.56 (the defaults put the note on the clock).
+- The shots, at 1440 wide with `--demo`: hero (`--panel wallpaper --menu control`, widgets
+  clock/weather/media), colours (the same over lagoon/amber/bloom/night, 720×450 each, 2×2,
+  16 px apart), bars (`--panel wallpaper` per style, the top 1440×72, 8 px apart), frame
+  (`--menu calendar`), day, launcher, overview, dashboard, shortcuts, desktop, arrange
+  (`--panel widgets --hover widget.media`), settings (1200 wide, `--query 0`), clipboard (crop
+  700×420+368+96), transitions (`--query ink|circle|blinds@0.45` at 720, montage +6+6),
+  menus-1 (media, sound, network, weather) and menus-2 (calendar, timer, notifications, power)
+  and cards (toasts, song, peek `--query 4`, deskmenu): `--menu`/`--panel` alone, tops aligned
+  12 px apart on `#0f0e13`; dialogs (auth, wifi, pair: crops 560×400+440+150 of 1440×700);
+  osd as is; privacy (`--panel wallpaper --menu privacy`, crop 650×440+790+0); dock (`--panel
+  dock --query sample,firefox --scale 2`); pets (`--panel pet --query ANIMAL --scale 2`).
+- Workspaces strip (`workspaces.png`, 1476×132): `--panel wallpaper --width 1440 --scale 2
+  --demo` per `page_style`, each cropped `460x132+0+0`, laid at x 24 / 508 / 992 on `#0f0e13`.
 - Everything inside `dbus-run-session` with `examples/fixtures` started there, so the fake
   player and tray never reach the user's session. `--demo` on every shot that shows the
   compositor, networks, processes or the to-do list (it fakes workspaces, windows, Wi-Fi and
@@ -246,7 +284,8 @@ main.rs ── CLI: run | msg … | --snapshot …
    │               asked for a frame when the frame callback has come and nothing holds it
    │               (battery, lock, away: own idle watch); held 60 s → put away; frames copied
    │               into the surface's own pool and scaled by the viewporter
-   │     wallpaper.rs the changer as the app runs it: picker panel, set/step, palette off-thread, rotation
+   │     wallpaper.rs the changer as the app runs it: picker panel and its keys (typing searches),
+   │               set/step, folders (set, the portal's dialog), palette off-thread, rotation
    │     clipboard.rs ext-data-control: read selections on a worker thread, offer one back
    │     night.rs   wlr-gamma-control per output, schedule, the control-centre switch
    │     idle.rs    ext-idle-notify → lock; start_lock() spawns `asterism lock` detached
@@ -273,12 +312,14 @@ main.rs ── CLI: run | msg … | --snapshot …
    ├── render/      Painter (tiny-skia): prims, cards, drawers/fillets, icons, per-piece cache; text.rs
    ├── model.rs     Model, Update, Command, Request
    ├── palette.rs   Material 3 scheme from the wallpaper (material-colors: Celebi quantizer + Score)
-   ├── wallpapers.rs  the changer: folder listing, remembered choice, cached thumbnails, picker grid
+   ├── wallpapers.rs  the changer: folder listing, remembered choice and recent folders, cached
+   │               thumbnails, the picker (search, kinds, folder list, grid, options along the foot)
    ├── lock.rs      the lock screen: its OWN process (`asterism lock`), ext-session-lock, unix_chkpwd
    ├── clipboard.rs history (memory only) + picker; app/clipboard.rs does ext-data-control
    ├── dock.rs      the dock, pure: items (pinned + open apps matched to desktop files), slots,
 │               layout, `hole` for carrying, `build` (slide, magnify, dots, names), the trash
 ├── day.rs       the day panel's files: todo.md (Markdown checklist) + notes.md, parse/write/load/save
+   ├── privacy.rs   the privacy pill's words: `InUse::of(model, settings)`, readable app names, casts
    ├── shortcuts.rs niri/Hyprland bind parsing + the sheet; timers.rs, weather.rs, night.rs: pure logic
    ├── dashboard.rs graphs (Prim::Area), disks, process list; the machine service samples processes
    │               only while it's open (Command::WatchProcesses)
@@ -298,7 +339,9 @@ main.rs ── CLI: run | msg … | --snapshot …
    │               drawn as a window (sidebar, page title, titled groups each on a card (`Control::Section`),
    │               galleries of pictures (`Control::Gallery`, the Pets page), stacked when narrow, scrolls)
    ├── world.rs     the wallpaper: an image, a quiet gradient in the scheme, or (opt-in) a planet's hills
-   ├── theme.rs, config.rs, images.rs, ipc.rs, snapshot.rs
+   ├── theme.rs     roles from the palette; a bare bar's `light_ink` theme and `Ground` (how light
+   │               the wallpaper is along the bar, per slice) for its ink item by item
+   ├── config.rs, images.rs, ipc.rs, snapshot.rs
 ```
 
 ### The UI model (read this before touching drawing)
@@ -364,6 +407,8 @@ main.rs ── CLI: run | msg … | --snapshot …
 | `polkit.rs` | org.freedesktop.PolicyKit1 agent; password checked by `polkit-agent-helper-1` via `/run/polkit/agent-helper.socket` (polkit ≥ 126) or the setuid helper | registers for the session (XDG_SESSION_ID, else logind's display session); queue of requests; retries on failure |
 | `notifications.rs` | org.freedesktop.Notifications daemon, else swaync-client | yields if another daemon owns the name |
 | `xkb.rs` | evdev.lst | layout names ↔ codes |
+| `portal.rs` | xdg-desktop-portal FileChooser (session bus) | `Command::ChooseFolder` → the desktop's folder dialog → `Update::FolderChosen` |
+| `privacy.rs` | inotify on each `/dev/video*` (+ `/dev` for new ones), then `/proc/*/fd` for holders; `pw-dump` (`Graph`) | `Update::Camera`; PipeWire holding a camera → its graph's readers; `graph()`/`process_name` also name niri's and Hyprland's casts |
 | (mod.rs) | `LoadApps` → `Update::Apps` (desktop files, for the dock); `CountTrash`/`EmptyTrash` → `Update::Trash`; `ListPhotos(dir)` → `Update::Photos`; `AppColors(palette, apps)` → `appcolors::write` on a blocking thread, then `pkill -USR1 -x kitty` if kitty's file changed | |
 | `spectrum.rs` | `parec --device=@DEFAULT_MONITOR@` (else `pw-record` capturing the sink), s16le mono 44.1 kHz | only on `WatchSpectrum(true)`: visualizer shown + a player playing; 30 `Update::Spectrum`/s, none while silent; `App::update` redraws only desks for it |
 | `dbus.rs` | helpers: get_all/get/set/call, value conversions, `watch()` match rules | |
@@ -423,7 +468,11 @@ with a test in `ipc::tests`.
   smaller than ffmpeg's default threads; `-hwaccel auto` at 50 % ≈ 8 ms/frame (~24 % of a core
   at 30 fps), RSS ~150 MB (≈ 80 anon + 75 driver libs); at 100 % ≈ 15–20 ms, ~240 MB. ffmpeg's
   memory is its decoder and filter frames, not the output queue (`-thread_queue_size` changed
-  nothing). Hence `live_scale` 50 by default. GPU surfaces (dmabuf) would need EGL/GBM: C
+  nothing). `live_scale` was 50 by default for that; since 2026-11-24 it's **75** (the user
+  found 50 blurred: a twofold stretch by the compositor). Measured then on their 1080p h264
+  (3.9 Mb/s) to a 1920×1200 screen, 300 frames, CPU time a frame: 50 % ≈ 10 ms, 75 % ≈ 10.5 ms,
+  100 % ≈ 19.5 ms (VA-API and `auto` the same; `auto` logs a harmless CUDA failure first):
+  ffmpeg's scaler is no quicker at halving, so 75 costs what 50 did. GPU surfaces (dmabuf) would need EGL/GBM: C
   libraries, ruled out.
 - **Buffers for big surfaces come from the surface's own pool** (`BIG_BUFFER` = 1 MB in
   `present`; at most 2 buffers), dropped with the surface. The shared `SlotPool` never shrinks,
@@ -449,7 +498,20 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (104, +3 opt-in)
+### Tests (119, +3 opt-in)
+
+Added 2026-11-24 (folders): `wallpapers::remembers_recent_folders`, `services::portal::reads_file_uris`.
+
+Added 2026-11-24 (picker): `wallpapers` (finds pictures by kind and words, steps only through
+what is shown).
+
+Added 2026-11-24 (bare bar's ink): `theme` (a bare bar takes dark ink over a light wallpaper and
+never otherwise; measuring a band's lightness), `palette` (the light scheme has dark ink).
+
+Added 2026-11-24 (privacy): `services::privacy` (readers of cameras and screens in a pw-dump, a
+camera no one reads, PipeWire isn't a user), `services::niri::follows_casts`,
+`services::hyprland::reads_screencast_events`, `privacy` (readable names, what the settings let
+through, what a cast takes and its stop button).
 
 Added 2026-11-24: `settings` (bar items move along and between parts, dropped after an item or
 at a part's start, the arrangement lists what the bar leaves out; the comments test also writes
@@ -496,16 +558,175 @@ bus: yes, Rejected, passkey; names vs addresses), `services::niri` window rects,
 (stream parsing, following changes), `ipc` (request parsing), `launcher` (maths, Exec cleaning,
 ranking, desktop file parsing). Add tests for any new parsing or protocol logic.
 
-## Current progress (as of 2026-11-23: the first and second rounds from ETEA / caelestia, then
+## Current progress (as of 2026-11-24: the first and second rounds from ETEA / caelestia, then
 fingerprint, Wi-Fi passwords, Bluetooth pairing, the window overview, the desktop rounds, the
 pets, an optimization round, the drag fix, the small everyday round, the day panel, the
 temperature gauge, the dock, live wallpapers, see-through widgets and blur, free widget
 resizing, any number of pets and three new animals, livelier pets and the Pets page, the
-settings regrouped, the day button, a second optimization round, the bar's arrangement;
-newest first)
+settings regrouped, the day button, a second optimization round, the bar's arrangement, the
+privacy pill, the bare bar's ink, the kanji dot below, workspaces shown on niri, the
+wallpaper picker reworked, wallpaper folders, sharper moving wallpapers; newest first)
 
-**State of the tree**: the user's commits up to a2daa9c hold everything up to the second
-optimization round (2026-11-23). After it, uncommitted: the bar's arrangement (2026-11-24).
+**State of the tree**: the user's commits up to 9bf9d80 hold everything up to the bar's
+arrangement (2026-11-24). After it, uncommitted (all 2026-11-24, installed on the user's
+machine): the privacy pill, the bare bar's ink (per item), the kanji dot below, workspaces
+shown on niri, the wallpaper picker reworked, wallpaper folders, sharper moving wallpapers.
+README brought up to date with all of them the same day, every screenshot remade, then
+trimmed at the user's request (993 → 588 lines): it now says what each feature does and how to
+reach it, and leaves how things work inside, every option and the code map to this file and
+config.example.toml. Keep new README text to that level.
+
+### Sharper moving wallpapers (2026-11-24, the user: "why does video wallpaper gets blured")
+
+`live_scale` defaults to 75 (was 50; see Code conventions for the measurements). The user
+picked 75 over 100 (sharp, about twice the CPU); their config has no `live_scale`, so the
+default reaches them. config.example.toml and README updated.
+
+### Wallpaper folders (2026-11-24, the user: "There should be an option to select wallpaper
+folders")
+
+- **Picker**: the folder under the title is now a pill button (`wallpapers.folder`, "~/… ▾",
+  tooltip) beside the count; it opens `Picker::folder_list` (`Picker.folders`,
+  `Action::WallpaperFolders(bool)`): a full-screen catcher (click outside closes it), then a
+  `Prim::Card` 420 wide under the button with "Choose a folder…" (`Action::ChooseWallpaperFolder`),
+  LATELY (up to 5 of `recent_folders()`, the one shown ticked) and AROUND THIS ONE ("Up to"
+  the parent, up to 8 `subfolders()`, hidden ones left out). Snapshot `--query folders`.
+- `wallpapers::remember_folder` keeps six in `$XDG_STATE_HOME/asterism/wallpaper-folders`,
+  newest first, gone ones dropped (tested `remembers_recent_folders`); `short()` writes paths
+  from `~`.
+- `App::set_wallpaper_folder(dir)` remembers it and writes `[wallpaper] directory` through
+  `set_setting`; `App::reload` rebuilds an open picker whose folder changed (keeping the kind
+  shown) and drops the old thumbnails. The rotation follows (it reads `directory`).
+- **The desktop's dialog** (`services/portal.rs`): `choose_folder` asks
+  org.freedesktop.portal.FileChooser.OpenFile (directory, modal, current_folder as a
+  NUL-terminated `ay`, accept label "Use this folder"), listening first on the Request path made
+  from our unique name and a `handle_token`; the Response's first `uris` → `path_of` (file://,
+  %-escapes; tested `reads_file_uris`). `Command::ChooseFolder(start)` → `Update::FolderChosen`.
+  The picker (Overlay, exclusive keyboard) would cover the dialog, so it closes first and comes
+  back after, only if the dialog was asked from it (`App::folder_asked: Option<bool>`). On the
+  user's machine the backend is xdg-desktop-portal-gtk.
+- Settings → Wallpaper → Picture: "Wallpaper folder" (says which, a Choose… button).
+
+Verified: 119 tests; snapshots of the folder list (scratch state with two recent folders) and
+the Settings row. **Not verified (needs the user)**: the portal dialog itself (it would open on
+their screen), picking from the list, the grid reloading.
+
+### The wallpaper picker, easier (2026-11-24, the user: "increase the user experience in
+wallpaper selector, also I cannot find any option for the live wallpaper")
+
+The live options existed (Settings → Wallpaper → Moving wallpapers) but nothing led there, and
+their one GIF was one of 234 thumbnails over 12 pages with a tiny play mark. `wallpapers.rs`:
+
+- `Picker { query, show: Show::{All, Pictures, Moving} }`; `shown()` (kind + every typed word
+  in the name, any case/order), `counts()`, `step`/`jump_to_end` move through what's shown,
+  `refilter` keeps the pick if still shown else the first, `type_text`/`erase(word)`. `selected`
+  stays an index into `list`, so `Action::Wallpaper(index)` is unchanged. Tested
+  (`finds_pictures_by_kind_and_words`, `steps_only_through_what_is_shown`).
+- Layout: title + "folder · N pictures · M moving" + Shuffle; a search field (`wallpapers.query`,
+  launcher-like pill with caret, "Type to find a picture") and chips All/Pictures/Moving with
+  counts (`Action::WallpaperShow`); the grid; page dots over a foot of options, centred:
+  Fill Cover/Whole/Stretch, Change by itself Off/5/15/30 min/1 hour (`EVERY`), a "Play moving
+  ones" switch, More settings (`Action::OpenSettings(2)`: closes the picker, opens Settings on
+  the Wallpaper page). The options are `Action::SetSetting` pills (`pill`, `switch`, `divider`
+  helpers); `View.settings` says which is lit; `App::reload` redraws the picker. Moving
+  thumbnails carry a "▸ GIF"/"▸ Video" pill. Empty results say why (no match / no moving ones,
+  with the kinds that count / no pictures).
+- Keys: typing goes to the search (so R no longer shuffles: Ctrl+R), Backspace / Ctrl+Backspace
+  / Ctrl+U, Esc clears the words then closes, Home/End within what's shown.
+- Snapshot: `--panel wallpapers --query moving|pictures|find:WORDS`.
+
+Verified: 117 tests; snapshots with their folder (all, moving, a search at 1280 wide, no
+match). **Not verified (needs the user)**: clicking the chips and options, typing, More settings.
+
+### Workspaces shown on niri (2026-11-24, the user: "why does it shows only 2 workspace name in
+niri"; picked a fixed count in the bar over persistent named workspaces in niri's config)
+
+niri keeps only the workspaces in use and one empty one after them, so the bar showed 2. Now
+`pages` (was Hyprland-only, 4–10, default 8) is also niri's minimum: `bar::pages` adds cells
+after niri's own up to it, with made-up ids (−idx, so `page.-7`, never mistaken for real ones:
+the peek finds no workspace for them) at opacity 0.6; a click focuses niri's empty workspace
+(the output's last, `empty_one`), which niri then numbers next in line, so 七 with two in use
+lands on 三. Tooltips of empty ones say "Workspace N · empty". Settings → Bar → Layout →
+"Workspaces shown" (stepper 4–10). config.example.toml and the comment on the user's own
+`pages` line updated (value unchanged, 8). Verified: snapshot at 1× with their real two
+workspaces (一 current, 二 niri's empty one, 三–八 faint), Settings search; 115 tests. **Not
+verified (needs the user)**: clicking a faint one.
+
+### The bare bar over a light wallpaper (2026-11-24, the user: "the bar accent border is not
+okay when there is light background")
+
+Their bar is `style = "transparent"`: nothing behind it, but drawn in the dark scheme's roles,
+so over a light picture the light text, pastel rings and the accent underline washed out
+(reproduced by snapshot over a made-up light gradient). Now:
+
+- `palette::light_from_source` (the same TonalSpot theme's `schemes.light`, through a shared
+  `roles`). `Theme::with_palette` gives a transparent-style theme `light_ink: Option<Box<Theme>>`
+  built from it (`Theme::build(config, p, own_text)`; your `[colors] text`/`text_soft` are left
+  out of it, being for dark grounds). Other styles stand on their own surface: no `light_ink`.
+- The wallpaper painter measures the band under the bar (`theme::Ground::measure`: the mean
+  linear luminance of `reserve()` rows on the bar's edge, in slices of ~8 px across the width,
+  every 2nd pixel and row) and sends it with the picture (`Painted.under_bar` →
+  `Backdrop.under_bar`); a changed ground repaints that output's bars in full.
+- **Per item, not per bar** (the user's moon wallpaper, the same day: one average for the whole
+  bar turned it all dark, and the ends over the night sky were dark on dark). `render_bar` takes
+  `ground: Option<&Ground>`; it builds the items with the usual theme, marks those whose own
+  span is light (`Ground::light(from, to)`, fractions of the output's width, `wants_dark_ink`
+  > 0.22, a little past where the two inks' contrast is even), and only if any is, builds again
+  with `t.ink(true)` (same keys and geometry; the animator is idempotent for a repeated target)
+  and swaps those pieces in. Each piece's underline and compositing use its own ink (`inks`,
+  parallel to `all`); the tooltip pill takes the ink of the ground it sits over.
+- Snapshots do the same (`snapshot::ground_of`) for the bar and `--panel wallpaper`.
+- Menus, the control centre and other cards keep the dark scheme (they have their own cards).
+- Live wallpapers are measured on their still (first frame); a change of picture switches the
+  ink as its animation starts. No wallpaper drawn by the shell → the usual ink.
+
+Verified: 115 tests (`measures_how_light_the_ground_is_along_the_bar`: a light middle, dark
+ends); snapshots over a light gradient (all dark ink) and over their moon wallpaper (the left
+end and the right status icons light over the sky, the middle and the tools on the moon dark).
+**Not verified (needs the user)**: on their screen, the second monitor's bar.
+
+### The privacy pill (2026-11-24, the user picked "privacy dots" from a list of new features)
+
+A tonal pill (`primary_container`, icons `on_primary_container`, radius h/2) at the start of
+the status module while an app uses the microphone, a camera or the screen, one icon each
+(`microphone`/`microphone-off` when muted, `camera`, `screen-share`: the last two hand-drawn in
+all three packs like the thermometer; a paused cast's icon at 45 %). Tooltip
+`InUse::summary` ("Microphone: Firefox · Camera: Firefox · Screen: OBS"); click `Kind::Privacy`,
+right-click mutes the mic. It replaced the old `status.listening` icon (so `Theme::mic` went).
+
+- **Microphone**: `audio.listening` as before (pactl source-outputs, monitors and corked left out).
+- **Camera** (`services/privacy.rs`): inotify OPEN/CLOSE on each video node (not all of /dev:
+  /dev/null is opened constantly), CREATE on /dev for hotplug; 300 ms after a burst, `/proc/*/fd`
+  links to /dev/video* (~415 processes, only on events). Held by pipewire/wireplumber → the apps
+  linked to a camera node in `pw-dump` (none = PipeWire probing = not in use). Opening is what
+  turns a camera on, so an app that holds it open without streaming counts as using it.
+- **Screen**: niri's `CastsChanged` / `CastStartedOrChanged` / `CastStopped` (niri-ipc 26.4:
+  stream_id, session_id, kind, target Output{name}|Window{id}|Nothing{}, is_active, pid (wlr
+  only), pw_node_id) kept in `Niri::casts`; the app named once per stream (`name_casts`: the pid's
+  command for wlr-screencopy, else `Graph::readers(pw_node_id)`), retried three times a second
+  apart while a reader isn't linked yet. Model: `CompositorState.casts: Vec<Cast { stream,
+  session, app, target: CastTarget, active }>`. `Command::StopCast(session)` → niri's
+  `{"StopCast":{"session_id":N}}`. Hyprland: `screencast>>STATE,OWNER` → one cast per app
+  reading a non-camera Video/Source in PipeWire (`Graph::screen_readers`), session None (no stop).
+- **Names** (`src/privacy.rs`): `app_name` = the desktop file's name (`dock::entry`, so only once
+  `model.apps` is loaded, i.e. after the dock first came up), else kept when it has capitals,
+  else `dock::pretty` ("zoom" → "Zoom").
+- **Menu** (`popups::privacy`, 320 wide): "In use", MICROPHONE apps + "Mute the microphone"
+  switch, CAMERA apps, SCREEN rows (app, target · paused) and a stop button per session ("Stop
+  sharing", or "Stop APP"/"Stop TARGET" beside others; Hyprland: "Stop it from the app that's
+  sharing."). Empty: a note. `msg menu privacy`.
+- Config `[privacy] microphone, camera, screen` (all true); Settings → Bar → Privacy (three
+  switches); config.example.toml and README (bar section, menus, `msg`, code map).
+
+Verified: 112 tests; snapshots of the pill hovered and the menu in place (sample data); camera
+for real via the snapshot's services: a process opening /dev/video0 (no streaming) showed
+"Camera: Sleep" within the settle, and the list emptied when it closed (debug log). **Not
+verified**: a real screencast. Nested niri can't cast ("no GBM device available", tried with its
+Mutter ScreenCast API on a private bus with `debug { dbus-interfaces-in-non-session-instances }`),
+and nothing on the machine does wlr-screencopy. So niri's cast events, the app naming from
+PipeWire and Stop are checked only against the documented format (tests). Also not verified: a
+real app using the camera through PipeWire (browsers' PipeWire camera), Hyprland, the menu by
+pointer, right-click mute.
 
 ### The bar's arrangement (2026-11-24, the user: "implement the feature to change the position
 of the items in the bar")
@@ -1400,7 +1621,7 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 ### Done and verified on niri 26.04 (by script, snapshot, or both)
 
 - **Bar**: pages (constellations or numbers; niri workspaces per output, Hyprland groups),
-  clock, media with sliding title, resources (CPU/memory rings, temperature, network rates), pages as dots, numbers or kanji (`bar::kanji`, drawn through a system CJK font by fallback; the current one in the accent with a bōten emphasis dot above, no circle — the user asked for that),
+  clock, media with sliding title, resources (CPU/memory rings, temperature, network rates), pages as dots, numbers or kanji (`bar::kanji`, drawn through a system CJK font by fallback; the current one in the accent with a bōten emphasis dot, no circle — the user asked for that; the dot moved from above to below the character on 2026-11-24, at their request; placed by the size, 0.47 of it below the middle plus 4 px × the bar's scale, radius 2.2 × scale, so it stands clear of 二's lower stroke at 1× (closer, the user saw it read as part of the character twice: judge such gaps at scale 1, a 4× snapshot flatters them); it takes the hover underline's place, so the current kanji page has no underline (`lift = !active`)),
   tray, tools (screenshot, colour picker, clipboard, microphone, stay awake), status
   (notifications, keyboard layout, network, bluetooth, volume, battery, settings, session),
   optional `launcher` button. Styles line / frame / floating / islands / transparent;
@@ -1458,6 +1679,11 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 
 ### Not yet verified by a person (needs real input)
 
+- The privacy pill with a real camera app and a real screen share (casts couldn't be made
+  here), Stop sharing, right-click mute.
+- The wallpaper picker by pointer and keys (search, chips, foot options, More settings), the
+  folder list and the portal's folder dialog; clicking a faint workspace on niri.
+
 - Live wallpapers on the visible screen: the frame rate, ffmpeg's real CPU and memory, how a
   video looks at 50 %, the lock and idle holds; two screens each playing.
 - See-through widgets (opacity, outline) and every blur switch (widgets, dock, launcher,
@@ -1505,8 +1731,16 @@ Not yet seen by the user live: everything in the new look — ask for their impr
 - The control centre and the dashboard answer only Esc on the keyboard (no arrow navigation).
 - The overview has no live thumbnails (niri offers no per-window capture).
 - Clipboard history is in memory only: empty after a restart (on purpose).
-- The changer lists one folder (no subfolders): PNG, JPEG, GIF, videos (no WebP); one picture
-  for all outputs (no per-output wallpapers yet).
+- The changer lists one folder at a time (no subfolders; switch from the button under its
+  title): PNG, JPEG, GIF, videos (no WebP); one picture for all outputs (no per-output
+  wallpapers yet). Search matches names only.
+- The privacy pill sees cameras opened by the user's own processes only; an app holding a
+  camera open counts, streaming or not; Hyprland's screencast event names neither the screen
+  nor the window, and there's no way to stop it from outside.
+- On niri the workspaces past those in use are places: each leads to niri's one empty
+  workspace, which niri numbers next in line (so 七 can land on 三).
+- The bare bar's ink is chosen per item from the wallpaper's still (a moving wallpaper's first
+  frame), not frame by frame.
 - Live wallpapers go through shm, drawn by the processor (no EGL): a video costs ~¼ core and
   ~150 MB in ffmpeg at half size. Its sound is dropped. One player per output (each its own
   ffmpeg) on several screens.
@@ -1526,6 +1760,17 @@ Not yet seen by the user live: everything in the new look — ask for their impr
   machine); it reads with tesseract's default language.
 
 ## Next progress (immediate)
+
+0. The user to try the 2026-11-24 rounds by hand: the picker (type to search, the All /
+   Pictures / Moving chips, the options along the foot, More settings), the folder button and
+   "Choose a folder…" (the portal dialog, never opened by us), Settings → Wallpaper → Wallpaper
+   folder, clicking a faint workspace on niri, the bar over light and dark wallpapers, the
+   kanji dot at 1×.
+
+0. The user to try the privacy pill: join a call or open a camera app (Mod+Space → a browser
+   test page), share the screen (a browser's screen share or OBS through the portal), and see
+   the pill, its tooltip and its menu; Stop sharing from the menu; right-click to mute. Report
+   which app names come out wrong.
 
 0. The user to try Settings → Bar → Arrangement: pick an item, Earlier/Later, click another
    part, take one off and put it back, "Usual arrangement"; watch the bar follow. And dragging

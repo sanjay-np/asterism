@@ -27,6 +27,7 @@ pub enum Kind {
     Timer,
     Weather,
     Capture,
+    Privacy,
     Tray(String),
 }
 
@@ -34,7 +35,7 @@ impl Kind {
     fn width(&self) -> f32 {
         match self {
             Kind::Calendar => 300.0,
-            Kind::Media | Kind::Sound => 320.0,
+            Kind::Media | Kind::Sound | Kind::Privacy => 320.0,
             Kind::Session | Kind::Keyboard => 230.0,
             Kind::Traffic => 260.0,
             Kind::Tray(_) => 270.0,
@@ -394,6 +395,7 @@ pub fn build(kind: &Kind, ctx: &mut Ctx<'_>) -> Built {
         Kind::Timer => timer(&mut col),
         Kind::Weather => weather(&mut col),
         Kind::Capture => capture(&mut col),
+        Kind::Privacy => privacy(&mut col),
         Kind::Tray(id) => tray(&mut col, id),
     }
     let h = (col.y - 4.0 + PAD).round();
@@ -1132,6 +1134,61 @@ fn keyboard(col: &mut Col) {
     for (i, code) in c.layouts.iter().enumerate() {
         let name = c.layout_names.get(i).cloned().unwrap_or_else(|| code.to_uppercase());
         col.row(&format!("kb.{i}"), Some("keyboard"), &name, &code.to_uppercase(), Mark::Radio(i == c.layout), true, send(Command::SetLayout(i)));
+    }
+}
+
+/// Who is using the microphone, a camera or the screen, with what can be done about it here:
+/// muting the microphone, and stopping a screencast where the compositor allows it (niri).
+/// A camera goes off when its app lets go of it; nothing outside the app can take it away.
+fn privacy(col: &mut Col) {
+    let model = col.ctx.model;
+    let using = crate::privacy::InUse::of(model, &col.ctx.config.privacy);
+    if using.is_empty() {
+        col.title("privacy.title", "Privacy", "");
+        col.note("Nothing is using your microphone, camera or screen.");
+        return;
+    }
+    col.title("privacy.title", "In use", "Apps using your microphone, camera or screen");
+    if !using.microphone.is_empty() {
+        col.label("Microphone");
+        for (i, app) in using.microphone.iter().enumerate() {
+            col.row(&format!("privacy.mic.{i}"), Some("microphone"), app, "", Mark::None, true, None);
+        }
+        let muted = model.audio.mic_muted;
+        col.row("privacy.mute", Some(if muted { "microphone-off" } else { "microphone" }), "Mute the microphone", "", Mark::Switch(muted), true, send(Command::ToggleMicMute));
+        col.gap(8.0);
+    }
+    if !using.camera.is_empty() {
+        col.label("Camera");
+        for (i, app) in using.camera.iter().enumerate() {
+            col.row(&format!("privacy.camera.{i}"), Some("camera"), app, "", Mark::None, true, None);
+        }
+        col.gap(8.0);
+    }
+    if !using.screen.is_empty() {
+        col.label("Screen");
+        let small = Font::new(col.theme().text - 1.0).tnum();
+        for (i, cast) in using.screen.iter().enumerate() {
+            let what = crate::bar::Ctx::ellipsize_with(col.ctx.text, &crate::privacy::cast_target(cast), small, (col.w * 0.45).round());
+            col.row(&format!("privacy.cast.{i}"), Some("screen-share"), &crate::privacy::cast_app(cast), &what, Mark::None, true, None);
+        }
+        // One button for each session that can be stopped (a session may hold several streams)
+        let mut sessions: Vec<(u64, String)> = Vec::new();
+        for cast in &using.screen {
+            if let Some(session) = cast.session
+                && !sessions.iter().any(|(s, _)| *s == session)
+            {
+                sessions.push((session, crate::privacy::cast_stop(cast)));
+            }
+        }
+        if sessions.is_empty() {
+            col.note("Stop it from the app that's sharing.");
+        } else {
+            col.gap(4.0);
+            let one = sessions.len() == 1;
+            let buttons = sessions.into_iter().take(3).map(|(session, stop)| (if one { "Stop sharing".to_string() } else { stop }, false, send(Command::StopCast(session)))).collect();
+            col.buttons("privacy.stop", buttons);
+        }
     }
 }
 

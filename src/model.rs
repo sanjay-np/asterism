@@ -71,6 +71,31 @@ pub struct CompositorState {
     pub layouts: Vec<String>,
     pub layout_names: Vec<String>,
     pub layout: usize,
+    /// The screen being shared or recorded, one for each stream.
+    pub casts: Vec<Cast>,
+}
+
+/// A screencast: who takes it, of what, and whether it's sending pictures now.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Cast {
+    pub stream: u64,
+    /// What stops it, when the compositor can (niri's session id).
+    pub session: Option<u64>,
+    /// The app taking it, when known.
+    pub app: String,
+    pub target: CastTarget,
+    /// Sending pictures (a recorder can pause one).
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum CastTarget {
+    #[default]
+    Nothing,
+    /// A screen, by its output's name.
+    Output(String),
+    /// A window, by its title.
+    Window(String),
 }
 
 impl CompositorState {
@@ -626,6 +651,8 @@ pub struct Model {
     pub trash: usize,
     /// The installed apps (desktop files), for the dock's names and for starting them.
     pub apps: Vec<crate::launcher::Entry>,
+    /// The apps with a camera on.
+    pub camera: Vec<String>,
 }
 
 /// What a screenshot takes.
@@ -686,6 +713,10 @@ pub enum Update {
     /// How many things are in the trash.
     Trash(usize),
     Apps(Vec<crate::launcher::Entry>),
+    /// The apps with a camera on.
+    Camera(Vec<String>),
+    /// The folder chosen in the desktop's dialog, or none (cancelled, no portal).
+    FolderChosen(Option<std::path::PathBuf>),
 }
 
 impl Model {
@@ -737,6 +768,8 @@ impl Model {
             Update::Photos(dir, list) => self.photos = Some((dir, list)),
             Update::Day(day) => self.day = day,
             Update::Trash(count) => self.trash = count,
+            Update::Camera(apps) => self.camera = apps,
+            Update::FolderChosen(_) => {}
             Update::Apps(apps) => self.apps = apps,
         }
     }
@@ -757,6 +790,10 @@ pub enum Command {
     /// A window: go to it, close it, or move it to a workspace (by id) without following it.
     FocusWindow(u64),
     CloseWindow(u64),
+    /// Stop a screencast, by its session (niri).
+    StopCast(u64),
+    /// Ask for a folder with the desktop's file dialog, starting in this one.
+    ChooseFolder(std::path::PathBuf),
     MoveWindow(u64, i64),
     SetLayout(usize),
     Quit,

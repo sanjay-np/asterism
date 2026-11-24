@@ -55,8 +55,17 @@ fn kind(name: &str) -> Option<Kind> {
         "timer" => Kind::Timer,
         "weather" => Kind::Weather,
         "capture" => Kind::Capture,
+        "privacy" => Kind::Privacy,
         _ => return None,
     })
+}
+
+/// How light a picture (the screen's, at `scale`) is under the bar, as the shell measures it.
+fn ground_of(theme: &Theme, picture: &tiny_skia::Pixmap, scale: f32) -> crate::theme::Ground {
+    let band = (theme.reserve() * scale).ceil() as u32;
+    let h = picture.height();
+    let rows = if theme.on_top { 0..band } else { h.saturating_sub(band)..h };
+    crate::theme::Ground::measure(picture, rows)
 }
 
 /// The wallpaper behind the picture, so things look as they would on the desktop.
@@ -142,6 +151,10 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
         }
     }
 
+    // The privacy pill and its menu with something in use, unless something really is
+    if options.menu.as_deref() == Some("privacy") || options.hover.as_deref() == Some("status.privacy") {
+        crate::privacy::sample(&mut model);
+    }
     if options.demo {
         let output = model.compositor.focused_output.clone();
         // Side by side in columns, the second of a pair half as wide; the first one focused
@@ -270,6 +283,7 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
         // A screen with the screen's proportions, 16:10
         let (w, h) = ((options.width * scale) as u32, (options.width * 0.625 * scale) as u32);
         let mut picture = crate::world::render(w, h, scale, crate::theme::planet(&config.planet), &config.wallpaper, &theme.palette).ok_or_else(|| anyhow::anyhow!("nothing drawn"))?;
+        let ground = ground_of(&theme, &picture, scale);
         // The desktop's widgets, where they'd stand
         let mut desk_canvas = None;
         if !config.widgets.show.is_empty() || editing {
@@ -315,9 +329,9 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
         let marquee = HashMap::new();
         let output = model.compositor.focused_output.clone();
         let mut placed = Default::default();
-        render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, None, &mut placed);
+        render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, None, &mut placed, Some(&ground));
         std::thread::sleep(Duration::from_millis(500));
-        render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, None, &mut placed);
+        render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, None, &mut placed, Some(&ground));
         if let Some(bar) = surf.canvas() {
             let y = if theme.on_top { 0 } else { (h as f32 - theme.surface_height() * scale) as i32 };
             picture.draw_pixmap(0, y, bar.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
@@ -411,8 +425,10 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
             // the mode) an item carried with the pointer at X, `…@X!` pulled off the bar
             let arrange = arranging(&options.query);
             let mut placed = crate::bar::Placed::default();
+            // The bar alone stands on the screen's picture squeezed to its size: measured as such
+            let ground = ground_of(&theme, &sky((options.width * scale).ceil() as u32, (theme.surface_height() * scale).ceil() as u32, &config), scale);
             // Twice: the second time, everything has settled in (and the item's place is known)
-            render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, Some(&crate::bar::Arranging { carry: None, ..arrange.clone() }), &mut placed);
+            render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, Some(&crate::bar::Arranging { carry: None, ..arrange.clone() }), &mut placed, Some(&ground));
             std::thread::sleep(Duration::from_millis(500));
             let arrange = crate::bar::Arranging {
                 carry: arrange.carry.map(|mut c| {
@@ -422,7 +438,7 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
                 }),
                 ..arrange
             };
-            render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, Some(&arrange), &mut placed);
+            render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, Some(&arrange), &mut placed, Some(&ground));
             let bar = surf.canvas().ok_or_else(|| anyhow::anyhow!("nothing drawn"))?;
             let mut picture = sky(bar.width(), bar.height(), &config);
             picture.draw_pixmap(0, 0, bar.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);

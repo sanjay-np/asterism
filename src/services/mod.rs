@@ -15,7 +15,9 @@ mod network;
 mod niri;
 mod notifications;
 mod polkit;
+mod portal;
 mod power;
+mod privacy;
 mod spectrum;
 mod tray;
 mod weather;
@@ -108,6 +110,7 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
     let lyrics = start(out.clone(), lyrics::run);
     let audio = start(out.clone(), audio::run);
     let spectrum = start(out.clone(), spectrum::run);
+    tokio::spawn(privacy::run(out.clone()));
 
     let session = match zbus::Connection::session().await {
         Ok(connection) => Some(connection),
@@ -157,7 +160,7 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
     while let Some(command) = commands.recv().await {
         use Command::*;
         match command {
-            FocusWorkspace(_) | NextLayout | SetLayout(_) | Quit | FocusWindow(_) | CloseWindow(_) | MoveWindow(..) => forward(&compositor, command),
+            FocusWorkspace(_) | NextLayout | SetLayout(_) | Quit | FocusWindow(_) | CloseWindow(_) | MoveWindow(..) | StopCast(_) => forward(&compositor, command),
             MediaPlayPause(_) | MediaNext(_) | MediaPrevious(_) | MediaSeek(..) | MediaChoose(_) | FetchArt(_) => {
                 forward(&media, command)
             }
@@ -217,6 +220,15 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
                         let _ = std::process::Command::new("paplay").arg(format!("--volume={}", (volume * 65536.0) as u32)).arg(&path).stderr(std::process::Stdio::null()).status();
                     }
                 });
+            }
+            ChooseFolder(start) => {
+                let out = out.clone();
+                match session.clone() {
+                    Some(bus) => {
+                        tokio::spawn(async move { out.send(Update::FolderChosen(portal::choose_folder(&bus, "Wallpaper folder", &start).await)) });
+                    }
+                    None => out.send(Update::FolderChosen(None)),
+                }
             }
             DayLoad(dir) => {
                 let out = out.clone();

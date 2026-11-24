@@ -116,6 +116,39 @@ impl App {
         }
     }
 
+    /// Shows another folder's pictures from now on (the picker, the rotation): written to
+    /// `[wallpaper] directory`, and remembered among the recent ones.
+    pub(super) fn set_wallpaper_folder(&mut self, dir: &std::path::Path) {
+        if !dir.is_dir() {
+            return;
+        }
+        wallpapers::remember_folder(dir);
+        if let Some(picker) = self.picker.as_mut() {
+            picker.folders = false;
+        }
+        self.set_setting(&["wallpaper".to_string(), "directory".to_string()], &crate::settings::Value::Str(wallpapers::short(dir)));
+    }
+
+    /// The desktop's folder dialog, in place of the picker (which would cover it); the picker
+    /// comes back when the dialog's answered.
+    pub(super) fn choose_wallpaper_folder(&mut self) {
+        let start = self.picker.as_ref().map(|p| p.folder.clone()).unwrap_or_else(|| wallpapers::directory(&self.config.wallpaper));
+        let from_picker = self.panel_index(PanelKind::Wallpapers).is_some();
+        self.close_panel(PanelKind::Wallpapers);
+        self.folder_asked = Some(from_picker);
+        self.send(Command::ChooseFolder(start));
+    }
+
+    pub(super) fn wallpaper_folder_chosen(&mut self, dir: Option<std::path::PathBuf>) {
+        let Some(from_picker) = self.folder_asked.take() else { return };
+        if let Some(dir) = &dir {
+            self.set_wallpaper_folder(dir);
+        }
+        if from_picker {
+            self.toggle_wallpapers(Some(true));
+        }
+    }
+
     /// Every `interval` minutes, another picture at random.
     pub(super) fn rotate_wallpaper(&mut self) {
         let minutes = self.config.wallpaper.interval;
@@ -130,16 +163,25 @@ impl App {
         self.step_wallpaper(0);
     }
 
+    /// Typing finds pictures by name; the arrows, Tab and the page keys move through what's
+    /// shown; Enter puts it up; Esc lets go of the words, then closes; Ctrl+R picks at random.
     pub(super) fn wallpapers_key(&mut self, event: &KeyEvent) {
+        let ctrl = self.modifiers.ctrl;
         let Some(picker) = self.picker.as_mut() else { return };
         match event.keysym {
+            Keysym::Escape if !picker.query.is_empty() => {
+                picker.query.clear();
+                picker.refilter();
+            }
             Keysym::Escape => {
                 self.close_panel(PanelKind::Wallpapers);
                 return;
             }
-            Keysym::Return | Keysym::KP_Enter | Keysym::space => {
+            Keysym::Return | Keysym::KP_Enter => {
                 let selected = picker.selected;
-                self.choose_wallpaper(selected);
+                if picker.shown().contains(&selected) {
+                    self.choose_wallpaper(selected);
+                }
                 return;
             }
             Keysym::Left | Keysym::ISO_Left_Tab => picker.step(-1),
@@ -149,13 +191,21 @@ impl App {
             Keysym::Down => picker.step(picker.columns as i32),
             Keysym::Page_Up => picker.step(-(picker.per_page as i32)),
             Keysym::Page_Down => picker.step(picker.per_page as i32),
-            Keysym::Home => picker.selected = 0,
-            Keysym::End => picker.selected = picker.list.len().saturating_sub(1),
-            Keysym::r | Keysym::R => {
+            Keysym::Home => picker.jump_to_end(false),
+            Keysym::End => picker.jump_to_end(true),
+            Keysym::r | Keysym::R if ctrl => {
                 self.step_wallpaper(0);
                 return;
             }
-            _ => return,
+            Keysym::BackSpace => picker.erase(ctrl),
+            Keysym::u if ctrl => {
+                picker.query.clear();
+                picker.refilter();
+            }
+            _ => match &event.utf8 {
+                Some(text) if !ctrl && !self.modifiers.alt => picker.type_text(text),
+                _ => return,
+            },
         }
         if let Some(index) = self.panel_index(PanelKind::Wallpapers) {
             self.panels[index].surf.dirty = true;

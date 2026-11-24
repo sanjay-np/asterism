@@ -227,7 +227,9 @@ pub struct WallpaperSettings {
     pub live_fps: u32,
     /// How big a video's frames are decoded (a big GIF's shrunk), in percent of the screen's width and height (25 to
     /// 100); the compositor scales them up. Smaller costs less: everything a frame costs
-    /// (converting, the pipe, copying, the compositor's upload) goes with its pixels.
+    /// (converting, the pipe, copying, the compositor's upload) goes with its pixels. 75 by
+    /// default: at 50 the twofold stretch was visibly blurred, and measured on a 1080p video it
+    /// cost ffmpeg about as much as 75 (its scaler is no quicker at halving).
     pub live_scale: u32,
     /// Plays on battery too (off: the frame on screen stays until the charger's back).
     pub live_battery: bool,
@@ -253,7 +255,7 @@ impl Default for WallpaperSettings {
             transition_ms: 1200,
             live: true,
             live_fps: 30,
-            live_scale: 50,
+            live_scale: 75,
             live_battery: false,
             live_idle: 5,
         }
@@ -329,6 +331,22 @@ pub struct DaySettings {
 impl Default for DaySettings {
     fn default() -> Self {
         Self { folder: String::new(), corner: true }
+    }
+}
+
+/// What the bar's privacy pill shows: the senses an app is using now.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct PrivacySettings {
+    pub microphone: bool,
+    pub camera: bool,
+    /// Sharing or recording the screen.
+    pub screen: bool,
+}
+
+impl Default for PrivacySettings {
+    fn default() -> Self {
+        Self { microphone: true, camera: true, screen: true }
     }
 }
 
@@ -547,7 +565,8 @@ pub struct Config {
     pub size: BarSize,
     pub position: Position,
     pub page_style: PageStyle,
-    /// Hyprland only: how many pages one group shows (niri shows its own workspaces).
+    /// How many workspaces the bar shows at least on niri (it keeps only those in use), and
+    /// how many pages one group shows on Hyprland.
     pub pages: u32,
     pub clock: Clock,
     /// Numbers beside the volume, the battery and the resources.
@@ -593,6 +612,7 @@ pub struct Config {
     pub wallpaper: WallpaperSettings,
     pub pet: PetSettings,
     pub day: DaySettings,
+    pub privacy: PrivacySettings,
     pub dock: DockSettings,
     pub blur: BlurSettings,
 }
@@ -638,6 +658,7 @@ impl Default for Config {
             wallpaper: WallpaperSettings::default(),
             pet: PetSettings::default(),
             day: DaySettings::default(),
+            privacy: PrivacySettings::default(),
             dock: DockSettings::default(),
             blur: BlurSettings::default(),
         }

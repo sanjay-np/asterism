@@ -410,6 +410,9 @@ pub struct App {
     launcher: crate::launcher::Launcher,
     /// The wallpaper changer, while it's open; when the picture last changed.
     picker: Option<crate::wallpapers::Picker>,
+    /// The desktop's folder dialog is up: whether it was asked from the picker (which comes
+    /// back after it).
+    folder_asked: Option<bool>,
     /// The keyboard shortcuts sheet, while it's open.
     sheet: Option<crate::shortcuts::Sheet>,
     /// The dashboard, while it's open.
@@ -670,6 +673,7 @@ impl App {
             Update::LockNow => return self.start_lock(),
             Update::WifiJoined(ssid, ok, why) => return self.wifi_joined(ssid, ok, why),
             Update::Pairing(pairing) => return self.pairing(pairing),
+            Update::FolderChosen(dir) => return self.wallpaper_folder_chosen(dir),
             Update::Spectrum(levels) => {
                 // Thirty a second: only the desktop shows them, the bar needn't hear of it
                 self.model.spectrum = levels;
@@ -872,6 +876,21 @@ impl App {
             bar.surf.last = None;
         }
         self.close_menu();
+        // The picker shows some settings along its foot (and may be what changed them); a new
+        // folder brings its own pictures
+        if let Some(index) = self.panel_index(PanelKind::Wallpapers) {
+            let folder = crate::wallpapers::directory(&self.config.wallpaper);
+            if let Some(picker) = self.picker.as_mut()
+                && picker.folder != folder
+            {
+                let show = picker.show;
+                *picker = crate::wallpapers::Picker::new(&self.config.wallpaper);
+                picker.set_show(show);
+                self.model.thumbnails.clear();
+                self.requested.retain(|key| !key.starts_with("thumb:"));
+            }
+            self.panels[index].surf.dirty = true;
+        }
         self.send_app_colors();
         self.sync_pet();
         self.sync_dock();
@@ -1188,6 +1207,38 @@ impl App {
             Action::ClipCopy(_) | Action::ClipForget(_) | Action::ClipClear | Action::ClipMove(_) => self.clipboard_action(&action),
             Action::Wallpaper(index) => self.choose_wallpaper(index),
             Action::RandomWallpaper => self.step_wallpaper(0),
+            Action::WallpaperFolders(open) => {
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.folders = open;
+                }
+                if let Some(index) = self.panel_index(PanelKind::Wallpapers) {
+                    self.panels[index].surf.dirty = true;
+                }
+            }
+            Action::WallpaperFolder(dir) => self.set_wallpaper_folder(&dir),
+            Action::ChooseWallpaperFolder => self.choose_wallpaper_folder(),
+            Action::WallpaperShow(show) => {
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.set_show(show);
+                }
+                if let Some(index) = self.panel_index(PanelKind::Wallpapers) {
+                    self.panels[index].surf.dirty = true;
+                }
+            }
+            Action::OpenSettings(page) => {
+                // The picker covers the screen: it gives way to the window
+                self.close_panel(PanelKind::Wallpapers);
+                self.toggle_settings(Some(true));
+                if let Some(settings) = self.settings.as_mut() {
+                    settings.page = page;
+                    settings.editing = None;
+                    settings.scroll = 0.0;
+                    settings.query.clear();
+                }
+                if let Some(index) = self.panel_index(PanelKind::Settings) {
+                    self.panels[index].surf.dirty = true;
+                }
+            }
             Action::WallpaperMove(by) => {
                 if let Some(picker) = self.picker.as_mut() {
                     picker.step(by);
@@ -1445,13 +1496,15 @@ impl App {
     }
 
     fn draw_bar(&mut self, index: usize) {
-        let App { bars, painter, theme, model, config, tools, marquee, pool, qh, bar_arrange, bar_carry, .. } = self;
+        let App { bars, painter, theme, model, config, tools, marquee, pool, qh, bar_arrange, bar_carry, backdrops, .. } = self;
         let bar = &mut bars[index];
+        // A bare bar takes dark ink where the wallpaper under it is light
+        let ground = backdrops.iter().find(|b| b.output == bar.output).and_then(|b| b.under_bar.as_ref());
         let start = Instant::now();
         let width = if bar.output_width > 0.0 { bar.output_width } else { bar.surf.w };
         // The carried item shows only on the bar it's carried on
         let arrange = bar::Arranging { mode: bar_arrange.mode, carry: bar_carry.as_ref().filter(|c| c.bar == index).map(|c| c.carry.clone()) };
-        let damage = render_bar(&mut bar.surf, painter, theme, model, config, tools, marquee, &bar.output_name, width, Some(&arrange), &mut bar.placed);
+        let damage = render_bar(&mut bar.surf, painter, theme, model, config, tools, marquee, &bar.output_name, width, Some(&arrange), &mut bar.placed, ground);
         let drawn = start.elapsed();
         if let Some(damage) = damage {
             present(&mut bar.surf, damage, pool, qh);
@@ -1789,26 +1842,33 @@ enum Which {
 /// The bar for one output, drawn into a new canvas.
 /// Returns the part of the canvas that changed, or nothing if nothing did.
 #[allow(clippy::too_many_arguments)]
-pub fn render_bar(surf: &mut Surf, painter: &mut Painter, t: &Theme, model: &Model, config: &Config, tools: &[Tool], marquee: &HashMap<String, f32>, output: &str, output_width: f32, arrange: Option<&bar::Arranging>, placed: &mut bar::Placed) -> Option<Damage> {
+pub fn render_bar(surf: &mut Surf, painter: &mut Painter, t: &Theme, model: &Model, config: &Config, tools: &[Tool], marquee: &HashMap<String, f32>, output: &str, output_width: f32, arrange: Option<&bar::Arranging>, placed: &mut bar::Placed, ground: Option<&crate::theme::Ground>) -> Option<Damage> {
     surf.dirty = false;
     surf.anim.begin();
-    let mut ctx = bar::Ctx {
-        model,
-        config,
-        theme: t,
-        tools,
-        text: &mut painter.text,
-        anim: &mut surf.anim,
-        output,
-        hovered: surf.hovered.as_deref(),
-        now: chrono::Local::now(),
-        width: surf.w,
-        marquee,
-        squeeze: 0.0,
-        arrange,
+    let (now, width, hovered_key) = (chrono::Local::now(), surf.w, surf.hovered.clone());
+    let build = |theme: &Theme, text: &mut crate::render::text::Text, anim: &mut Animator| {
+        bar::Ctx { model, config, theme, tools, text, anim, output, hovered: hovered_key.as_deref(), now, width, marquee, squeeze: 0.0, arrange }.build()
     };
-    let Layout { pieces, regions, placed: now_placed } = ctx.build();
+    let Layout { mut pieces, regions, placed: now_placed } = build(t, &mut painter.text, &mut surf.anim);
     *placed = now_placed;
+    // A bare bar stands on the wallpaper, which may be light in places and dark in others (a
+    // moon in the middle of a night sky): each item takes the ink that reads on what's under it
+    let offset = ((output_width - surf.w) / 2.0).max(0.0);
+    let across = output_width.max(1.0);
+    let on_light = |x: f32, w: f32| t.light_ink.is_some() && ground.is_some_and(|g| g.light((x + offset) / across, (x + w + offset) / across));
+    let mut light: Vec<bool> = pieces.iter().map(|p| on_light(p.x, p.w)).collect();
+    if light.contains(&true) {
+        let Layout { pieces: lit, .. } = build(t.ink(true), &mut painter.text, &mut surf.anim);
+        if lit.len() == pieces.len() && lit.iter().zip(&pieces).all(|(a, b)| a.key == b.key) {
+            for (i, piece) in lit.into_iter().enumerate() {
+                if light[i] {
+                    pieces[i] = piece;
+                }
+            }
+        } else {
+            light.fill(false);
+        }
+    }
 
     // What the bar stands on: the frame's top edge, a floating surface, pills, or nothing
     let mut all = Vec::with_capacity(pieces.len() + 4);
@@ -1856,6 +1916,9 @@ pub fn render_bar(surf: &mut Surf, painter: &mut Painter, t: &Theme, model: &Mod
         BarStyle::Floating => all.push(surface(format!("floating.{}", surf.w), 8.0, t.line(), surf.w - 16.0, t.bar_height, 14.0)),
         BarStyle::Transparent => {}
     }
+    // Which ink each piece is in, by its place in `all`
+    let mut inks: Vec<bool> = vec![false; all.len()];
+    inks.extend(&light);
     all.extend(pieces);
 
     // What the pointer is on gets its name written just off the bar
@@ -1873,13 +1936,17 @@ pub fn render_bar(surf: &mut Surf, painter: &mut Painter, t: &Theme, model: &Mod
         let mut piece = Piece::new("hover.label", w, h);
         piece.x = (cx - w / 2.0).clamp(t.frame + 4.0, (surf.w - w - t.frame - 4.0).max(4.0)).round();
         piece.y = if t.on_top { t.line() + t.bar_height + 4.0 } else { t.line() - h - 4.0 };
-        piece.prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, radius: h / 2.0, color: t.container_highest });
+        // The pill is in the ink of the ground it's over, like the bar's items
+        let lit = on_light(piece.x, w);
+        let ink = t.ink(lit);
+        piece.prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, radius: h / 2.0, color: ink.container_highest });
         if let Some(image) = icon {
             piece.prims.push(Prim::Image { x: 10.0, y: (h - 16.0) / 2.0, w: 16.0, h: 16.0, image, tint: None, radius: 0.0 });
         }
-        piece.prims.push(Prim::Text { x: 10.0 + room, y: 3.0, text, font, color: t.color_text });
+        piece.prims.push(Prim::Text { x: 10.0 + room, y: 3.0, text, font, color: ink.color_text });
         piece.opacity = surf.anim.value_from("hover.label", 0.0, 1.0, t.fast, Ease::OutCubic);
         all.push(piece);
+        inks.push(lit);
     }
 
     // The bar settles in when it starts
@@ -1989,11 +2056,12 @@ pub fn render_bar(surf: &mut Surf, painter: &mut Painter, t: &Theme, model: &Mod
         if !overlaps(entry.bounds, region) {
             continue;
         }
+        let ink = t.ink(inks.get(i).copied().unwrap_or(false));
         if let Some((_, _, amount)) = stars.iter().find(|s| s.0 as usize == i) {
-            let prim = underline(t, piece, *amount, lift_y);
-            painter.draw(&mut patch, t, &[prim], -origin.0 / scale, -origin.1 / scale, scale);
+            let prim = underline(ink, piece, *amount, lift_y);
+            painter.draw(&mut patch, ink, &[prim], -origin.0 / scale, -origin.1 / scale, scale);
         }
-        compose(&mut patch, painter, surf.id, piece, t, scale, *lift, seen, lift_y, origin);
+        compose(&mut patch, painter, surf.id, piece, ink, scale, *lift, seen, lift_y, origin);
     }
     let mut canvas = match surf.last.take() {
         Some(last) if region != full => last.canvas,
@@ -2654,6 +2722,7 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         osd_generation: 0,
         launcher: crate::launcher::Launcher::new(),
         picker: None,
+        folder_asked: None,
         sheet: None,
         dashboard: None,
         settings: None,

@@ -590,6 +590,7 @@ pub fn rows(page: usize, c: &Config, model: &Model, pick: &Pick) -> Vec<Row> {
                 row(&["size"], "Size", "How tall the bar is, and its text", choice(&[("Compact", "compact"), ("Normal", "normal"), ("Large", "large")], &lower(&format!("{:?}", c.size)))),
                 row(&["icons"], "Icon set", "Thin outlines, rounded, or filled", choice(&[("Outline", "outline"), ("Material", "material"), ("Phosphor", "phosphor")], &c.icons)),
                 row(&["page_style"], "Workspaces", "Dots (busy ones joined by a line), numbers, or kanji (一 二 三)", choice(&[("Dots", "dots"), ("Numbers", "numbers"), ("Kanji", "kanji")], &lower(&format!("{:?}", c.page_style)))),
+                row(&["pages"], "Workspaces shown", "At least this many, empty ones too (niri keeps only those in use)", Control::Stepper { value: c.pages as i64, min: 4, max: 10, step: 1, unit: "" }),
                 section("Arrangement", "Each part reads from top to bottom, as the bar does from left to right"),
                 arrangement(c, pick.bar.as_deref()),
                 row(
@@ -608,6 +609,10 @@ pub fn rows(page: usize, c: &Config, model: &Model, pick: &Pick) -> Vec<Row> {
                 row(&["clock", "hours24"], "24-hour clock", "", Control::Switch(c.clock.hours24)),
                 row(&["clock", "seconds"], "Seconds", "", Control::Switch(c.clock.seconds)),
                 row(&["clock", "date"], "Date beside the time", "", choice(&date_options, &c.clock.date)),
+                section("Privacy", "A pill beside the status icons while an app uses one of these; click it to see which"),
+                row(&["privacy", "microphone"], "Microphone", "Right-click the pill to mute it", Control::Switch(c.privacy.microphone)),
+                row(&["privacy", "camera"], "Camera", "", Control::Switch(c.privacy.camera)),
+                row(&["privacy", "screen"], "Screen sharing and recording", "On niri the pill's menu can stop it", Control::Switch(c.privacy.screen)),
                 section("Corners", "Push the pointer into a corner of the screen"),
                 row(&["hot_corner"], "Control centre", "The top-right corner", Control::Switch(c.hot_corner)),
                 row(&["day", "corner"], "Day panel", "The top-left corner: calendar, timers, to-do, notes (clicking the clock opens it too)", Control::Switch(c.day.corner)),
@@ -623,6 +628,7 @@ pub fn rows(page: usize, c: &Config, model: &Model, pick: &Pick) -> Vec<Row> {
             let mut list = vec![
                 section("Picture", "Its colours become the shell's"),
                 row(&[], "Choose a picture", "Your wallpapers as a grid", Control::Button("Open", Action::ToggleWallpapers)),
+                row(&[], "Wallpaper folder", &format!("Pictures come from {}", crate::wallpapers::short(&crate::wallpapers::directory(w))), Control::Button("Choose…", Action::ChooseWallpaperFolder)),
                 row(&["wallpaper", "fit"], "Fit", "Fill the screen and crop, show it whole, or stretch it", choice(&[("Cover", "cover"), ("Contain", "contain"), ("Stretch", "stretch")], &lower(&format!("{:?}", w.fit)))),
                 section("Changing", ""),
                 row(&["wallpaper", "interval"], "Change by itself", "Minutes between pictures from the folder; 0 never", Control::Stepper { value: w.interval as i64, min: 0, max: 240, step: 5, unit: "min" }),

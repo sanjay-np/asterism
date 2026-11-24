@@ -66,7 +66,17 @@ pub fn source_of(path: &std::path::Path) -> Option<Rgba> {
 
 pub fn from_source(source: Rgba) -> Palette {
     let theme = ThemeBuilder::with_source(rgb(source)).variant(Variant::TonalSpot).build();
-    let s = theme.schemes.dark;
+    roles(&theme.schemes.dark, source)
+}
+
+/// The light scheme from the same colour: dark text and a deeper accent, for things drawn
+/// straight on a light wallpaper (the bare bar).
+pub fn light_from_source(source: Rgba) -> Palette {
+    let theme = ThemeBuilder::with_source(rgb(source)).variant(Variant::TonalSpot).build();
+    roles(&theme.schemes.light, source)
+}
+
+fn roles(s: &material_colors::scheme::Scheme, source: Rgba) -> Palette {
     Palette {
         surface: rgba(s.surface),
         surface_container: rgba(s.surface_container),
@@ -114,5 +124,15 @@ mod tests {
         assert!(light(p.on_surface) > 0.75, "light text on it");
         assert!(light(p.surface_container_high) > light(p.surface), "containers rise above the surface");
         assert!(p.primary.b > p.primary.r, "a blue source gives a blue primary");
+    }
+
+    #[test]
+    fn the_light_scheme_has_dark_ink() {
+        let source = Rgba::rgb(0x4a, 0x6f, 0xd9);
+        let (dark, light) = (from_source(source), light_from_source(source));
+        let luma = |c: Rgba| 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        assert!(luma(light.on_surface) < 0.2, "dark text");
+        assert!(luma(light.primary) < luma(dark.primary), "a deeper accent");
+        assert_eq!(light.source, source);
     }
 }

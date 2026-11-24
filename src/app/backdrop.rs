@@ -25,6 +25,8 @@ pub(super) struct Backdrop {
     pub release: Option<Instant>,
     /// A video or GIF playing on it (`app/live.rs`).
     pub live: Option<crate::live::Player>,
+    /// How light the picture is under the bar, along it, for a bare bar's ink.
+    pub under_bar: Option<crate::theme::Ground>,
 }
 
 /// Everything a wallpaper is painted from.
@@ -61,6 +63,7 @@ pub(super) struct Painted {
     id: u32,
     key: u64,
     picture: Pixmap,
+    under_bar: crate::theme::Ground,
     job: Job,
     before: Option<(Pixmap, crate::transition::Kind, Vec<u8>)>,
 }
@@ -80,7 +83,7 @@ impl App {
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         layer.set_size(0, 0);
         layer.commit();
-        self.backdrops.push(Backdrop { surf, layer, output, shown: None, painting: None, job: None, change: None, release: None, live: None });
+        self.backdrops.push(Backdrop { surf, layer, output, shown: None, painting: None, job: None, change: None, release: None, live: None, under_bar: None });
     }
 
     /// Wallpapers follow the config: on, off, or painted again with new settings.
@@ -129,6 +132,9 @@ impl App {
             }
             let before = before.zip(kind);
             let (id, sender): (u32, Sender<Painted>) = (surf.id, self.painted.clone());
+            // The rows the bar covers, on its edge
+            let band = (self.theme.reserve() * scale).ceil() as u32;
+            let rows = if self.theme.on_top { 0..band } else { h.saturating_sub(band)..h };
             std::thread::spawn(move || {
                 let started = Instant::now();
                 // The picture going away is painted beside the new one, not after it
@@ -137,8 +143,9 @@ impl App {
                     (job.paint(), old.join().ok().flatten())
                 });
                 let Some(picture) = picture else { return };
-                log::debug!("wallpaper {w}×{h} painted in {:?}", started.elapsed());
-                let _ = sender.send(Painted { id, key, picture, job, before });
+                let under_bar = crate::theme::Ground::measure(&picture, rows);
+                log::debug!("wallpaper {w}×{h} painted in {:?}, {:.2} light under the bar", started.elapsed(), under_bar.between(0.0, 1.0));
+                let _ = sender.send(Painted { id, key, picture, under_bar, job, before });
             });
         }
     }
@@ -146,7 +153,7 @@ impl App {
     /// A wallpaper came back from its painter: on screen with it, if it's still the one wanted
     /// (by way of its animation, when it has one).
     pub(super) fn painted(&mut self, painted: Painted) {
-        let Painted { id, key, picture, job, before } = painted;
+        let Painted { id, key, picture, under_bar, job, before } = painted;
         let Some(index) = self.backdrops.iter().position(|b| b.surf.id == id) else { return };
         let backdrop = &mut self.backdrops[index];
         if backdrop.painting != Some(key) {
@@ -162,6 +169,9 @@ impl App {
         }
         backdrop.shown = Some(key);
         backdrop.job = Some(job);
+        // A bare bar on this screen takes its ink from the new ground
+        let was = backdrop.under_bar.replace(under_bar);
+        let ink_turned = (was != backdrop.under_bar).then(|| backdrop.output.clone());
         // A moving wallpaper stops here; the change starts from the frame it was showing, not
         // its first
         let mut before = before;
@@ -182,6 +192,12 @@ impl App {
             _ => {
                 backdrop.change = None;
                 self.show_backdrop(index, picture);
+            }
+        }
+        if let Some(output) = ink_turned {
+            for bar in self.bars.iter_mut().filter(|b| b.output == output) {
+                bar.surf.dirty = true;
+                bar.surf.last = None;
             }
         }
     }

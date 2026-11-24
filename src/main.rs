@@ -30,6 +30,7 @@ mod transition;
 mod timers;
 mod palette;
 mod pet;
+mod privacy;
 mod ui;
 mod wallpapers;
 mod weather;

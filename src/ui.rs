@@ -241,6 +241,14 @@ pub enum Action {
     Wallpaper(usize),
     WallpaperMove(i32),
     RandomWallpaper,
+    /// The picker shows all pictures, the still ones or the moving ones.
+    WallpaperShow(crate::wallpapers::Show),
+    /// Settings, on this page (opened if it isn't).
+    OpenSettings(usize),
+    /// The picker's list of folders, open or shut; a folder to show; the desktop's dialog.
+    WallpaperFolders(bool),
+    WallpaperFolder(std::path::PathBuf),
+    ChooseWallpaperFolder,
     /// The dock, for an app by its key: go to it (or start it), start another, its menu, pin
     /// or unpin it, close its windows. The trash: open it, ask to be sure, empty it.
     DockClick(String),

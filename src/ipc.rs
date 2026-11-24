@@ -13,7 +13,8 @@ asterism msg COMMAND
     launcher [open|close]          Toggle the app launcher
     control [open|close]           Toggle the control centre
     menu NAME                      Toggle a menu: calendar, media, sound, network, bluetooth,
-                                   power, session, machine, traffic, keyboard, notifications
+                                   power, session, machine, traffic, keyboard, notifications,
+                                   privacy
     notifications [clear]          Toggle the notification centre, or clear it
     dnd                            Toggle do not disturb
     volume up|down [PERCENT]       Change the volume (default 5) and show it

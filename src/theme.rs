@@ -125,6 +125,62 @@ pub enum Icons {
     Tools = 2,
 }
 
+/// Whether dark words read better than the scheme's light ones on a ground of this mean
+/// luminance (linear, 0 to 1). The two inks' contrast is even near 0.17 (about #737373);
+/// the switch waits a little past that, so a mid-grey wallpaper keeps the usual look.
+pub fn wants_dark_ink(luminance: f32) -> bool {
+    luminance > 0.22
+}
+
+/// How light the wallpaper is under the bar, from one end to the other: the mean luminance
+/// (linear) of the band it covers, in narrow slices across the width. A bare bar picks its ink
+/// item by item from it, since a picture can be light in the middle and dark at the ends.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Ground {
+    slices: Vec<f32>,
+}
+
+impl Ground {
+    /// Slices of about 8 pixels (at most 400), from a sample of the band's pixels.
+    pub fn measure(pixmap: &tiny_skia::Pixmap, rows: std::ops::Range<u32>) -> Ground {
+        let (w, h) = (pixmap.width(), pixmap.height());
+        let count = (w / 8).clamp(1, 400) as usize;
+        let linear = |v: u8| {
+            let c = v as f32 / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        let (mut sums, mut counts) = (vec![0.0f32; count], vec![0u32; count]);
+        for y in rows.filter(|y| *y < h).step_by(2) {
+            for x in (0..w).step_by(2) {
+                if let Some(p) = pixmap.pixel(x, y) {
+                    let c = p.demultiply();
+                    let slice = (x as usize * count / w as usize).min(count - 1);
+                    sums[slice] += 0.2126 * linear(c.red()) + 0.7152 * linear(c.green()) + 0.0722 * linear(c.blue());
+                    counts[slice] += 1;
+                }
+            }
+        }
+        let slices = sums.iter().zip(&counts).map(|(s, n)| if *n == 0 { 0.0 } else { s / *n as f32 }).collect();
+        Ground { slices }
+    }
+
+    /// The mean luminance between two places across the width (0 the left edge, 1 the right).
+    pub fn between(&self, from: f32, to: f32) -> f32 {
+        let n = self.slices.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let a = ((from.clamp(0.0, 1.0) * n as f32) as usize).min(n - 1);
+        let b = ((to.clamp(0.0, 1.0) * n as f32).ceil() as usize).clamp(a + 1, n);
+        self.slices[a..b].iter().sum::<f32>() / (b - a) as f32
+    }
+
+    /// Whether dark words read better between those places.
+    pub fn light(&self, from: f32, to: f32) -> bool {
+        wants_dark_ink(self.between(from, to))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub style: BarStyle,
@@ -172,7 +228,6 @@ pub struct Theme {
     pub glow: Rgba,
     pub card_deep: Rgba,
     pub warn: Rgba,
-    pub mic: Rgba,
     pub lit: Rgba,
     /// The bar's icons, by group (`Icons`): all three alike unless they're colourful.
     pub icon_tints: [Rgba; 3],
@@ -192,6 +247,8 @@ pub struct Theme {
     /// Durations, in milliseconds.
     pub fast: f32,
     pub normal: f32,
+    /// For the bare bar over a light wallpaper (`for_ground`): the light scheme's colours.
+    pub light_ink: Option<Box<Theme>>,
 }
 
 impl Theme {
@@ -200,6 +257,24 @@ impl Theme {
     }
 
     pub fn with_palette(config: &Config, p: crate::palette::Palette) -> Self {
+        let mut theme = Self::build(config, p, true);
+        // The bare bar stands on the wallpaper itself: over a light one, its words and icons
+        // take the light scheme's ink (your own text colours are for dark grounds, so not those)
+        if config.style == BarStyle::Transparent {
+            theme.light_ink = Some(Box::new(Self::build(config, crate::palette::light_from_source(p.source), false)));
+        }
+        theme
+    }
+
+    /// The ink for something on a light ground (the light scheme's, for a bare bar) or not.
+    pub fn ink(&self, on_light: bool) -> &Theme {
+        match &self.light_ink {
+            Some(light) if on_light => light,
+            _ => self,
+        }
+    }
+
+    fn build(config: &Config, p: crate::palette::Palette, own_text: bool) -> Self {
         let scale = match config.size {
             BarSize::Compact => 0.85,
             BarSize::Normal => 1.0,
@@ -208,10 +283,11 @@ impl Theme {
         let kanji = config.page_style == PageStyle::Kanji;
         let numbers = config.page_style == PageStyle::Numbers || kanji;
         let pick = |own: &Option<String>, fallback: Rgba| own.as_deref().and_then(Rgba::hex).unwrap_or(fallback);
+        let pick_text = |own: &Option<String>, fallback: Rgba| if own_text { pick(own, fallback) } else { fallback };
         let framed = config.style == BarStyle::Frame;
         let primary = p.primary;
-        let text = pick(&config.colors.text, p.on_surface);
-        let soft = pick(&config.colors.text_soft, p.on_surface_variant);
+        let text = pick_text(&config.colors.text, p.on_surface);
+        let soft = pick_text(&config.colors.text_soft, p.on_surface_variant);
         // Icons and widgets take the wallpaper's colour: a light text leaning toward the accent
         // keeps them readable while it shows whose wallpaper it is
         let tinted = text.mix(primary, 0.72);
@@ -272,12 +348,12 @@ impl Theme {
             widget_shadow: widget_opacity < 0.4,
             frosted: false,
             warn: pick(&config.colors.warn, p.error),
-            mic: p.error,
             // With accent icons, a tool that's on needs another colour to stand out
             lit: if icons == "accent" { p.tertiary } else { primary },
 
             fast: 160.0,
             normal: 260.0,
+            light_ink: None,
         }
     }
 
@@ -335,6 +411,41 @@ mod tests {
         let mut config = Config::default();
         config.colors.bar_icons = bar_icons.into();
         Theme::with_palette(&config, crate::palette::from_source(source))
+    }
+
+    #[test]
+    fn a_bare_bar_takes_dark_ink_over_a_light_wallpaper() {
+        let light = |c: Rgba| 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        let mut config = Config::default();
+        config.colors.text = Some("#ffffff".into());
+        config.style = BarStyle::Transparent;
+        let bare = Theme::with_palette(&config, crate::palette::from_source(Rgba::rgb(0x4a, 0x6f, 0xd9)));
+        assert!(std::ptr::eq(bare.ink(false), &bare), "a dark ground keeps the usual ink");
+        let ink = bare.ink(true);
+        assert!(light(ink.color_text) < 0.2 && light(ink.primary) < light(bare.primary), "dark words, a deeper accent");
+        assert!(light(bare.color_text) > 0.9, "your own text colour stays on dark grounds");
+        // Bars that stand on their own surface never change
+        config.style = BarStyle::Line;
+        let line = Theme::with_palette(&config, crate::palette::from_source(Rgba::rgb(0x4a, 0x6f, 0xd9)));
+        assert!(line.light_ink.is_none() && std::ptr::eq(line.ink(true), &line));
+    }
+
+    #[test]
+    fn measures_how_light_the_ground_is_along_the_bar() {
+        // Dark ends and a light middle (a moon), over a dark foot
+        let mut picture = tiny_skia::Pixmap::new(800, 60).unwrap();
+        picture.fill(tiny_skia::Color::from_rgba8(10, 20, 60, 255));
+        let white = tiny_skia::Paint { shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::WHITE), ..Default::default() };
+        picture.fill_rect(tiny_skia::Rect::from_xywh(320.0, 0.0, 160.0, 20.0).unwrap(), &white, tiny_skia::Transform::identity(), None);
+        let top = Ground::measure(&picture, 0..20);
+        assert!(top.light(0.41, 0.59) && top.between(0.41, 0.59) > 0.99, "the light middle");
+        assert!(!top.light(0.0, 0.3) && !top.light(0.7, 1.0), "the dark ends");
+        assert!(!top.light(0.0, 1.0), "the whole width is mostly dark");
+        assert!(!Ground::measure(&picture, 40..60).light(0.4, 0.6), "the foot under the moon is dark");
+        assert!(top.light(0.45, 0.45), "a place with no width still reads its slice");
+        assert!(!Ground::default().light(0.0, 1.0), "nothing measured: the usual ink");
+        // Mid grey (#808080, 0.22 linear) is the edge; a little darker keeps the light words
+        assert!(!wants_dark_ink(0.18) && wants_dark_ink(0.3));
     }
 
     #[test]

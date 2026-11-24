@@ -6,8 +6,8 @@
 //! `hl.dsp.focus({ workspace = 3 })`; before, it took `workspace 3`. The bar tries one, falls
 //! back to the other, and remembers which one worked.
 
-use super::{Out, xkb};
-use crate::model::{Command, CompositorKind, CompositorState, Update, Window, Workspace, WorkspaceTarget};
+use super::{Out, privacy, xkb};
+use crate::model::{Cast, CastTarget, Command, CompositorKind, CompositorState, Update, Window, Workspace, WorkspaceTarget};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -77,6 +77,8 @@ struct Hyprland {
     /// Hyprland before the Lua config: dispatchers take their plain form.
     legacy: bool,
     state: CompositorState,
+    /// Sharing the screen, as the last `screencast` event said.
+    casts: Vec<Cast>,
 }
 
 fn socket_dir() -> Option<PathBuf> {
@@ -151,6 +153,7 @@ impl Hyprland {
         }
         state.workspaces.sort_by_key(|w| w.id);
         self.read_keyboard(&mut state).await;
+        state.casts = self.casts.clone();
         self.state = state;
     }
 
@@ -244,6 +247,21 @@ fn matters(event: &str) -> bool {
     )
 }
 
+/// What `screencast>>STATE,OWNER` says (owner 0 a screen, 1 a window), with the apps taking
+/// it from PipeWire's graph. Hyprland names neither the screen nor the window, and has no way
+/// to stop a cast from outside.
+fn cast_of(data: &str) -> Option<CastTarget> {
+    let (state, owner) = data.split_once(',').unwrap_or((data, "0"));
+    (state.trim() == "1").then(|| if owner.trim() == "1" { CastTarget::Window(String::new()) } else { CastTarget::Output(String::new()) })
+}
+
+async fn screencast(data: &str) -> Vec<Cast> {
+    let Some(target) = cast_of(data) else { return Vec::new() };
+    let apps = privacy::graph().await.map(|g| g.screen_readers()).unwrap_or_default();
+    let cast = |stream: usize, app: String| Cast { stream: stream as u64, session: None, app, target: target.clone(), active: true };
+    if apps.is_empty() { vec![cast(0, String::new())] } else { apps.into_iter().enumerate().map(|(i, app)| cast(i, app)).collect() }
+}
+
 pub async fn run(out: Out, mut commands: UnboundedReceiver<Command>) {
     let Some(dir) = socket_dir() else {
         log::error!("hyprland: can't find its sockets");
@@ -254,6 +272,7 @@ pub async fn run(out: Out, mut commands: UnboundedReceiver<Command>) {
         events: dir.join(".socket2.sock"),
         legacy: false,
         state: CompositorState::default(),
+        casts: Vec::new(),
     };
 
     loop {
@@ -275,8 +294,11 @@ pub async fn run(out: Out, mut commands: UnboundedReceiver<Command>) {
             tokio::select! {
                 line = lines.next_line() => match line {
                     Ok(Some(line)) => {
-                        let event = line.split(">>").next().unwrap_or("");
-                        if matters(event) {
+                        let (event, data) = line.split_once(">>").unwrap_or((line.as_str(), ""));
+                        if event == "screencast" {
+                            hyprland.casts = screencast(data).await;
+                            pending = true;
+                        } else if matters(event) {
                             pending = true;
                         }
                     }
@@ -303,6 +325,14 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use tokio::net::UnixListener;
+
+    #[test]
+    fn reads_screencast_events() {
+        assert_eq!(cast_of("1,0"), Some(CastTarget::Output(String::new())));
+        assert_eq!(cast_of("1,1"), Some(CastTarget::Window(String::new())));
+        assert_eq!(cast_of("0,0"), None);
+        assert_eq!(cast_of("0"), None);
+    }
 
     /// A pretend Hyprland: answers the questions the bar asks, and takes dispatchers in
     /// one form only, like a real one would.
@@ -336,7 +366,7 @@ mod tests {
     }
 
     fn hyprland(dir: &std::path::Path) -> Hyprland {
-        Hyprland { socket: dir.join(".socket.sock"), events: dir.join(".socket2.sock"), legacy: false, state: CompositorState::default() }
+        Hyprland { socket: dir.join(".socket.sock"), events: dir.join(".socket2.sock"), legacy: false, state: CompositorState::default(), casts: Vec::new() }
     }
 
     fn temp(name: &str) -> std::path::PathBuf {

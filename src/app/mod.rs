@@ -84,6 +84,7 @@ mod key {
 /// Room around a menu's card for the halos of its stars.
 pub const POPUP_MARGIN: f32 = 14.0;
 
+mod arrange;
 mod backdrop;
 mod blur;
 mod clipboard;
@@ -296,6 +297,8 @@ struct BarSurface {
     output_height: f32,
     /// And its width, to find the frame's corners.
     output_width: f32,
+    /// Where its items were last drawn: what a carried item is dropped by.
+    placed: bar::Placed,
 }
 
 /// Which surface a slider is being dragged on.
@@ -483,6 +486,9 @@ pub struct App {
     wallpaper_changed: Instant,
     /// The slider being dragged, and where.
     drag: Option<(DragOn, Drag)>,
+    /// Moving the bar's items: arrange mode, and the item carried on one bar (by its index).
+    bar_arrange: bar::Arranging,
+    bar_carry: Option<arrange::Carrying>,
     /// What's typed in polkit's dialog, and for which request.
     password: crate::model::Secret,
     auth_cookie: Option<String>,
@@ -640,7 +646,7 @@ impl App {
         log::info!("bar on {name}");
         let output_height = info.logical_size.map_or(1080.0, |(_, h)| h as f32);
         let output_width = info.logical_size.map_or(0.0, |(w, _)| w as f32);
-        self.bars.push(BarSurface { surf, layer, output, output_name: name, output_height, output_width });
+        self.bars.push(BarSurface { surf, layer, output, output_name: name, output_height, output_width, placed: Default::default() });
     }
 
     fn set_input_region(&self, bar: &BarSurface) {
@@ -1083,6 +1089,9 @@ impl App {
             Action::ToggleOverview => self.toggle_overview(None),
             Action::OverviewWindow(_) | Action::OverviewWorkspace(_) | Action::OverviewClose(_) => self.overview_action(&action),
             Action::SetSetting(keys, value) => self.set_setting(&keys, &value),
+            Action::SettingsBarPick(item) => self.settings_bar_pick(item),
+            Action::BarArrange(how) => self.arrange_bar(&how),
+            Action::ArrangeBar(on) => self.arrange_bar_mode(on),
             Action::MoveWindow => self.move_window(serial),
             Action::EditWidgets(on) => self.edit_widgets(on),
             Action::WidgetAdd(kind) => self.show_widget(&kind, true),
@@ -1436,11 +1445,13 @@ impl App {
     }
 
     fn draw_bar(&mut self, index: usize) {
-        let App { bars, painter, theme, model, config, tools, marquee, pool, qh, .. } = self;
+        let App { bars, painter, theme, model, config, tools, marquee, pool, qh, bar_arrange, bar_carry, .. } = self;
         let bar = &mut bars[index];
         let start = Instant::now();
         let width = if bar.output_width > 0.0 { bar.output_width } else { bar.surf.w };
-        let damage = render_bar(&mut bar.surf, painter, theme, model, config, tools, marquee, &bar.output_name, width);
+        // The carried item shows only on the bar it's carried on
+        let arrange = bar::Arranging { mode: bar_arrange.mode, carry: bar_carry.as_ref().filter(|c| c.bar == index).map(|c| c.carry.clone()) };
+        let damage = render_bar(&mut bar.surf, painter, theme, model, config, tools, marquee, &bar.output_name, width, Some(&arrange), &mut bar.placed);
         let drawn = start.elapsed();
         if let Some(damage) = damage {
             present(&mut bar.surf, damage, pool, qh);
@@ -1571,7 +1582,10 @@ impl App {
                 self.cursor_shape = None;
                 self.hover(which, Some((x, y)));
             }
+            PointerEventKind::Leave { .. } if self.bar_carrying(which) => {}
             PointerEventKind::Leave { .. } => self.hover(which, None),
+            PointerEventKind::Motion { .. } if self.bar_carrying(which) => self.bar_carry_motion(x, y),
+            PointerEventKind::Release { .. } if self.bar_carrying(which) => self.bar_carry_release(x, y),
             PointerEventKind::Motion { .. } => {
                 if self.overview.as_ref().is_some_and(|o| o.carry.is_some()) {
                     self.overview_motion(x, y);
@@ -1676,6 +1690,7 @@ impl App {
             _ => None,
         };
         let clickable = hit.is_some_and(|p| !p.actions.is_empty() && !matches!(p.actions.left, Some(Action::MoveWindow)));
+        let grab = hit.is_some_and(|p| p.key.starts_with("arrange.grab."));
         let centre = hit.map_or(0.0, |p| p.x + p.w / 2.0);
         let page = key.clone();
         // A window's star: its app's icon goes beside its name, looked up once
@@ -1689,7 +1704,7 @@ impl App {
             surf.dirty = true;
         }
         if at.is_some() {
-            self.set_cursor(if clickable { Shape::Pointer } else { Shape::Default });
+            self.set_cursor(if grab { Shape::Grab } else if clickable { Shape::Pointer } else { Shape::Default });
         }
         if let Some(app) = wanted_icon
             && !self.model.app_icons.contains_key(&app)
@@ -1704,6 +1719,12 @@ impl App {
     }
 
     fn press(&mut self, which: Which, x: f32, y: f32, button: u32, serial: u32) {
+        // On the bar, a middle press (or any left press in arrange mode) picks an item up
+        if let Which::Bar(bar) = which
+            && self.bar_pick_up(bar, x, y, button)
+        {
+            return;
+        }
         let bar_id = match which {
             Which::Bar(i) => self.bars.get(i).map(|b| b.surf.id),
             _ => None,
@@ -1768,7 +1789,7 @@ enum Which {
 /// The bar for one output, drawn into a new canvas.
 /// Returns the part of the canvas that changed, or nothing if nothing did.
 #[allow(clippy::too_many_arguments)]
-pub fn render_bar(surf: &mut Surf, painter: &mut Painter, t: &Theme, model: &Model, config: &Config, tools: &[Tool], marquee: &HashMap<String, f32>, output: &str, output_width: f32) -> Option<Damage> {
+pub fn render_bar(surf: &mut Surf, painter: &mut Painter, t: &Theme, model: &Model, config: &Config, tools: &[Tool], marquee: &HashMap<String, f32>, output: &str, output_width: f32, arrange: Option<&bar::Arranging>, placed: &mut bar::Placed) -> Option<Damage> {
     surf.dirty = false;
     surf.anim.begin();
     let mut ctx = bar::Ctx {
@@ -1784,8 +1805,10 @@ pub fn render_bar(surf: &mut Surf, painter: &mut Painter, t: &Theme, model: &Mod
         width: surf.w,
         marquee,
         squeeze: 0.0,
+        arrange,
     };
-    let Layout { pieces, regions } = ctx.build();
+    let Layout { pieces, regions, placed: now_placed } = ctx.build();
+    *placed = now_placed;
 
     // What the bar stands on: the frame's top edge, a floating surface, pills, or nothing
     let mut all = Vec::with_capacity(pieces.len() + 4);
@@ -2677,6 +2700,8 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         night_scheduled: None,
         wallpaper_changed: Instant::now(),
         drag: None,
+        bar_arrange: Default::default(),
+        bar_carry: None,
         password: Default::default(),
         auth_cookie: None,
         control_state: popups::State::default(),

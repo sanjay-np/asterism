@@ -35,6 +35,10 @@ pub enum Control {
     Button(&'static str, Action),
     /// Pictures to pick from, under the label, as many lines of them as they need.
     Gallery(Vec<Tile>),
+    /// The bar's three parts with their items in order, those left out, and the one picked to
+    /// move; under the label, the row's whole width.
+    /// `usual`: it's the arrangement the shell comes with.
+    Arrange { parts: [Vec<String>; 3], hidden: Vec<String>, picked: Option<String>, usual: bool },
 }
 
 /// One picture in a gallery: a pet drawn as it is (an animal and its coat) or an icon, a name
@@ -55,6 +59,270 @@ pub struct Tile {
 pub struct PetPick {
     pub selected: usize,
     pub adding: bool,
+}
+
+/// What's picked on the pages that pick something: a pet, and the bar's item being moved.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pick {
+    pub pet: PetPick,
+    pub bar: Option<String>,
+    /// Arrange mode is on in the bar.
+    pub arranging: bool,
+}
+
+/// Everything the bar can show: its name in `[layout]`, what it's called here, and its icon.
+pub const BAR_ITEMS: [(&str, &str, &str); 10] = [
+    ("launcher", "Apps button", "apps"),
+    ("pages", "Workspaces", "layout"),
+    ("resources", "Machine", "cpu"),
+    ("clock", "Clock", "calendar"),
+    ("day", "Your day", "checklist"),
+    ("weather", "Weather", "cloud-sun"),
+    ("media", "Music", "music"),
+    ("tools", "Tools", "capture"),
+    ("tray", "Tray", "dock"),
+    ("status", "Status", "wifi-high"),
+];
+
+/// The bar's parts as they read across: left, middle, right.
+pub const BAR_PARTS: [&str; 3] = ["left", "center", "right"];
+
+/// A bar item's name here and its icon (one the shell doesn't know keeps its own name).
+pub fn bar_item(name: &str) -> (String, &'static str) {
+    BAR_ITEMS.iter().find(|(n, ..)| *n == name).map_or((name.to_string(), "layout"), |(_, label, icon)| (label.to_string(), *icon))
+}
+
+/// One step in arranging the bar.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BarMove {
+    /// One place to the left; from the start of a part, to the end of the part before.
+    Earlier(String),
+    /// One place to the right; from the end of a part, to the start of the next.
+    Later(String),
+    /// Into this part (0 left, 1 middle, 2 right), on the side it comes from.
+    To(String, usize),
+    /// Out of the bar.
+    Off(String),
+    /// Dropped on the bar: into this part, just after this item there (None: at its start).
+    Place(String, usize, Option<String>),
+    /// The usual arrangement back.
+    Usual,
+}
+
+/// The bar's parts after a move. `None` when nothing changes (or for `Usual`, which writes no
+/// lists but takes them out).
+pub fn arrange_bar(parts: [&[String]; 3], how: &BarMove) -> Option<[Vec<String>; 3]> {
+    let mut next: [Vec<String>; 3] = parts.map(<[String]>::to_vec);
+    let find = |next: &[Vec<String>; 3], item: &str| next.iter().enumerate().find_map(|(p, list)| list.iter().position(|m| m == item).map(|i| (p, i)));
+    match how {
+        BarMove::Earlier(item) => {
+            let (p, i) = find(&next, item)?;
+            if i > 0 {
+                next[p].swap(i, i - 1);
+            } else if p > 0 {
+                let moved = next[p].remove(i);
+                next[p - 1].push(moved);
+            } else {
+                return None;
+            }
+        }
+        BarMove::Later(item) => {
+            let (p, i) = find(&next, item)?;
+            if i + 1 < next[p].len() {
+                next[p].swap(i, i + 1);
+            } else if p < 2 {
+                let moved = next[p].remove(i);
+                next[p + 1].insert(0, moved);
+            } else {
+                return None;
+            }
+        }
+        BarMove::To(item, to) => {
+            let to = (*to).min(2);
+            let from = find(&next, item);
+            if from.is_some_and(|(p, _)| p == to) {
+                return None;
+            }
+            for list in next.iter_mut() {
+                list.retain(|m| m != item);
+            }
+            // Moving right it lands at the part's start, otherwise at its end: next to where it
+            // was. Put back on the right, it goes before what's there (status stays at the end)
+            match from {
+                Some((p, _)) if p < to => next[to].insert(0, item.clone()),
+                None if to == 2 => next[to].insert(0, item.clone()),
+                _ => next[to].push(item.clone()),
+            }
+        }
+        BarMove::Place(item, to, after) => {
+            let to = (*to).min(2);
+            for list in next.iter_mut() {
+                list.retain(|m| m != item);
+            }
+            let at = after.as_ref().and_then(|a| next[to].iter().position(|m| m == a)).map_or(0, |i| i + 1);
+            next[to].insert(at, item.clone());
+            if next.iter().zip(parts).all(|(a, b)| a[..] == *b) {
+                return None;
+            }
+        }
+        BarMove::Off(item) => {
+            find(&next, item)?;
+            for list in next.iter_mut() {
+                list.retain(|m| m != item);
+            }
+        }
+        BarMove::Usual => return None,
+    }
+    Some(next)
+}
+
+/// The bar's arrangement: its parts, each item a chip; one picked moves along with the
+/// buttons under them, or to another part by a click on that part.
+fn arrangement(c: &Config, picked: Option<&str>) -> Row {
+    let l = &c.layout;
+    let parts = [l.left.clone(), l.center.clone(), l.right.clone()];
+    let hidden: Vec<String> = BAR_ITEMS.iter().map(|(n, ..)| n.to_string()).filter(|n| !parts.iter().any(|p| p.contains(n))).collect();
+    // A pick that's no longer anywhere (a name taken out of the file) is let go
+    let picked = picked.filter(|p| parts.iter().any(|l| l.iter().any(|m| m == p)) || hidden.iter().any(|m| m == p));
+    let about = match picked {
+        None => "Click an item to move it",
+        Some(p) if hidden.iter().any(|m| m == p) => "Click a part to put it there",
+        Some(_) => "Move it along, or click another part to move it there",
+    };
+    let d = crate::config::Layout::default();
+    let usual = l.left == d.left && l.center == d.center && l.right == d.right;
+    Row { keys: Vec::new(), label: "What sits where".into(), about: about.into(), control: Control::Arrange { parts, hidden, picked: picked.map(str::to_string), usual } }
+}
+
+/// The arrangement's pieces from its top left, `w` wide: the three parts side by side with their
+/// items' chips, those left out under them, then the buttons for the one picked. And its height.
+fn arrange_pieces(parts: &[Vec<String>; 3], hidden: &[String], picked: Option<&str>, usual: bool, t: &Theme, text: &mut Text, w: f32) -> (Vec<Piece>, f32) {
+    const GAP: f32 = 10.0;
+    const CHIP: f32 = 32.0;
+    const STEP: f32 = CHIP + 6.0;
+    const HEAD: f32 = 34.0;
+    let head_font = Font::new(t.text - 2.0).weight(600).spacing(1.0);
+    let chip_font = Font::new(t.text - 1.0).weight(500);
+    let mut pieces = Vec::new();
+    let col_w = ((w - GAP * 2.0) / 3.0).floor();
+    let most = parts.iter().map(Vec::len).max().unwrap_or(0).max(1);
+    let col_h = HEAD + most as f32 * STEP + 4.0;
+    let picked_part = picked.and_then(|p| parts.iter().position(|l| l.iter().any(|m| m == p)));
+    let chip_w = |name: &str, text: &mut Text| text.measure(&bar_item(name).0, chip_font).0 + 52.0;
+    // An item: its icon and name on a pill; the picked one lit
+    let chip = |pieces: &mut Vec<Piece>, name: &str, x: f32, y: f32, cw: f32, text: &mut Text| {
+        let (label, icon) = bar_item(name);
+        let on = picked == Some(name);
+        let mut p = Piece::new(format!("set.bar.{name}"), cw, CHIP);
+        if on {
+            p.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: cw, h: CHIP, radius: CHIP / 2.0, color: t.primary });
+            p.prims.push(Prim::Rect { x: 1.5, y: 1.5, w: cw - 3.0, h: CHIP - 3.0, radius: CHIP / 2.0 - 1.5, color: t.secondary_container });
+        } else {
+            p.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: cw, h: CHIP, radius: CHIP / 2.0, color: t.hairline() });
+            p.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: cw - 2.0, h: CHIP - 2.0, radius: CHIP / 2.0 - 1.0, color: t.card_deep });
+        }
+        p.prims.push(Prim::Icon { x: 13.0, y: (CHIP - 16.0) / 2.0, size: 16.0, name: icon.into(), color: if on { t.primary } else { t.color_soft } });
+        let label = crate::bar::Ctx::ellipsize_with(text, &label, chip_font, cw - 52.0);
+        let (_, lh) = text.measure(&label, chip_font);
+        p.prims.push(Prim::Text { x: 37.0, y: ((CHIP - lh) / 2.0).round(), text: label, font: chip_font, color: if on { t.on_secondary_container } else { t.color_text } });
+        p.highlight = !on;
+        p.actions.left = Some(Action::SettingsBarPick(if on { None } else { Some(name.to_string()) }));
+        p.x = x;
+        p.y = y;
+        pieces.push(p);
+    };
+    for (p, list) in parts.iter().enumerate() {
+        let x = p as f32 * (col_w + GAP);
+        // With an item picked, every other part is somewhere to send it
+        let target = picked.filter(|_| picked_part != Some(p));
+        let mut col = Piece::new(format!("set.part.{p}"), col_w, col_h);
+        col.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: col_w, h: col_h, radius: 14.0, color: if target.is_some() { t.primary.alpha(0.6) } else { t.hairline() } });
+        col.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: col_w - 2.0, h: col_h - 2.0, radius: 13.0, color: t.surface });
+        let title = ["LEFT", "MIDDLE", "RIGHT"][p];
+        col.prims.push(Prim::Text { x: 14.0, y: 12.0, text: title.into(), font: head_font, color: if target.is_some() { t.primary } else { t.color_soft } });
+        if list.is_empty() {
+            col.prims.push(Prim::Text { x: 14.0, y: HEAD + 8.0, text: "Empty".into(), font: chip_font, color: t.color_soft.alpha(0.6) });
+        }
+        match target {
+            Some(item) => {
+                col.highlight = true;
+                col.actions.left = Some(Action::BarArrange(BarMove::To(item.to_string(), p)));
+            }
+            None => col.blocks = true,
+        }
+        col.x = x;
+        pieces.push(col);
+        for (i, name) in list.iter().enumerate() {
+            chip(&mut pieces, name, x + 8.0, HEAD + i as f32 * STEP, col_w - 16.0, text);
+        }
+    }
+    let mut y = col_h;
+    // What the bar could show but doesn't, in lines as long as the row
+    if !hidden.is_empty() {
+        y += 18.0;
+        let title = "NOT IN THE BAR";
+        let (tw, th) = text.measure(title, head_font);
+        let mut words = Piece::new("set.bar.off", tw, th);
+        words.prims.push(Prim::Text { x: 0.0, y: 0.0, text: title.into(), font: head_font, color: t.color_soft });
+        words.x = 4.0;
+        words.y = y;
+        pieces.push(words);
+        y += th + 10.0;
+        let mut x = 0.0;
+        for name in hidden {
+            let cw = chip_w(name, text).min(w);
+            if x > 0.0 && x + cw > w {
+                x = 0.0;
+                y += STEP;
+            }
+            chip(&mut pieces, name, x, y, cw, text);
+            x += cw + 8.0;
+        }
+        y += CHIP;
+    }
+    // The picked one's moves (those that would do nothing are dimmed), and the usual arrangement
+    let refs = [&parts[0][..], &parts[1][..], &parts[2][..]];
+    let mut buttons: Vec<(&str, &str, Option<Action>, bool)> = Vec::new();
+    if let Some(item) = picked.filter(|_| picked_part.is_some()) {
+        let can = |how: BarMove| arrange_bar(refs, &how).is_some().then_some(Action::BarArrange(how));
+        buttons.push(("set.bar.earlier", "‹  Earlier", can(BarMove::Earlier(item.into())), true));
+        buttons.push(("set.bar.later", "Later  ›", can(BarMove::Later(item.into())), true));
+        buttons.push(("set.bar.remove", "Take it off", Some(Action::BarArrange(BarMove::Off(item.into()))), false));
+    }
+    if !usual {
+        buttons.push(("set.bar.usual", "Usual arrangement", Some(Action::BarArrange(BarMove::Usual)), false));
+    }
+    if !buttons.is_empty() {
+        y += 16.0;
+        let mut x: f32 = 0.0;
+        for (key, label, action, filled) in buttons {
+            let (lw, lh) = text.measure(label, chip_font);
+            let (bw, bh) = (lw + 26.0, 32.0);
+            // The usual arrangement at the far end, apart from the moves
+            if key == "set.bar.usual" {
+                x = x.max(w - bw);
+            }
+            let live = action.is_some();
+            let ink = if !live { t.color_soft.alpha(0.5) } else if filled { t.on_secondary_container } else { t.color_text };
+            let mut b = Piece::new(key, bw, bh);
+            if filled && live {
+                b.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: bw, h: bh, radius: bh / 2.0, color: t.secondary_container });
+            } else {
+                b.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: bw, h: bh, radius: bh / 2.0, color: t.hairline() });
+                b.prims.push(Prim::Rect { x: 1.0, y: 1.0, w: bw - 2.0, h: bh - 2.0, radius: bh / 2.0 - 1.0, color: t.card_deep });
+            }
+            b.prims.push(Prim::Text { x: 13.0, y: ((bh - lh) / 2.0).round(), text: label.into(), font: chip_font, color: ink });
+            b.highlight = live;
+            b.blocks = true;
+            b.actions.left = action;
+            b.x = x;
+            b.y = y;
+            pieces.push(b);
+            x += bw + 8.0;
+        }
+        y += 32.0;
+    }
+    (pieces, y)
 }
 
 pub struct Row {
@@ -283,7 +551,7 @@ fn pet_rows(c: &Config, pick: &PetPick) -> Vec<Row> {
 }
 
 /// What a page holds, from the config as it is now.
-pub fn rows(page: usize, c: &Config, model: &Model, pick: &PetPick) -> Vec<Row> {
+pub fn rows(page: usize, c: &Config, model: &Model, pick: &Pick) -> Vec<Row> {
     let lower = |s: &str| s.to_lowercase();
     match page {
         0 => vec![
@@ -322,6 +590,14 @@ pub fn rows(page: usize, c: &Config, model: &Model, pick: &PetPick) -> Vec<Row> 
                 row(&["size"], "Size", "How tall the bar is, and its text", choice(&[("Compact", "compact"), ("Normal", "normal"), ("Large", "large")], &lower(&format!("{:?}", c.size)))),
                 row(&["icons"], "Icon set", "Thin outlines, rounded, or filled", choice(&[("Outline", "outline"), ("Material", "material"), ("Phosphor", "phosphor")], &c.icons)),
                 row(&["page_style"], "Workspaces", "Dots (busy ones joined by a line), numbers, or kanji (一 二 三)", choice(&[("Dots", "dots"), ("Numbers", "numbers"), ("Kanji", "kanji")], &lower(&format!("{:?}", c.page_style)))),
+                section("Arrangement", "Each part reads from top to bottom, as the bar does from left to right"),
+                arrangement(c, pick.bar.as_deref()),
+                row(
+                    &[],
+                    "On the bar itself",
+                    "Drag items along the bar, or off it to take them away; a middle-button drag works any time",
+                    Control::Button(if pick.arranging { "Done" } else { "Arrange" }, Action::ArrangeBar(Some(!pick.arranging))),
+                ),
                 section("What it shows", ""),
                 row(&["percent"], "Numbers beside icons", "Volume, battery and the machine's load as percentages", Control::Switch(c.percent)),
                 resource(&c.resources, "temperature", "Temperature gauge", "The processor's heat as a ring beside the load"),
@@ -412,7 +688,7 @@ pub fn rows(page: usize, c: &Config, model: &Model, pick: &PetPick) -> Vec<Row> 
             list
         }
         4 => dock_rows(c, model),
-        PETS_PAGE => pet_rows(c, pick),
+        PETS_PAGE => pet_rows(c, &pick.pet),
         6 => {
             let n = &c.night_light;
             let mut list = vec![row(&["night_light", "mode"], "Night light", "Warmer colours: always, or from evening to morning", choice(&[("Off", "off"), ("On", "on"), ("Schedule", "schedule")], &n.mode))];
@@ -487,9 +763,26 @@ pub fn rows(page: usize, c: &Config, model: &Model, pick: &PetPick) -> Vec<Row> 
 }
 
 /// Writes one value into the config file, keeping everything else as it was.
+#[cfg(test)]
 pub fn write(path: &Path, keys: &[String], value: &Value) -> anyhow::Result<()> {
+    write_all(path, &[(keys.to_vec(), value.clone())])
+}
+
+/// Several values at once (the bar's three parts), in one read and one write of the file.
+pub fn write_all(path: &Path, writes: &[(Vec<String>, Value)]) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let mut doc: toml_edit::DocumentMut = text.parse()?;
+    for (keys, value) in writes {
+        put(&mut doc, keys, value)?;
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, doc.to_string())?;
+    Ok(())
+}
+
+fn put(doc: &mut toml_edit::DocumentMut, keys: &[String], value: &Value) -> anyhow::Result<()> {
     let Some((last, tables)) = keys.split_last() else { return Ok(()) };
     let mut table = doc.as_table_mut();
     for key in tables {
@@ -517,10 +810,6 @@ pub fn write(path: &Path, keys: &[String], value: &Value) -> anyhow::Result<()> 
         }
         table[last.as_str()] = toml_edit::Item::Value(new.clone());
     }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(path, doc.to_string())?;
     Ok(())
 }
 
@@ -535,11 +824,15 @@ pub struct Settings {
     pub query: String,
     /// The pet the Pets page shows, or its animals to add.
     pub pet: PetPick,
+    /// The bar's item picked to move (Bar › Arrangement).
+    pub bar: Option<String>,
+    /// Arrange mode is on in the bar (its button says Done).
+    pub arranging: bool,
 }
 
 /// The rows of every page whose name, description or page matches `query` (any case); each
 /// says which page it's on.
-pub fn search(query: &str, c: &Config, model: &Model, pick: &PetPick) -> Vec<Row> {
+pub fn search(query: &str, c: &Config, model: &Model, pick: &Pick) -> Vec<Row> {
     let query = query.trim().to_lowercase();
     let mut found = Vec::new();
     for (page, name) in PAGES.iter().enumerate() {
@@ -571,14 +864,14 @@ fn control_width(control: &Control, text: &mut Text, font: Font) -> f32 {
         Control::Text(..) => 240.0,
         Control::Section => 0.0,
         Control::Button(label, _) => pill(label, text),
-        // Always under its label, the row's whole width
-        Control::Gallery(_) => f32::MAX,
+        // Always under their label, the row's whole width
+        Control::Gallery(_) | Control::Arrange { .. } => f32::MAX,
     }
 }
 
 impl Settings {
     pub fn new() -> Self {
-        Self { page: 0, editing: None, scroll: 0.0, max_scroll: 0.0, query: String::new(), pet: PetPick::default() }
+        Self { page: 0, editing: None, scroll: 0.0, max_scroll: 0.0, query: String::new(), pet: PetPick::default(), bar: None, arranging: false }
     }
 
     /// The app's window: the pages down a sidebar, the page's rows on a card beside them.
@@ -673,7 +966,8 @@ impl Settings {
         };
         let top = head_h + 4.0 - self.scroll;
         let mut y = top;
-        let rows = if self.query.trim().is_empty() { rows(self.page, c, model, &self.pet) } else { search(&self.query, c, model, &self.pet) };
+        let pick = Pick { pet: self.pet, bar: self.bar.clone(), arranging: self.arranging };
+        let rows = if self.query.trim().is_empty() { rows(self.page, c, model, &pick) } else { search(&self.query, c, model, &pick) };
         if rows.is_empty() {
             let words = format!("Nothing here matches “{}”", self.query.trim());
             let (nw, nh) = text.measure(&words, about_font);
@@ -738,8 +1032,14 @@ impl Settings {
             // A gallery: its pictures in as many lines as they need, under the label
             let per_line = (((iw + TILE_GAP) / (TILE.0 + TILE_GAP)).floor() as usize).max(1);
             let gallery_top = 14.0 + lh + if row.about.is_empty() { 0.0 } else { ah } + 14.0;
+            // The bar's arrangement, built once here for its height
+            let arranged = match &row.control {
+                Control::Arrange { parts, hidden, picked, usual } => Some(arrange_pieces(parts, hidden, picked.as_deref(), *usual, t, text, iw)),
+                _ => None,
+            };
             let row_h = match &row.control {
                 Control::Gallery(tiles) => gallery_top + tiles.len().div_ceil(per_line) as f32 * (TILE.1 + TILE_GAP) + 6.0,
+                Control::Arrange { .. } => gallery_top + arranged.as_ref().map_or(0.0, |(_, h)| *h) + 18.0,
                 _ if stacked => 104.0 + 40.0 * lines.len().saturating_sub(1) as f32,
                 _ => 66.0,
             };
@@ -858,6 +1158,13 @@ impl Settings {
                     pill(&mut pieces, format!("set.button.{r}"), label, right, true, Some(action), text);
                 }
                 Control::Section => {}
+                Control::Arrange { .. } => {
+                    for mut piece in arranged.map(|(pieces, _)| pieces).unwrap_or_default() {
+                        piece.x += ix;
+                        piece.y += y + gallery_top;
+                        pieces.push(piece);
+                    }
+                }
                 Control::Gallery(tiles) => {
                     let (tw, th) = TILE;
                     let name_font = Font::new(t.text - 1.0).weight(500);
@@ -971,7 +1278,7 @@ mod tests {
     #[test]
     fn rows_that_do_nothing_are_left_out() {
         let model = Model::default();
-        let pick = PetPick::default();
+        let pick = Pick::default();
         let mut c = Config::default();
         // Night light off: only its switch; on a schedule: its hours too
         c.night_light.mode = "off".into();
@@ -1000,9 +1307,56 @@ mod tests {
     }
 
     #[test]
+    fn bar_items_move_along_and_between_parts() {
+        let list = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (l, c, r) = (list(&["launcher", "pages"]), list(&["clock", "media"]), list(&["tray", "status"]));
+        let parts = [&l[..], &c[..], &r[..]];
+        let go = |how: BarMove| arrange_bar(parts, &how);
+        let at = |item: &str| item.to_string();
+        // Along a part, then over its edge into the next one, on the side it came from
+        assert_eq!(go(BarMove::Later(at("launcher"))).unwrap(), [list(&["pages", "launcher"]), c.clone(), r.clone()]);
+        assert_eq!(go(BarMove::Later(at("media"))).unwrap(), [l.clone(), list(&["clock"]), list(&["media", "tray", "status"])]);
+        assert_eq!(go(BarMove::Earlier(at("clock"))).unwrap(), [list(&["launcher", "pages", "clock"]), list(&["media"]), r.clone()]);
+        // Nowhere further to go
+        assert_eq!(go(BarMove::Earlier(at("launcher"))), None);
+        assert_eq!(go(BarMove::Later(at("status"))), None);
+        // To another part: moving right to its start, left to its end; into its own part, nothing
+        assert_eq!(go(BarMove::To(at("pages"), 2)).unwrap(), [list(&["launcher"]), c.clone(), list(&["pages", "tray", "status"])]);
+        assert_eq!(go(BarMove::To(at("tray"), 0)).unwrap(), [list(&["launcher", "pages", "tray"]), c.clone(), list(&["status"])]);
+        assert_eq!(go(BarMove::To(at("clock"), 1)), None);
+        // Off and back: back on the right it goes before status
+        let off = go(BarMove::Off(at("tray"))).unwrap();
+        assert_eq!(off, [l.clone(), c.clone(), list(&["status"])]);
+        let back = arrange_bar([&off[0], &off[1], &off[2]], &BarMove::To(at("tray"), 2)).unwrap();
+        assert_eq!(back, [l.clone(), c.clone(), r.clone()]);
+        assert_eq!(go(BarMove::Off(at("weather"))), None);
+        // Dropped on the bar: after an item, at a part's start, or where it already was
+        assert_eq!(go(BarMove::Place(at("status"), 0, Some(at("launcher")))).unwrap(), [list(&["launcher", "status", "pages"]), c.clone(), list(&["tray"])]);
+        assert_eq!(go(BarMove::Place(at("media"), 1, None)).unwrap(), [l.clone(), list(&["media", "clock"]), r.clone()]);
+        assert_eq!(go(BarMove::Place(at("clock"), 1, None)), None);
+        assert_eq!(go(BarMove::Place(at("pages"), 0, Some(at("launcher")))), None);
+    }
+
+    #[test]
+    fn the_arrangement_lists_what_the_bar_leaves_out() {
+        let mut c = Config::default();
+        c.layout.right = vec!["status".into()];
+        let row = arrangement(&c, Some("tray"));
+        let Control::Arrange { parts, hidden, picked, usual } = row.control else { panic!("not an arrangement") };
+        assert_eq!(parts[2], ["status"]);
+        assert_eq!(hidden, ["tools", "tray"]);
+        assert_eq!(picked.as_deref(), Some("tray"));
+        assert!(!usual);
+        assert_eq!(row.about, "Click a part to put it there");
+        // A pick that isn't anywhere is let go
+        let Control::Arrange { picked, usual, .. } = arrangement(&Config::default(), Some("nothing")).control else { panic!() };
+        assert_eq!((picked, usual), (None, true));
+    }
+
+    #[test]
     fn search_finds_settings_and_says_where_they_are() {
         let model = Model::default();
-        let found = search("corner", &Config::default(), &model, &PetPick::default());
+        let found = search("corner", &Config::default(), &model, &Pick::default());
         assert!(!found.is_empty());
         // Groups' titles aren't results; each result says its page and group
         assert!(found.iter().all(|r| !matches!(r.control, Control::Section)));
@@ -1020,6 +1374,11 @@ mod tests {
         write(&path, &["style".into()], &Value::Str("frame".into())).unwrap();
         write(&path, &["notifications".into(), "apps".into(), "Some App".into()], &Value::Str("silence".into())).unwrap();
         write(&path, &["widgets".into(), "show".into()], &Value::List(vec!["clock".into()])).unwrap();
+        // The bar's parts together, into a table the file didn't have
+        let parts = |list: &[&str]| Value::List(list.iter().map(|s| s.to_string()).collect());
+        write_all(&path, &[(vec!["layout".into(), "left".into()], parts(&["pages"])), (vec!["layout".into(), "right".into()], parts(&["clock", "status"]))]).unwrap();
+        let c: Config = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!((c.layout.left, c.layout.right), (vec!["pages".to_string()], vec!["clock".to_string(), "status".to_string()]));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("# my bar") && text.contains("# slim") && text.contains("# minutes"), "{text}");
         let config: Config = toml::from_str(&text).unwrap();

@@ -186,6 +186,11 @@ pub enum Action {
     PetSettings(usize),
     SettingsEdit(Vec<String>),
     SetSetting(Vec<String>, crate::settings::Value),
+    /// Bar › Arrangement: pick an item to move (None: let it go), and move it.
+    SettingsBarPick(Option<String>),
+    BarArrange(crate::settings::BarMove),
+    /// Arrange mode on the bar: on, off, or the other way (None).
+    ArrangeBar(Option<bool>),
     /// The window this piece is in follows the pointer (a window's title area).
     MoveWindow,
     /// Arranging the desktop's widgets: start or finish (None: the other way), put one on the

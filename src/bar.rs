@@ -24,18 +24,107 @@ pub struct Ctx<'a> {
     pub marquee: &'a HashMap<String, f32>,
     /// How much narrower the music title must be for the middle to fit between the ends.
     pub squeeze: f32,
+    /// Moving the items about: arrange mode, and the one being carried.
+    pub arrange: Option<&'a Arranging>,
 }
 
 pub struct Layout {
     pub pieces: Vec<Piece>,
     /// Each region's span on the x axis, for the cards behind them.
     pub regions: Vec<(f32, f32)>,
+    /// Where each item is, and where an empty part would take one: what a drop is measured by.
+    pub placed: Placed,
+}
+
+/// Moving the bar's items about on the bar itself: arrange mode (every item shows it can be
+/// picked up, clicks don't open anything, a Done button at the end), and the item carried.
+#[derive(Clone, Debug, Default)]
+pub struct Arranging {
+    pub mode: bool,
+    pub carry: Option<Carry>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Carry {
+    pub item: String,
+    /// Where the pointer is along the bar, and where it holds the item (from its left edge).
+    pub x: f32,
+    pub grab: f32,
+    /// Pulled well off the bar: let go there, it's taken off.
+    pub off: bool,
+    /// Moved far enough to be a carry, not a click (a middle press waits for that).
+    pub moved: bool,
+}
+
+/// Where one item sits on the bar: its part (0 left, 1 middle, 2 right) and its extent.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Span {
+    pub name: String,
+    pub part: usize,
+    pub x0: f32,
+    pub x1: f32,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Placed {
+    pub spans: Vec<Span>,
+    /// Where each part would put an item if it has none.
+    pub anchors: [f32; 3],
+    /// The room between items.
+    pub gap: f32,
+}
+
+/// Where a carried item would land: its part, the shown item it would follow (None: the part's
+/// start), and where along the bar that is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Slot {
+    pub part: usize,
+    pub after: Option<String>,
+    pub x: f32,
+}
+
+impl Placed {
+    /// The place between the other items nearest to `x`, in any part.
+    pub fn slot(&self, carried: &str, x: f32) -> Slot {
+        let mut best: Option<(f32, Slot)> = None;
+        for part in 0..3 {
+            let here: Vec<&Span> = self.spans.iter().filter(|s| s.part == part && s.name != carried).collect();
+            let mut places = Vec::new();
+            match here.first() {
+                None => places.push(Slot { part, after: None, x: self.anchors[part] }),
+                Some(first) => places.push(Slot { part, after: None, x: first.x0 - self.gap / 2.0 }),
+            }
+            for (i, span) in here.iter().enumerate() {
+                let x = here.get(i + 1).map_or(span.x1 + self.gap / 2.0, |next| (span.x1 + next.x0) / 2.0);
+                places.push(Slot { part, after: Some(span.name.clone()), x });
+            }
+            for place in places {
+                let d = (place.x - x).abs();
+                if best.as_ref().is_none_or(|(b, _)| d < *b) {
+                    best = Some((d, place));
+                }
+            }
+        }
+        best.map(|(_, slot)| slot).unwrap_or(Slot { part: 1, after: None, x })
+    }
+
+    /// The item at `x`, if any.
+    pub fn at(&self, x: f32) -> Option<&Span> {
+        let half = self.gap / 2.0;
+        self.spans.iter().find(|s| x >= s.x0 - half && x <= s.x1 + half)
+    }
 }
 
 /// One module's pieces and the space between them.
 struct Module {
     pieces: Vec<Piece>,
     spacing: f32,
+}
+
+impl Module {
+    fn width(&self) -> f32 {
+        self.pieces.iter().map(|p| p.w).sum::<f32>() + self.spacing * (self.pieces.len() as f32 - 1.0).max(0.0)
+    }
 }
 
 
@@ -656,24 +745,40 @@ impl Ctx<'_> {
         (!module.pieces.is_empty()).then_some(module)
     }
 
-fn region(&mut self, names: &[String]) -> (Vec<Module>, f32) {
+fn region(&mut self, names: &[String]) -> (Vec<(String, Module)>, f32) {
         let t = self.theme;
-        let modules: Vec<Module> = names.iter().filter_map(|name| self.module(name)).collect();
-        let total = modules
-            .iter()
-            .map(|m| m.pieces.iter().map(|p| p.w).sum::<f32>() + m.spacing * (m.pieces.len() as f32 - 1.0))
-            .sum::<f32>()
-            + t.spacing * (modules.len() as f32 - 1.0).max(0.0);
+        let modules: Vec<(String, Module)> = names.iter().filter_map(|name| self.module(name).map(|m| (name.clone(), m))).collect();
+        let total = modules.iter().map(|(_, m)| m.width()).sum::<f32>() + t.spacing * (modules.len() as f32 - 1.0).max(0.0);
         (modules, total)
+    }
+
+    /// Arrange mode's Done, at the end of the right part.
+    fn done(&mut self) -> (String, Module) {
+        let t = self.theme;
+        let font = Font::new(t.text - 1.0).weight(500);
+        let (tw, th) = self.text.measure("Done", font);
+        let (w, h) = (tw + 24.0, (t.bar_height * 0.66).round());
+        let mut piece = Piece::new("arrange.done", w, h);
+        piece.prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, radius: h / 2.0, color: t.primary });
+        piece.prims.push(Prim::Text { x: 12.0, y: ((h - th) / 2.0).round(), text: "Done".into(), font, color: t.on_primary });
+        piece.actions.left = Some(Action::ArrangeBar(Some(false)));
+        piece.label = Some("Finish arranging the bar".into());
+        ("@done".into(), Module { pieces: vec![piece], spacing: 0.0 })
     }
 
     pub fn build(&mut self) -> Layout {
         let t = self.theme;
         let middle = t.middle();
-        let mut layout = Layout { pieces: Vec::new(), regions: Vec::new() };
+        let mut layout = Layout { pieces: Vec::new(), regions: Vec::new(), placed: Placed { gap: t.spacing, ..Default::default() } };
         let layout_names = self.config.layout.clone();
+        let arrange = self.arrange.cloned().unwrap_or_default();
         let (left, left_w) = self.region(&layout_names.left);
-        let (right, right_w) = self.region(&layout_names.right);
+        let (mut right, mut right_w) = self.region(&layout_names.right);
+        if arrange.mode {
+            let done = self.done();
+            right_w += done.1.width() + if right.is_empty() { 0.0 } else { t.spacing };
+            right.push(done);
+        }
         let (mut center, mut center_w) = self.region(&layout_names.center);
         // The middle sits in the middle, unless an end is in the way; then it moves aside,
         // and if there still isn't room, the music title gives some up
@@ -688,20 +793,44 @@ fn region(&mut self, names: &[String]) -> (Vec<Module>, f32) {
         }
         let ideal = ((self.width - center_w) / 2.0).round();
         let center_x = ideal.min(right_start - center_w).max(left_end).round();
+        layout.placed.anchors = [t.bar_side, (self.width / 2.0).round(), self.width - t.bar_side];
 
-        for (modules, total, start) in [
+        let carry = arrange.carry.as_ref().filter(|c| c.moved);
+        let mut ghost: Vec<Piece> = Vec::new();
+        let (box_h, box_y) = ((t.bar_height - 8.0).max(16.0), (middle - (t.bar_height - 8.0).max(16.0) / 2.0).round());
+        for (part, (modules, total, start)) in [
             (left, left_w, t.bar_side),
             (center, center_w, center_x),
             (right, right_w, self.width - t.bar_side - right_w),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             if modules.is_empty() {
                 continue;
             }
             let mut x = start;
             layout.regions.push((x, x + total));
-            for (m, module) in modules.into_iter().enumerate() {
+            for (m, (name, module)) in modules.into_iter().enumerate() {
                 if m > 0 {
                     x += t.spacing;
+                }
+                let (x0, width) = (x, module.width());
+                let item = name != "@done";
+                if item {
+                    layout.placed.spans.push(Span { name: name.clone(), part, x0, x1: x0 + width });
+                }
+                let carried = carry.is_some_and(|c| c.item == name);
+                // In arrange mode each item sits on a faint tint of the accent, and the one under
+                // the pointer a little more
+                if arrange.mode && item {
+                    let hovered = self.hovered == Some(format!("arrange.grab.{name}").as_str());
+                    let mut back = Piece::new(format!("arrange.back.{name}"), width + 10.0, box_h);
+                    back.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: width + 10.0, h: box_h, radius: (box_h / 2.0).min(12.0), color: self.theme.primary.alpha(if hovered && !carried { 0.2 } else { 0.1 }) });
+                    back.x = x0 - 5.0;
+                    back.y = box_y;
+                    back.opacity = if carried { 0.3 } else { 1.0 };
+                    layout.pieces.push(back);
                 }
                 let count = module.pieces.len();
                 for (i, mut piece) in module.pieces.into_iter().enumerate() {
@@ -711,8 +840,57 @@ fn region(&mut self, names: &[String]) -> (Vec<Module>, f32) {
                     if i + 1 < count {
                         x += module.spacing;
                     }
+                    if let Some(carry) = carry.filter(|_| carried) {
+                        // It stays in its place, faint, and goes along under the pointer
+                        let mut copy = piece.clone();
+                        copy.key = format!("ghost.{}", piece.key);
+                        copy.x = piece.x + (carry.x - carry.grab - x0);
+                        copy.opacity = if carry.off { 0.45 } else { 1.0 };
+                        copy.lift = false;
+                        copy.actions = Default::default();
+                        copy.label = None;
+                        ghost.push(copy);
+                        piece.opacity = 0.3;
+                    }
+                    if arrange.mode && item {
+                        piece.lift = false;
+                    }
                     layout.pieces.push(piece);
                 }
+                // In arrange mode a press anywhere on the item picks it up, and nothing under it
+                // opens
+                if arrange.mode && item && carry.is_none() {
+                    let mut grab = Piece::new(format!("arrange.grab.{name}"), width + 10.0, t.bar_height);
+                    grab.x = x0 - 5.0;
+                    grab.y = t.line();
+                    grab.blocks = true;
+                    grab.label = Some(format!("{} · drag to move", crate::settings::bar_item(&name).0));
+                    layout.pieces.push(grab);
+                }
+            }
+        }
+        // The carried item, on a lit card under the pointer, and a mark where it would land
+        if let Some(carry) = carry {
+            if let Some(span) = layout.placed.spans.iter().find(|s| s.name == carry.item) {
+                let w = span.x1 - span.x0 + 16.0;
+                let mut card = Piece::new("ghost.card", w, box_h);
+                card.prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h: box_h, radius: (box_h / 2.0).min(12.0), color: t.primary });
+                card.prims.push(Prim::Rect { x: 1.5, y: 1.5, w: w - 3.0, h: box_h - 3.0, radius: (box_h / 2.0).min(12.0) - 1.5, color: t.secondary_container });
+                card.x = carry.x - carry.grab - 8.0;
+                card.y = box_y;
+                card.opacity = if carry.off { 0.45 } else { 1.0 };
+                layout.pieces.push(card);
+            }
+            layout.pieces.append(&mut ghost);
+            // Over the carried item, so it shows even right under it
+            if !carry.off {
+                let slot = layout.placed.slot(&carry.item, carry.x);
+                let h = (t.bar_height * 0.6).round();
+                let mut mark = Piece::new("arrange.mark", 3.0, h);
+                mark.prims.push(Prim::Rect { x: 0.0, y: 0.0, w: 3.0, h, radius: 1.5, color: t.primary });
+                mark.x = (slot.x - 1.5).round();
+                mark.y = (middle - h / 2.0).round();
+                layout.pieces.push(mark);
             }
         }
         // The top-right corner opens the control centre; a star shows there under the pointer
@@ -767,5 +945,43 @@ mod kanji_tests {
         assert_eq!([k(1), k(3), k(9), k(10), k(11), k(20), k(24), k(99)], ["一", "三", "九", "十", "十一", "二十", "二十四", "九十九"]);
         assert_eq!(k(0), "0");
         assert_eq!(k(120), "120");
+    }
+}
+
+#[cfg(test)]
+mod arrange_tests {
+    use super::*;
+
+    fn placed() -> Placed {
+        let span = |name: &str, part, x0, x1| Span { name: name.into(), part, x0, x1 };
+        Placed {
+            spans: vec![span("launcher", 0, 10.0, 30.0), span("pages", 0, 40.0, 140.0), span("clock", 1, 900.0, 1000.0), span("status", 2, 1700.0, 1900.0)],
+            anchors: [10.0, 960.0, 1910.0],
+            gap: 10.0,
+        }
+    }
+
+    #[test]
+    fn a_drop_goes_to_the_nearest_gap() {
+        let p = placed();
+        // Between the two on the left
+        assert_eq!(p.slot("clock", 36.0), Slot { part: 0, after: Some("launcher".into()), x: 35.0 });
+        // Just past pages: the end of the left part, not the start of the middle
+        assert_eq!(p.slot("clock", 200.0).after.as_deref(), Some("pages"));
+        // Nearer the clock: before it, in the middle
+        let near = p.slot("launcher", 850.0);
+        assert_eq!((near.part, near.after), (1, None));
+        // The carried item isn't a place of its own: dropping on it puts it back beside its neighbour
+        assert_eq!(p.slot("pages", 90.0), Slot { part: 0, after: Some("launcher".into()), x: 35.0 });
+    }
+
+    #[test]
+    fn an_empty_part_still_takes_an_item() {
+        let mut p = placed();
+        p.spans.retain(|s| s.part != 1);
+        let slot = p.slot("status", 950.0);
+        assert_eq!((slot.part, slot.after, slot.x), (1, None, 960.0));
+        assert_eq!(p.at(20.0).map(|s| s.name.as_str()), Some("launcher"));
+        assert!(p.at(500.0).is_none());
     }
 }

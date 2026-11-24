@@ -110,7 +110,7 @@ history (etea-bar) was removed on request; keep the ETEA Shell credit in the REA
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 100 tests (+3 opt-in, --ignored), see below
+cargo test --release                            # 104 tests (+3 opt-in, --ignored), see below
 ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
 cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
 cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
@@ -140,6 +140,7 @@ asterism --snapshot out.png --panel dock [--query sample,APP|apps|trash,drag,lef
 asterism --snapshot out.png --panel deskmenu --query dock:APP|dock:@trash|dock:@trash!  # its menus
 asterism --snapshot out.png --panel transition [--query KIND@0.3]  # a frame of the wallpaper changing
 asterism --snapshot out.png --panel pet --query cat[:coat]|fox|bird --scale 2  # every pose
+asterism --snapshot out.png --panel settings --query PAGE|bar:ITEM|pets:N|search:WORDS[@PX]  # @PX: scrolled
 asterism --snapshot out.png --demo      # made-up workspaces, windows, networks (use for anything shared)
 ```
 
@@ -448,7 +449,12 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (100, +3 opt-in)
+### Tests (104, +3 opt-in)
+
+Added 2026-11-24: `settings` (bar items move along and between parts, dropped after an item or
+at a part's start, the arrangement lists what the bar leaves out; the comments test also writes
+two `[layout]` lists at once), `bar::arrange_tests` (a drop goes to the nearest gap, an empty
+part still takes an item), `ipc` (`bar arrange`).
 
 `live` (which files move, ffmpeg's arguments and frame size, a GIF cut/widened/shrunk to the
 screen, a GIF played round with transparency and delays, a one-frame GIF doesn't play).
@@ -495,12 +501,74 @@ fingerprint, Wi-Fi passwords, Bluetooth pairing, the window overview, the deskto
 pets, an optimization round, the drag fix, the small everyday round, the day panel, the
 temperature gauge, the dock, live wallpapers, see-through widgets and blur, free widget
 resizing, any number of pets and three new animals, livelier pets and the Pets page, the
-settings regrouped, the day button, a second optimization round; newest first)
+settings regrouped, the day button, a second optimization round, the bar's arrangement;
+newest first)
 
-**State of the tree**: the user's commits up to ec587a8 (live wallpapers, blur and see-through
-widgets) hold everything up to it. After it, uncommitted: every 2026-11-23 round below (free
-widget resizing, any number of pets with the panda, tiger and lion, livelier pets and the Pets
-page, the settings regrouped, the day button, the second optimization round).
+**State of the tree**: the user's commits up to a2daa9c hold everything up to the second
+optimization round (2026-11-23). After it, uncommitted: the bar's arrangement (2026-11-24).
+
+### The bar's arrangement (2026-11-24, the user: "implement the feature to change the position
+of the items in the bar")
+
+The order was only `[layout] left/center/right` in the file. Now Settings → Bar has an
+"Arrangement" group with one row, "What sits where" (`settings::arrangement`,
+`Control::Arrange { parts, hidden, picked, usual }`, drawn by `arrange_pieces` under its label
+across the row's whole width): the three parts as columns of chips (icon + name from
+`BAR_ITEMS`; unknown names keep their own), the items left out under "Not in the bar", and for
+the picked item ‹ Earlier / Later › / Take it off, plus "Usual arrangement" when it isn't.
+Click a chip to pick it (`Action::SettingsBarPick`, `Settings.bar`, passed to `rows` in the new
+`Pick { pet, bar }`); with one picked, the other parts are outlined in the accent and a click on
+one sends it there.
+
+- Moves are pure (`settings::arrange_bar(parts, &BarMove)`, tested): Earlier/Later swap within
+  a part and step over its edge into the next part (to its end going left, its start going
+  right); `To(item, part)` lands next to where it came from (its start moving right, its end
+  moving left; back from "not in the bar", the right part's start, before status); `Off`;
+  `None` when nothing would change, which also dims the button.
+- `Action::BarArrange(BarMove)` → `App::arrange_bar` writes the three lists in one go
+  (`settings::write_all`, `App::set_settings`: one read, one write, one reload); `Usual` takes
+  them out of the file. `settings::write` is now test-only.
+- Snapshot: `--panel settings --query bar:ITEM` (Bar page, ITEM picked); any settings query
+  takes `@PX` to scroll.
+
+Verified: 102 tests; snapshots at 1200 and 760 wide, an item picked in a part and a hidden one
+picked (scratch config with items left out). **Not verified (needs the user)**: clicking
+through it, and the bar on screen following each move.
+
+**Dragging on the bar** (same day, the user: "can we also drag items directly on the bar to
+reorder"; picked both arrange mode and a modifier drag). The modifier became the **middle
+button**: Wayland sends `wl_keyboard.modifiers` only to the client with keyboard focus, and a
+click on the bar (keyboard None) doesn't give it, so Ctrl can't be seen. Left presses can't
+wait to tell a click from a drag either: menus open on press, and the xdg popup grab needs a
+button still held (smithay checks the serial against the live grab).
+
+- `bar.rs`: `Ctx.arrange: Option<&Arranging { mode, carry: Option<Carry { item, x, grab, off,
+  moved }> }>`; `region` keeps each module's name; `Layout.placed: Placed { spans, anchors,
+  gap }` (each item's extent and part; where an empty part would take one). `Placed::slot`
+  (tested): the nearest place between the other items, in any part (`Slot { part, after, x }`);
+  `Placed::at`. Arrange mode: a tint behind each item (`arrange.back.*`, stronger hovered), an
+  empty `arrange.grab.*` piece over it (blocks, tooltip "NAME · drag to move", Grab cursor), no
+  underline, and a Done pill (`@done`, `Action::ArrangeBar(Some(false))`) at the end of the
+  right part. Carrying (once moved): the item faint in place, a copy on a lit card under the
+  pointer (`ghost.*`), a 3 px accent mark at the slot; pulled > 40 px off the bar, the copy at
+  45 % and no mark.
+- `app/arrange.rs`: `App::bar_arrange` (mode) and `bar_carry: Option<Carrying { bar, carry,
+  press, middle }>`; `bar_pick_up` (from `press`: middle on any item, left on `arrange.grab.*`
+  in the mode; closes a menu, clears the tooltip), `bar_carry_motion` (a middle press waits 6 px),
+  `bar_carry_release` (no move: the piece's own middle action; else `BarMove::Place(item, part,
+  after)` or `Off`, through `App::arrange_bar`). Leave/Motion/Release on the carrying bar go
+  there first (`bar_carrying`); the implicit grab keeps motion coming off the surface.
+  `BarSurface.placed` is filled by `render_bar` (new `arrange` and `placed` arguments).
+- `settings::BarMove::Place` (tested: after an item, at a part's start, `None` when unchanged).
+  Settings → Bar: a row "On the bar itself" with Arrange / Done (`Settings.arranging`, `Pick`).
+- `msg bar arrange [on|off]` (`Request::ArrangeBar`, ipc test). Snapshot: `--query arrange`,
+  `arrange:ITEM@X`, `carry:ITEM@X` (no mode), `…@X!` (pulled off).
+
+Verified: 104 tests (`bar::arrange_tests`: a drop goes to the nearest gap, an empty part still
+takes an item); bar snapshots of the mode, carrying across parts and off; nested niri: `msg bar
+arrange`, `off`, `on` logged, no errors. **Not verified (needs the user)**: real drags (middle
+and left in the mode), the mark following, a drop writing the layout, the middle click on a
+tray app still working, Done by click, the cursor shapes.
 
 ### Less memory and CPU, round two (2026-11-23, the user: "optimize this code so that it uses
 less memory and cpu")
@@ -1458,6 +1526,11 @@ Not yet seen by the user live: everything in the new look — ask for their impr
   machine); it reads with tesseract's default language.
 
 ## Next progress (immediate)
+
+0. The user to try Settings → Bar → Arrangement: pick an item, Earlier/Later, click another
+   part, take one off and put it back, "Usual arrangement"; watch the bar follow. And dragging
+   on the bar: a middle-button drag, arrange mode (Settings button or `msg bar arrange`) with
+   left drags, dropping off the bar, Done. A keybind for arrange mode was not added.
 
 0. The user to try the 2026-11-23 rounds by hand: resize widgets by their sides and corners
    (Arrange widgets); the Pets page (click a pet, change its coat by picture, + to add, ×);

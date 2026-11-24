@@ -314,9 +314,10 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
         let mut surf = Surf::offscreen(options.width, theme.surface_height(), scale);
         let marquee = HashMap::new();
         let output = model.compositor.focused_output.clone();
-        render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width);
+        let mut placed = Default::default();
+        render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, None, &mut placed);
         std::thread::sleep(Duration::from_millis(500));
-        render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width);
+        render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, None, &mut placed);
         if let Some(bar) = surf.canvas() {
             let y = if theme.on_top { 0 } else { (h as f32 - theme.surface_height() * scale) as i32 };
             picture.draw_pixmap(0, y, bar.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
@@ -406,10 +407,22 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
         None => {
             let mut surf = Surf::offscreen(options.width, theme.surface_height(), scale);
             surf.hover_for_snapshot(options.hover.clone());
-            // Twice: the second time, everything has settled in
-            render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width);
+            // `--query arrange` draws arrange mode; `arrange:ITEM@X` (or `carry:ITEM@X`, without
+            // the mode) an item carried with the pointer at X, `…@X!` pulled off the bar
+            let arrange = arranging(&options.query);
+            let mut placed = crate::bar::Placed::default();
+            // Twice: the second time, everything has settled in (and the item's place is known)
+            render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, Some(&crate::bar::Arranging { carry: None, ..arrange.clone() }), &mut placed);
             std::thread::sleep(Duration::from_millis(500));
-            render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width);
+            let arrange = crate::bar::Arranging {
+                carry: arrange.carry.map(|mut c| {
+                    let x0 = placed.spans.iter().find(|s| s.name == c.item).map_or(c.x, |s| s.x0);
+                    c.grab = 12.0_f32.min(c.x - x0 + 12.0).max(0.0);
+                    c
+                }),
+                ..arrange
+            };
+            render_bar(&mut surf, &mut painter, &theme, &model, &config, &tools, &marquee, &output, options.width, Some(&arrange), &mut placed);
             let bar = surf.canvas().ok_or_else(|| anyhow::anyhow!("nothing drawn"))?;
             let mut picture = sky(bar.width(), bar.height(), &config);
             picture.draw_pixmap(0, 0, bar.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
@@ -458,4 +471,18 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
     println!("{}", options.path.display());
     // Leave without waiting for the services
     std::process::exit(0);
+}
+
+/// The bar's arrange mode and carried item a snapshot asks for (see `--query`).
+fn arranging(query: &str) -> crate::bar::Arranging {
+    let (mode, rest) = match query.split_once(':') {
+        Some(("arrange", rest)) => (true, Some(rest)),
+        Some(("carry", rest)) => (false, Some(rest)),
+        _ => (query == "arrange", None),
+    };
+    let carry = rest.and_then(|rest| rest.split_once('@')).map(|(item, x)| {
+        let off = x.ends_with('!');
+        crate::bar::Carry { item: item.to_string(), x: x.trim_end_matches('!').parse().unwrap_or(0.0), grab: 12.0, off, moved: true }
+    });
+    crate::bar::Arranging { mode, carry }
 }

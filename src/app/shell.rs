@@ -573,7 +573,9 @@ impl App {
             (_, false) => {
                 self.close_menu();
                 self.close_panel(PanelKind::Control);
-                self.settings = Some(crate::settings::Settings::new());
+                let mut settings = crate::settings::Settings::new();
+                settings.arranging = self.bar_arrange.mode;
+                self.settings = Some(settings);
                 // A window like any app's: tiled, moved and closed the compositor's way
                 self.open_window(PanelKind::Settings, "Settings", "asterism-settings", (1000, 720), (720, 480));
             }
@@ -582,13 +584,19 @@ impl App {
 
     /// Writes a setting to the config, then reads the config again so it shows at once.
     pub(super) fn set_setting(&mut self, keys: &[String], value: &crate::settings::Value) {
-        match crate::settings::write(&self.config_path, keys, value) {
+        self.set_settings(&[(keys.to_vec(), value.clone())]);
+    }
+
+    /// Several settings in one write, and one reload after.
+    pub(super) fn set_settings(&mut self, writes: &[(Vec<String>, crate::settings::Value)]) {
+        match crate::settings::write_all(&self.config_path, writes) {
             Ok(()) => {
                 self.reload();
                 self.config_stamp = stamp(&self.config_path);
             }
             Err(error) => {
-                log::warn!("couldn't save {}: {error}", keys.join("."));
+                let keys: Vec<String> = writes.iter().map(|(keys, _)| keys.join(".")).collect();
+                log::warn!("couldn't save {}: {error}", keys.join(", "));
                 self.send(Command::Notify(crate::model::Note { summary: "Couldn't save that setting".into(), body: format!("{error}"), ..Default::default() }));
             }
         }
@@ -597,6 +605,31 @@ impl App {
             self.panels[index].surf.dirty = true;
             self.panels[index].surf.last = None;
         }
+    }
+
+    /// Bar › Arrangement: the item picked to move.
+    pub(super) fn settings_bar_pick(&mut self, item: Option<String>) {
+        if let Some(settings) = self.settings.as_mut() {
+            settings.bar = item;
+        }
+        if let Some(index) = self.panel_index(PanelKind::Settings) {
+            self.panels[index].surf.dirty = true;
+        }
+    }
+
+    /// Moves one of the bar's items (the three parts written together), or takes the parts out
+    /// of the file for the usual arrangement.
+    pub(super) fn arrange_bar(&mut self, how: &crate::settings::BarMove) {
+        use crate::settings::{BAR_PARTS, BarMove, Value};
+        let key = |part: &str| vec!["layout".to_string(), part.to_string()];
+        if *how == BarMove::Usual {
+            let writes: Vec<_> = BAR_PARTS.iter().map(|part| (key(part), Value::Remove)).collect();
+            return self.set_settings(&writes);
+        }
+        let l = &self.config.layout;
+        let Some(next) = crate::settings::arrange_bar([&l.left, &l.center, &l.right], how) else { return };
+        let writes: Vec<_> = BAR_PARTS.iter().zip(next).map(|(part, list)| (key(part), Value::List(list))).collect();
+        self.set_settings(&writes);
     }
 
     /// Ctrl+W or Ctrl+Q closes; arrows go through the pages, Page Up and Down scroll one;
@@ -1093,6 +1126,7 @@ impl App {
             Request::Control(open) => self.toggle_control(open),
             Request::Day(open) => self.toggle_day(open),
             Request::Dock(show) => self.toggle_dock(show),
+            Request::ArrangeBar(on) => self.arrange_bar_mode(on),
             Request::Menu(name) => self.menu_from_keys(&name),
             Request::Notifications => self.menu_from_keys("notifications"),
             Request::Quiet => self.send(Command::NotificationsQuiet),
@@ -1336,11 +1370,19 @@ pub fn preview(what: &str, query: &str, theme: &Theme, painter: &mut Painter, mo
         }
         "settings" => {
             let mut settings = crate::settings::Settings::new();
+            // "…@PX": scrolled down that far
+            let (query, scroll) = query.split_once('@').map_or((query, 0.0), |(q, px)| (q, px.parse().unwrap_or(0.0)));
+            settings.scroll = scroll;
             settings.page = query.parse().unwrap_or(0);
             if let Some(words) = query.strip_prefix("search:") {
                 settings.query = words.to_string();
             }
             // "pets:N" shows the Nth pet (from 0), "pets:add" the animals to add
+            // "bar:NAME" shows the Bar page with that item picked to move
+            if let Some(item) = query.strip_prefix("bar:") {
+                settings.page = 1;
+                settings.bar = Some(item.to_string());
+            }
             if let Some(which) = query.strip_prefix("pets:") {
                 settings.page = crate::settings::PETS_PAGE;
                 settings.pet = crate::settings::PetPick { selected: which.parse().unwrap_or(0), adding: which == "add" };

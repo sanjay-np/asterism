@@ -118,6 +118,26 @@ the `frame` style the control centre is joined to the frame, so it stays solid.
 | `tools` | Screenshot and recording, colour picker, clipboard, microphone, stay awake | Menu, run or toggle | | |
 | `status` | Timers, notifications, keyboard layout, network, Bluetooth, volume, battery, control centre, settings, session | Their menus | Mute, Bluetooth, do not disturb | Volume |
 
+To change what sits where, use Settings → Bar → Arrangement. It shows the bar's left, middle and
+right parts with their items in order. Click an item, then move it with **Earlier** and **Later**
+(past the end of a part it moves on to the next part), click another part to send it there, or
+**Take it off**. Items left out wait under **Not in the bar**: click one, then the part it goes
+in. **Usual arrangement** puts everything back. Each change is written to `[layout]` and the bar
+follows at once.
+
+You can also drag items on the bar itself:
+
+- **Middle-button drag**, any time: hold the middle button on an item and drag it. An accent mark
+  shows where it will land, in any part. A middle click without moving still does what it did
+  (a tray app's second action).
+- **Arrange mode**: Settings → Bar → On the bar itself → Arrange, or `asterism msg bar arrange`.
+  Every item sits on a faint tint and clicks don't open anything, so a plain left drag moves an
+  item. **Done** at the right end of the bar (or the same command again) finishes.
+- Let go of an item well off the bar to take it off. Put it back from Settings.
+
+(Ctrl+drag isn't possible: Wayland tells a program which keys are held only while it has the
+keyboard, and clicking the bar doesn't give it the keyboard.)
+
 The top-right corner of the screen opens the control centre; the top-left corner opens your day.
 
 <p align="center"><img src="screenshots/readme/menus-1.png" alt="The music, sound, network and weather menus"></p>
@@ -412,7 +432,7 @@ Dock, Pets, Night light, Lock, Notifications, Weather and Timers.
 <p align="center"><img src="screenshots/readme/settings.png" alt="The Settings window on its Look page"></p>
 
 - **Grouped:** each page is split into titled groups, each on a card of its own (Bar has Layout,
-  What it shows, Clock, Corners and Day panel, for instance).
+  Arrangement, What it shows, Clock, Corners and Day panel, for instance).
 - **Only what applies:** a setting appears when it does something: night light's hours only on
   a schedule, the moving wallpaper's frame rate only while they play, a widget's own settings
   only while it's on the desktop, and so on. Empty fields show what's used instead.
@@ -777,6 +797,7 @@ scripts. `asterism msg help` prints this list.
 | `wallpaper [open\|close]` · `wallpaper next\|previous\|random` · `wallpaper set PATH` | The changer · step · set a picture |
 | `widgets [edit\|done]` | Arrange the desktop's widgets, or finish |
 | `dock [show\|hide]` | Bring the dock up for a moment, put it away, or toggle it |
+| `bar arrange [on\|off]` | Arrange mode: drag the bar's items about; Done or the same command finishes |
 | `night-light [on\|off]` · `awake` | Night light · keep the screen awake |
 | `lock` | Lock the screen |
 | `screenshot [region\|screen\|window]` · `screen-text` · `record [audio]` | Capture · copy text from a region · start or stop recording |

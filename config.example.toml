@@ -31,6 +31,7 @@ seconds = false
 date = "%A, %B %-d"       # strftime; "%a %-d %b" is shorter, "" hides the date
 
 [layout]
+# (Settings → Bar → Arrangement moves them by clicks and writes these three lists.)
 # Modules: pages, clock (opens the calendar), day (your day: timers, to-do and notes, with how
 # many tasks are left), weather, media, resources, tray, tools, status, launcher (an apps button)
 left = ["launcher", "pages"]

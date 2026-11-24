@@ -537,6 +537,8 @@ pub enum Request {
     Day(Option<bool>),
     /// The dock up (Some(true)), down, or the other way round.
     Dock(Option<bool>),
+    /// Arrange mode on the bar: on, off, or the other way.
+    ArrangeBar(Option<bool>),
 }
 
 /// Something done to a timer, from its menu or from `asterism msg`.

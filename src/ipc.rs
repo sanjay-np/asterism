@@ -34,6 +34,7 @@ asterism msg COMMAND
     settings [open|close]          Toggle the settings app
     day [open|close]               Toggle the day panel (calendar, timers, to-do, notes)
     dock [show|hide]               Bring the dock up for a moment, or put it away
+    bar arrange [on|off]           Drag the bar's items about (Done or this again to finish)
     overview [open|close]          Toggle the window overview
     widgets [edit|done]            Arrange the desktop's widgets (add, remove, move), or finish
     pet feed|play|yarn             Put down food, a ball or yarn for the pets
@@ -92,6 +93,9 @@ pub fn parse(words: &[&str]) -> Result<Request, String> {
         ["day"] => Request::Day(None),
         ["day", "open"] => Request::Day(Some(true)),
         ["day", "close"] => Request::Day(Some(false)),
+        ["bar", "arrange"] => Request::ArrangeBar(None),
+        ["bar", "arrange", "on"] => Request::ArrangeBar(Some(true)),
+        ["bar", "arrange", "off"] => Request::ArrangeBar(Some(false)),
         ["dock"] => Request::Dock(None),
         ["dock", "show"] => Request::Dock(Some(true)),
         ["dock", "hide"] => Request::Dock(Some(false)),
@@ -230,6 +234,9 @@ mod tests {
         assert_eq!(parse(&["screen-text"]), Ok(Request::ScreenText));
         assert_eq!(parse(&["day", "open"]), Ok(Request::Day(Some(true))));
         assert_eq!(parse(&["dock"]), Ok(Request::Dock(None)));
+        assert_eq!(parse(&["bar", "arrange"]), Ok(Request::ArrangeBar(None)));
+        assert_eq!(parse(&["bar", "arrange", "off"]), Ok(Request::ArrangeBar(Some(false))));
+        assert!(parse(&["bar", "shuffle"]).is_err());
         assert_eq!(parse(&["dock", "hide"]), Ok(Request::Dock(Some(false))));
         assert_eq!(parse(&["clipboard"]), Ok(Request::Clipboard(None)));
         assert_eq!(parse(&["shortcuts", "open"]), Ok(Request::Shortcuts(Some(true))));

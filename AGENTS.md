@@ -118,7 +118,8 @@ history (etea-bar) was removed on request; keep the ETEA Shell credit in the REA
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 119 tests (+3 opt-in, --ignored), see below
+cargo test --release                            # 121 tests (+3 opt-in, --ignored), see below
+ASTERISM_WRITE_LOGO=1 cargo test --release logo # rewrite assets/logo/asterism.svg from src/logo.rs
 ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
 cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
 cargo test --release frame_cost -- --ignored --nocapture   # a wallpaper animation frame's cost
@@ -220,7 +221,7 @@ show). How they were made, to redo after visual changes:
   and cards (toasts, song, peek `--query 4`, deskmenu): `--menu`/`--panel` alone, tops aligned
   12 px apart on `#0f0e13`; dialogs (auth, wifi, pair: crops 560×400+440+150 of 1440×700);
   osd as is; privacy (`--panel wallpaper --menu privacy`, crop 650×440+790+0); dock (`--panel
-  dock --query sample,firefox --scale 2`); pets (`--panel pet --query ANIMAL --scale 2`).
+  dock --query sample,asterism-settings --scale 2`); pets (`--panel pet --query ANIMAL --scale 2`).
 - Workspaces strip (`workspaces.png`, 1476×132): `--panel wallpaper --width 1440 --scale 2
   --demo` per `page_style`, each cropped `460x132+0+0`, laid at x 24 / 508 / 992 on `#0f0e13`.
 - Everything inside `dbus-run-session` with `examples/fixtures` started there, so the fake
@@ -319,6 +320,8 @@ main.rs ── CLI: run | msg … | --snapshot …
    ├── dock.rs      the dock, pure: items (pinned + open apps matched to desktop files), slots,
 │               layout, `hole` for carrying, `build` (slide, magnify, dots, names), the trash
 ├── day.rs       the day panel's files: todo.md (Markdown checklist) + notes.md, parse/write/load/save
+   ├── logo.rs      the mark (Cassiopeia's W, the brightest star ringed): one geometry, drawn as an
+   │               icon in the theme's colours (the Settings window's, `SETTINGS_APP`) and as the SVG
    ├── privacy.rs   the privacy pill's words: `InUse::of(model, settings)`, readable app names, casts
    ├── shortcuts.rs niri/Hyprland bind parsing + the sheet; timers.rs, weather.rs, night.rs: pure logic
    ├── dashboard.rs graphs (Prim::Area), disks, process list; the machine service samples processes
@@ -498,7 +501,9 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (119, +3 opt-in)
+### Tests (121, +3 opt-in)
+
+Added 2026-11-24 (logo): `logo` (the shipped SVG matches the code, the icon follows the theme).
 
 Added 2026-11-24 (folders): `wallpapers::remembers_recent_folders`, `services::portal::reads_file_uris`.
 
@@ -565,7 +570,7 @@ temperature gauge, the dock, live wallpapers, see-through widgets and blur, free
 resizing, any number of pets and three new animals, livelier pets and the Pets page, the
 settings regrouped, the day button, a second optimization round, the bar's arrangement, the
 privacy pill, the bare bar's ink, the kanji dot below, workspaces shown on niri, the
-wallpaper picker reworked, wallpaper folders, sharper moving wallpapers; newest first)
+wallpaper picker reworked, wallpaper folders, sharper moving wallpapers, the logo; newest first)
 
 **State of the tree**: the user's commits up to 9bf9d80 hold everything up to the bar's
 arrangement (2026-11-24). After it, uncommitted (all 2026-11-24, installed on the user's
@@ -575,6 +580,39 @@ README brought up to date with all of them the same day, every screenshot remade
 trimmed at the user's request (993 → 588 lines): it now says what each feature does and how to
 reach it, and leaves how things work inside, every option and the code map to this file and
 config.example.toml. Keep new README text to that level.
+
+### The logo, and Settings in the dock (2026-11-24, the user: "generate the optimal logo for this
+project and also show logo in dock when setting is opened")
+
+- **The mark** (`src/logo.rs`, `assets/logo/asterism.svg`): the one flourish the look allows, an
+  asterism. Five stars in Cassiopeia's W, of a few sizes, joined by a 5-unit line that stops 8
+  units short of each (as the bar's busy workspaces are joined), the last and brightest in the
+  accent with a ring at 55 %; on a dark rounded tile (radius 60 of 256) with a hairline. A first
+  try (four even dots rising left to right, the line through them) read as a stock chart; the W,
+  the uneven sizes and the gaps make it a constellation. Checked at 256, 64 and 32 px.
+- One geometry (`STARS`, `segments()`), drawn twice: `logo::icon(theme, px)` (tiny-skia, in
+  `Colours::of(theme)`: surface tile, outline_variant edge, outline line, text stars, primary
+  bright star and ring) and `svg()` in the default scheme's colours. The test
+  `the_shipped_logo_matches_the_code` fails if the file drifts; `ASTERISM_WRITE_LOGO=1` rewrites it.
+- **Settings in the dock**: its app id `asterism-settings` (`logo::SETTINGS_APP`) has no desktop
+  file, so the dock showed an "A" tile and "Asterism-settings". Now `App::own_icons` puts the
+  mark, drawn in the theme, into `model.app_icons` at start, in `repaint_everything` and on
+  reload (so it follows the wallpaper), and redraws the dock; the services thread ignores
+  `AppIcon` for it (it would overwrite with None); closing the launcher keeps it.
+  `dock::pretty` names it "Settings". The overview and the workspace preview use the same icon.
+- `contrib/asterism-settings.desktop` (Exec `asterism msg settings open`, Icon `asterism`,
+  StartupWMClass `asterism-settings`; desktop-file-validate clean). Installed by hand (README) it
+  also puts Settings in the launcher, named "Asterism Settings". Installed on the user's
+  machine at their request (~/.local/share/applications/asterism-settings.desktop and
+  ~/.local/share/icons/hicolor/scalable/apps/asterism.svg); the launcher finds it ("asterism"),
+  drawn with the themed mark (its entry id is the window's app id, so `own_icons` covers it).
+- Snapshots draw the mark too; `--demo` now has a Settings window on workspace 3 (README
+  `dock.png` hovers it, `overview.png` shows it; the other shots were left as they were).
+- README: the mark above the title; two optional install lines.
+
+Verified: 121 tests; the SVG at three sizes; a dock snapshot with the user's dock settings
+(Settings with the mark in the wallpaper's teal, named on hover); README dock and overview
+remade. **Not verified (needs the user)**: opening Settings and seeing it in the dock live.
 
 ### Sharper moving wallpapers (2026-11-24, the user: "why does video wallpaper gets blured")
 

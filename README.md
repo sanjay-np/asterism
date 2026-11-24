@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo/asterism.svg" alt="The Asterism mark: five stars in a W, joined by a thin line, the brightest one ringed in the accent" width="112"></p>
+
 <h1 align="center">Asterism</h1>
 
 <p align="center">
@@ -394,6 +396,9 @@ git clone https://github.com/sanjay-np/asterism.git && cd asterism
 cargo build --release
 install -Dm755 target/release/asterism ~/.local/bin/asterism
 mkdir -p ~/.config/asterism && cp config.example.toml ~/.config/asterism/config.toml
+# Optional: Settings in your app launcher, with its icon
+install -Dm644 contrib/asterism-settings.desktop ~/.local/share/applications/asterism-settings.desktop
+install -Dm644 assets/logo/asterism.svg ~/.local/share/icons/hicolor/scalable/apps/asterism.svg
 ```
 
 **Start it with your session.** niri (use the full path; niri may not have `~/.local/bin` on its

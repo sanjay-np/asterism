@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Asterism Settings
+GenericName=Desktop Settings
+Comment=The look, bar, wallpaper, dock, pets and more of the Asterism shell
+Exec=asterism msg settings open
+Icon=asterism
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=shell;bar;wallpaper;dock;widgets;theme;
+StartupWMClass=asterism-settings

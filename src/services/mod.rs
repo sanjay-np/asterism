@@ -314,6 +314,8 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
                     out.send(Update::WallpaperPalette(path, crate::palette::from_source(source)));
                 });
             }
+            // The shell's own windows wear its mark, which the app draws in the theme's colours
+            AppIcon(app) if app == crate::logo::SETTINGS_APP => {}
             AppIcon(app) => {
                 let out = out.clone();
                 tokio::task::spawn_blocking(move || {

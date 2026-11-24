@@ -96,6 +96,7 @@ impl App {
 
     /// Colours live in the theme, not in the pieces: everything is painted again.
     pub(super) fn repaint_everything(&mut self) {
+        self.own_icons();
         for bar in &mut self.bars {
             bar.surf.dirty = true;
             bar.surf.last = None;

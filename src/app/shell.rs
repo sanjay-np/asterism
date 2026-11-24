@@ -204,6 +204,8 @@ impl App {
             // Every app's icon was loaded for the grid: only those with windows open stay (the
             // overview and the bar's labels use them); the rest come back with the launcher
             let mut open: HashSet<String> = self.model.compositor.workspaces.iter().flat_map(|w| &w.windows).map(|w| w.app_id.clone()).collect();
+            // and the shell's own, which is drawn, not loaded
+            open.insert(crate::logo::SETTINGS_APP.to_string());
             // and the dock's
             if self.panel_index(PanelKind::Dock).is_some() {
                 open.extend(self.dock_items().into_iter().map(|i| i.key));

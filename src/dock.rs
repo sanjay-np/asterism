@@ -61,6 +61,9 @@ pub fn entry<'a>(apps: &'a [Entry], app_id: &str) -> Option<&'a Entry> {
 
 /// A readable name when no desktop file gives one: "org.gnome.Nautilus" → "Nautilus".
 pub fn pretty(id: &str) -> String {
+    if id == crate::logo::SETTINGS_APP {
+        return "Settings".into();
+    }
     let last = id.rsplit('.').next().unwrap_or(id);
     let mut chars = last.chars();
     chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()

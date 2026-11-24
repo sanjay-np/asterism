@@ -758,6 +758,16 @@ impl App {
         let _ = self.commands.send(command);
     }
 
+    /// The shell's own windows (Settings) wear its mark, drawn in the theme's colours: kept
+    /// with the other apps' icons, and drawn again whenever the colours change.
+    fn own_icons(&mut self) {
+        let icon = crate::logo::icon(&self.theme, 128);
+        self.model.app_icons.insert(crate::logo::SETTINGS_APP.to_string(), icon);
+        if let Some(index) = self.panel_index(PanelKind::Dock) {
+            self.panels[index].surf.dirty = true;
+        }
+    }
+
     /// The scheme's files for the apps that want them (written only where they changed).
     fn send_app_colors(&self) {
         if !self.config.colors.apps.is_empty() {
@@ -876,6 +886,7 @@ impl App {
             bar.surf.last = None;
         }
         self.close_menu();
+        self.own_icons();
         // The picker shows some settings along its foot (and may be what changed them); a new
         // folder brings its own pictures
         if let Some(index) = self.panel_index(PanelKind::Wallpapers) {
@@ -2807,6 +2818,7 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
     };
     app.send_settings();
     app.send_app_colors();
+    app.own_icons();
 
     loop {
         event_loop.dispatch(None, &mut app)?;

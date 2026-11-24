@@ -151,6 +151,10 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
         }
     }
 
+    // The shell's own windows wear its mark, as the app draws it
+    if let Some(icon) = crate::logo::icon(&theme, 128) {
+        model.app_icons.insert(crate::logo::SETTINGS_APP.to_string(), Some(icon));
+    }
     // The privacy pill and its menu with something in use, unless something really is
     if options.menu.as_deref() == Some("privacy") || options.hover.as_deref() == Some("status.privacy") {
         crate::privacy::sample(&mut model);
@@ -169,7 +173,7 @@ pub fn run(config_path: &Path, options: Options) -> anyhow::Result<()> {
         let open: [&[(&str, &str)]; 6] = [
             &[("firefox", "Firefox"), ("kitty", "Terminal")],
             &[("code", "main.rs")],
-            &[],
+            &[(crate::logo::SETTINGS_APP, "Settings")],
             &[("org.gnome.Nautilus", "Files"), ("kitty", "Terminal"), ("kitty", "Terminal")],
             &[("spotify", "Spotify")],
             &[],

@@ -14,6 +14,7 @@ mod images;
 mod ipc;
 mod launcher;
 mod live;
+mod logo;
 mod lock;
 mod model;
 mod night;

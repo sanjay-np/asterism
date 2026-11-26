@@ -348,14 +348,14 @@ fn choice(options: &[(&str, &str)], current: &str) -> Control {
     Control::Choice(list, at)
 }
 
-pub const PAGES: [&str; 11] = ["Look", "Bar", "Wallpaper", "Desktop", "Dock", "Pets", "Night light", "Lock", "Notifications", "Weather", "Timers"];
+pub const PAGES: [&str; 11] = ["Look", "Bar", "Wallpaper", "Desktop", "Dock", "Pets", "Night light", "Power", "Notifications", "Weather", "Timers"];
 /// A gallery's pictures: their size, and the room between them.
 const TILE: (f32, f32) = (124.0, 140.0);
 const TILE_GAP: f32 = 10.0;
 
 /// The Pets page's place among them.
 pub const PETS_PAGE: usize = 5;
-const PAGE_ICONS: [&str; 11] = ["picker", "layout", "image", "apps", "dock", "paw", "nightlight", "lock", "bell", "cloud-sun", "timer"];
+const PAGE_ICONS: [&str; 11] = ["picker", "layout", "image", "apps", "dock", "paw", "nightlight", "power", "bell", "cloud-sun", "timer"];
 
 /// What a typed value says now, to start editing from.
 pub fn text_value(c: &Config, keys: &[String]) -> String {
@@ -551,6 +551,75 @@ fn pet_rows(c: &Config, pick: &PetPick) -> Vec<Row> {
 }
 
 /// What a page holds, from the config as it is now.
+/// A wait in minutes before a step; 0 never.
+fn minutes(keys: &[&str], label: &str, value: u32, max: i64) -> Row {
+    let step = if max > 60 { 5 } else { 1 };
+    row(keys, label, "", Control::Stepper { value: value as i64, min: 0, max, step, unit: "min" })
+}
+
+/// The lid's or the button's choices; "System" says what logind does then.
+fn power_choice(current: &str, system: &str, extra: &[(&str, &str)], hibernate: bool, menu: bool) -> Control {
+    let said = crate::power::Act::of_logind(system).name().to_lowercase();
+    let system = if system.trim().is_empty() { "System".to_string() } else { format!("System ({said})") };
+    let mut options: Vec<(String, Value)> = extra.iter().map(|(l, v)| (l.to_string(), Value::Str(v.to_string()))).collect();
+    options.push((system, Value::Str("system".into())));
+    if menu {
+        options.push(("Session menu".into(), Value::Str("menu".into())));
+    }
+    options.push(("Sleep".into(), Value::Str("suspend".into())));
+    if hibernate {
+        options.push(("Hibernate".into(), Value::Str("hibernate".into())));
+    }
+    if menu {
+        options.push(("Shut down".into(), Value::Str("poweroff".into())));
+    }
+    options.push(("Lock".into(), Value::Str("lock".into())));
+    options.push(("Nothing".into(), Value::Str("nothing".into())));
+    let current = if current.trim().is_empty() { "same" } else { current.trim() };
+    let at = options.iter().position(|(_, v)| matches!(v, Value::Str(w) if w.eq_ignore_ascii_case(current)));
+    Control::Choice(options, at)
+}
+
+/// The Power page: what happens while you're away (plugged in, and on battery when there is
+/// one), the dim, the lid and the button, and the lock's own settings.
+fn power_rows(c: &Config, model: &Model) -> Vec<Row> {
+    let p = &c.power;
+    let sys = &model.system_power;
+    let laptop = model.battery.present;
+    let mut list = vec![section(if laptop { "Plugged in" } else { "When you step away" }, "Minutes without input; a video playing and Stay awake hold them off")];
+    list.push(minutes(&["power", "dim"], "Dim the screens", p.dim, 60));
+    list.push(minutes(&["lock", "idle"], "Lock", c.lock.idle, 120));
+    list.push(minutes(&["power", "off"], "Turn the screens off", p.off, 120));
+    list.push(minutes(&["power", "suspend"], "Sleep", p.suspend, 240));
+    if laptop {
+        list.push(section("On battery", ""));
+        list.push(minutes(&["power", "dim_battery"], "Dim the screens", p.dim_battery, 60));
+        list.push(minutes(&["lock", "idle_battery"], "Lock", c.lock.idle_battery, 120));
+        list.push(minutes(&["power", "off_battery"], "Turn the screens off", p.off_battery, 120));
+        list.push(minutes(&["power", "suspend_battery"], "Sleep", p.suspend_battery, 240));
+    }
+    list.push(section("Screens", ""));
+    if [p.dim, p.dim_battery].iter().any(|m| *m > 0) {
+        list.push(row(&["power", "dim_level"], "Dimmed to", "Of the brightness they had; a screen with no backlight gets a dark veil", Control::Stepper { value: p.dim_level as i64, min: 10, max: 80, step: 10, unit: "%" }));
+    }
+    list.push(row(&["power", "off_locked"], "Off once locked", "Minutes without input while the lock is up; 0 waits as usual", Control::Stepper { value: p.off_locked as i64, min: 0, max: 30, step: 1, unit: "min" }));
+    if laptop {
+        list.push(section("The lid", "Asterism holds the lid from the system while any of these is its own"));
+        list.push(row(&["power", "lid"], "Closed on battery", "", power_choice(&p.lid, &sys.lid, &[], sys.hibernate, false)));
+        let plugged = if sys.lid_plugged.is_empty() { &sys.lid } else { &sys.lid_plugged };
+        list.push(row(&["power", "lid_plugged"], "Closed, plugged in", "", power_choice(&p.lid_plugged, plugged, &[("Same", "same")], sys.hibernate, false)));
+        list.push(row(&["power", "lid_docked"], "Closed, with another screen", "", power_choice(&p.lid_docked, &sys.lid_docked, &[], sys.hibernate, false)));
+    }
+    let bound = if crate::power::takes_button(c) { "Needs XF86PowerOff bound to asterism msg power button" } else { "" };
+    list.push(section("The power button", bound));
+    list.push(row(&["power", "button"], "Pressed", "", power_choice(&p.button, &sys.button, &[], sys.hibernate, true)));
+    list.push(section("Lock", ""));
+    list.push(row(&["lock", "before_sleep"], "Lock before sleep", "Closing the lid, or sleep from anywhere", Control::Switch(c.lock.before_sleep)));
+    list.push(row(&["lock", "fingerprint"], "Fingerprint", "Unlock with a finger too, when there's a reader fprintd knows", Control::Switch(c.lock.fingerprint)));
+    list.push(row(&[], "Lock now", "", Control::Button("Lock", Action::LockNow)));
+    list
+}
+
 pub fn rows(page: usize, c: &Config, model: &Model, pick: &Pick) -> Vec<Row> {
     let lower = |s: &str| s.to_lowercase();
     match page {
@@ -708,12 +777,7 @@ pub fn rows(page: usize, c: &Config, model: &Model, pick: &Pick) -> Vec<Row> {
             }
             list
         }
-        7 => vec![
-            row(&["lock", "idle"], "Lock when idle", "Minutes without input, 0 never; Stay awake holds it off", Control::Stepper { value: c.lock.idle as i64, min: 0, max: 120, step: 5, unit: "min" }),
-            row(&["lock", "before_sleep"], "Lock before sleep", "Closing the lid, or suspend from anywhere", Control::Switch(c.lock.before_sleep)),
-            row(&["lock", "fingerprint"], "Fingerprint", "Unlock with a finger too, when there's a reader fprintd knows", Control::Switch(c.lock.fingerprint)),
-            row(&[], "Lock now", "", Control::Button("Lock", Action::LockNow)),
-        ],
+        7 => power_rows(c, model),
         8 => {
             let mut list = vec![
                 section("Pop-ups", ""),
@@ -1131,7 +1195,13 @@ impl Settings {
                 }
                 Control::Stepper { value, min, max, step, unit } => {
                     let plus = pill(&mut pieces, format!("set.plus.{r}"), "+", right, false, (value < max).then(|| Action::SetSetting(row.keys.clone(), Value::Int((value + step).min(max)))), text);
-                    let shown = if unit.is_empty() { value.to_string() } else { format!("{value} {unit}") };
+                    let shown = if value == 0 && min == 0 && unit == "min" {
+                        "Never".to_string()
+                    } else if unit.is_empty() {
+                        value.to_string()
+                    } else {
+                        format!("{value} {unit}")
+                    };
                     let (vw, vh) = text.measure(&shown, label_font);
                     let mut v = Piece::new(format!("set.value.{r}"), 92.0, 32.0);
                     v.prims.push(Prim::Text { x: ((92.0 - vw) / 2.0).round(), y: ((32.0 - vh) / 2.0).round(), text: shown, font: label_font, color: t.color_text });

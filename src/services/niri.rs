@@ -359,6 +359,11 @@ pub async fn run(out: Out, mut commands: UnboundedReceiver<Command>) {
                     Command::SetLayout(index) => action(&socket, json!({ "SwitchLayout": { "layout": { "Index": index } } })).await,
                     Command::Quit => action(&socket, json!({ "Quit": { "skip_confirmation": false } })).await,
                     Command::StopCast(session) => action(&socket, json!({ "StopCast": { "session_id": session } })).await,
+                    // niri puts them back on by itself at the next input; on is for the lid opening
+                    Command::Monitors(on) => {
+                        let name = if on { "PowerOnMonitors" } else { "PowerOffMonitors" };
+                        action(&socket, json!({ name: {} })).await;
+                    }
                     _ => {}
                 },
                 _ = settle, if pending => {

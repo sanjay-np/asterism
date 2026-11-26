@@ -461,8 +461,10 @@ pub fn pet_entry(entry: &str) -> (String, String) {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct LockSettings {
-    /// Minutes without input before it locks; 0 never does. "Stay awake" holds it off.
+    /// Minutes without input before it locks, plugged in; 0 never does. "Stay awake" holds it off.
     pub idle: u32,
+    /// The same on battery.
+    pub idle_battery: u32,
     /// Lock before the machine sleeps (closing the lid, suspend from anywhere).
     pub before_sleep: bool,
     /// Unlock with a fingerprint too, when fprintd has a reader and your fingers.
@@ -471,7 +473,56 @@ pub struct LockSettings {
 
 impl Default for LockSettings {
     fn default() -> Self {
-        Self { idle: 10, before_sleep: true, fingerprint: true }
+        Self { idle: 10, idle_battery: 5, before_sleep: true, fingerprint: true }
+    }
+}
+
+/// What happens while you're away (besides locking, which is `[lock]`'s), and what the lid and
+/// the power button do. Minutes without input; 0 leaves a step out. Apps that keep the screen
+/// on (a video playing) and "Stay awake" hold every step off.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PowerSettings {
+    /// Plugged in: dim the screens, turn them off, put the machine to sleep.
+    pub dim: u32,
+    pub off: u32,
+    pub suspend: u32,
+    /// The same on battery.
+    pub dim_battery: u32,
+    pub off_battery: u32,
+    pub suspend_battery: u32,
+    /// Dimmed, a screen keeps this share of its brightness (a screen with no backlight gets a
+    /// dark veil about as dark).
+    pub dim_level: u32,
+    /// Once locked, the screens go off after this many minutes without input; 0 waits for `off`.
+    pub off_locked: u32,
+    /// Closing the lid on battery, plugged in ("same": as on battery), and with another screen:
+    /// "system" (as logind is set), "suspend", "hibernate", "lock", "nothing".
+    pub lid: String,
+    pub lid_plugged: String,
+    pub lid_docked: String,
+    /// The power button: "system", "menu" (the session menu), "suspend", "hibernate",
+    /// "poweroff", "lock", "nothing". Anything but "system" needs the key bound to
+    /// `asterism msg power button` in the compositor.
+    pub button: String,
+}
+
+impl Default for PowerSettings {
+    fn default() -> Self {
+        Self {
+            dim: 5,
+            off: 15,
+            suspend: 30,
+            dim_battery: 2,
+            off_battery: 7,
+            suspend_battery: 15,
+            dim_level: 30,
+            off_locked: 1,
+            lid: "system".into(),
+            lid_plugged: "same".into(),
+            lid_docked: "system".into(),
+            button: "system".into(),
+        }
     }
 }
 
@@ -608,6 +659,7 @@ pub struct Config {
     pub weather: WeatherSettings,
     pub night_light: NightLightSettings,
     pub lock: LockSettings,
+    pub power: PowerSettings,
     pub widgets: WidgetSettings,
     pub wallpaper: WallpaperSettings,
     pub pet: PetSettings,
@@ -654,6 +706,7 @@ impl Default for Config {
             weather: WeatherSettings::default(),
             night_light: NightLightSettings::default(),
             lock: LockSettings::default(),
+            power: PowerSettings::default(),
             widgets: WidgetSettings::default(),
             wallpaper: WallpaperSettings::default(),
             pet: PetSettings::default(),

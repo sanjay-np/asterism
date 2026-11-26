@@ -1074,7 +1074,8 @@ impl App {
             }
             Update::Brightness(brightness) => {
                 let old = &self.model.brightness;
-                if old.available && brightness.available && (old.value - brightness.value).abs() > 0.004 {
+                // Dimming while you're away, and coming back, aren't news
+                if old.available && brightness.available && !old.dimmed && !brightness.dimmed && (old.value - brightness.value).abs() > 0.004 {
                     self.show_osd(Level::Brightness(brightness.value));
                 }
             }
@@ -1102,6 +1103,7 @@ impl App {
             Request::Screenshot(kind) => self.send(Command::Screenshot(kind)),
             Request::ScreenText => self.send(Command::ScreenText),
             Request::Lock => self.start_lock(),
+            Request::PowerButton => self.power_button(),
             Request::Dashboard(open) => self.toggle_dashboard(open),
             Request::Settings(open) => self.toggle_settings(open),
             Request::Overview(open) => self.toggle_overview(open),
@@ -1177,7 +1179,7 @@ impl App {
 
     /// A menu opened by a keybind: under the piece it belongs to when the bar shows it, with
     /// the keyboard (there's no click to grab with, so Esc or the keybind closes it).
-    fn menu_from_keys(&mut self, name: &str) {
+    pub(super) fn menu_from_keys(&mut self, name: &str) {
         let (kind, piece_key) = match name {
             "calendar" | "clock" => (Kind::Calendar, "clock"),
             "media" | "music" => (Kind::Media, "media"),

@@ -176,10 +176,34 @@ bed = -1                  # their bed's place, in thousandths of the screen's wi
 # They're read only while there's no `pets` line.
 
 [lock]
-idle = 10                 # minutes without input before the screen locks; 0 never
+idle = 10                 # minutes without input before the screen locks, plugged in; 0 never
+idle_battery = 5          # the same on battery
 before_sleep = true       # lock before the machine sleeps (closing the lid too)
 fingerprint = true        # unlock with a fingerprint too, when fprintd has a reader and your fingers
 # Locked out? Ctrl+Alt+F3, log in, and run `asterism unlock`.
+
+# While you're away (locking is [lock]'s), and what the lid and the power button do. Minutes
+# without input; 0 leaves a step out. A video playing and Stay awake hold every step off, and
+# any input undoes a dim or the screens going off. Settings → Power has all of it.
+[power]
+dim = 5                   # plugged in: dim the screens…
+off = 15                  # …turn them off…
+suspend = 30              # …and sleep (not while music plays)
+dim_battery = 2           # the same on battery
+off_battery = 7
+suspend_battery = 15
+dim_level = 30            # dimmed, a screen keeps this share (%) of its brightness; screens with
+                          # no backlight (an external monitor) get a dark veil about as dark
+off_locked = 1            # once locked, the screens go off after this many minutes; 0 waits for `off`
+# The lid: "system" (as logind is set), "suspend", "hibernate", "lock" or "nothing". Anything
+# but "system" makes Asterism hold the lid from logind while it runs.
+lid = "system"            # closed on battery
+lid_plugged = "same"      # closed while plugged in ("same": as on battery)
+lid_docked = "system"     # closed with another screen plugged in
+# The power button: "system", "menu" (the session menu), "suspend", "hibernate", "poweroff",
+# "lock" or "nothing". Anything but "system" also needs the key bound in the compositor, e.g. niri:
+#   XF86PowerOff allow-when-locked=true { spawn "asterism" "msg" "power" "button"; }
+button = "system"
 
 [night_light]
 mode = "off"              # off, on, or schedule (from start to end)

@@ -118,7 +118,7 @@ history (etea-bar) was removed on request; keep the ETEA Shell credit in the REA
 cargo build --release
 ./target/release/asterism                       # run the shell (refuses if one already runs)
 ./target/release/asterism msg help              # drive the running shell
-cargo test --release                            # 121 tests (+3 opt-in, --ignored), see below
+cargo test --release                            # 125 tests (+3 opt-in, --ignored), see below
 ASTERISM_WRITE_LOGO=1 cargo test --release logo # rewrite assets/logo/asterism.svg from src/logo.rs
 ASTERISM_SOUNDS=dir cargo test --release write_samples -- --ignored   # the pet's sounds as WAVs
 cargo test --release pet::tests::frame_cost -- --ignored --nocapture  # what a pet frame costs
@@ -289,7 +289,10 @@ main.rs ── CLI: run | msg … | --snapshot …
    │               set/step, folders (set, the portal's dialog), palette off-thread, rotation
    │     clipboard.rs ext-data-control: read selections on a worker thread, offer one back
    │     night.rs   wlr-gamma-control per output, schedule, the control-centre switch
-   │     idle.rs    ext-idle-notify → lock; start_lock() spawns `asterism lock` detached
+   │     idle.rs    one ext-idle-notify watch per power step (dim, lock, off, off-when-locked,
+   │               sleep: `power::steps`), Idled/Resumed → do/undo; start_lock() spawns `asterism lock`
+   │     power.rs   the dim (backlight via the brightness service + `Veil`s, 1-px Overlay layers, over
+   │               screens with no backlight), screens off/on, the lid and the power button
    │     timer.rs   timer actions and the once-a-second tick
    │     day.rs     the day panel: open/close (a card centred under the bar), its keys
    │               (task field, notes), tick/remove/clear, a save 1 s after the last change
@@ -322,6 +325,8 @@ main.rs ── CLI: run | msg … | --snapshot …
 ├── day.rs       the day panel's files: todo.md (Markdown checklist) + notes.md, parse/write/load/save
    ├── logo.rs      the mark (Cassiopeia's W, the brightest star ringed): one geometry, drawn as an
    │               icon in the theme's colours (the Settings window's, `SETTINGS_APP`) and as the SVG
+   ├── power.rs     pure: which idle steps and waits (AC/battery), what the lid/button do (`Act`,
+   │               logind's words), whether the shell holds them, which output is backlit
    ├── privacy.rs   the privacy pill's words: `InUse::of(model, settings)`, readable app names, casts
    ├── shortcuts.rs niri/Hyprland bind parsing + the sheet; timers.rs, weather.rs, night.rs: pure logic
    ├── dashboard.rs graphs (Prim::Area), disks, process list; the machine service samples processes
@@ -407,6 +412,7 @@ main.rs ── CLI: run | msg … | --snapshot …
 | `network.rs` | NetworkManager (root path signals + 10 s poll) | AP list only while the menu wants it |
 | `bluetooth.rs` | BlueZ object manager | |
 | `brightness.rs` | /sys/class/backlight; set via logind `SetBrightness` | brightnessctl fallback |
+| `login.rs` | logind: Lock and PrepareForSleep (lock first, a "delay" inhibitor); Suspend/Hibernate/PowerOff; "block" inhibitors on handle-lid-switch / handle-power-key while `[power]` gives them an action; UPower's `LidIsClosed` → `Update::Lid`; `Update::SystemPower` (HandleLidSwitch… and CanHibernate) | only in the real shell (`roles.lock`) |
 | `polkit.rs` | org.freedesktop.PolicyKit1 agent; password checked by `polkit-agent-helper-1` via `/run/polkit/agent-helper.socket` (polkit ≥ 126) or the setuid helper | registers for the session (XDG_SESSION_ID, else logind's display session); queue of requests; retries on failure |
 | `notifications.rs` | org.freedesktop.Notifications daemon, else swaync-client | yields if another daemon owns the name |
 | `xkb.rs` | evdev.lst | layout names ↔ codes |
@@ -501,7 +507,11 @@ with a test in `ipc::tests`.
   panel must call `Painter::forget_surface` (each panel opening is a new surface id). Thumbnail
   decoding is limited to 3 at a time (semaphore in `services::run`).
 
-### Tests (121, +3 opt-in)
+### Tests (125, +3 opt-in)
+
+Added 2026-11-25 (power): `power` (steps follow the battery and leave out zeroes, the lid takes
+the setting for its case and logind's word for "system", the button is held only for a choice
+of its own, the backlit screen from sysfs), `ipc` (`power button`).
 
 Added 2026-11-24 (logo): `logo` (the shipped SVG matches the code, the icon follows the theme).
 
@@ -572,7 +582,8 @@ settings regrouped, the day button, a second optimization round, the bar's arran
 privacy pill, the bare bar's ink, the kanji dot below, workspaces shown on niri, the
 wallpaper picker reworked, wallpaper folders, sharper moving wallpapers, the logo; newest first)
 
-**State of the tree**: the user's commits up to 9bf9d80 hold everything up to the bar's
+**State of the tree**: the user's commits up to 5cae076 hold everything up to the logo. After
+it, uncommitted: the power round (2026-11-25, installed). Before that, the user's commits up to 9bf9d80 hold everything up to the bar's
 arrangement (2026-11-24). After it, uncommitted (all 2026-11-24, installed on the user's
 machine): the privacy pill, the bare bar's ink (per item), the kanji dot below, workspaces
 shown on niri, the wallpaper picker reworked, wallpaper folders, sharper moving wallpapers.
@@ -580,6 +591,66 @@ README brought up to date with all of them the same day, every screenshot remade
 trimmed at the user's request (993 → 588 lines): it now says what each feature does and how to
 reach it, and leaves how things work inside, every option and the code map to this file and
 config.example.toml. Keep new README text to that level.
+
+### Power: dim, screens off, sleep, the lid and the power button (2026-11-25, the user: "setup
+the power option, like when the screen will be dim, when the screen will be off and when it will
+suspend and so on"; picked all four steps + lid/button, two sets of times, backlight + a dark
+veil, the "balanced" times)
+
+Before: only `[lock] idle` (10 min); nothing dimmed, turned the screens off or slept (no
+swayidle/hypridle, niri has no idle timeouts).
+
+- **Steps** (`src/power.rs` `steps`, `app/idle.rs`): one ext-idle-notify v1 watch per step
+  (`App::idle_watches`, kept in step every tick, only changed ones remade; v1 honours
+  idle-inhibit, so videos and Stay awake hold them all off). Plugged in / on battery
+  (`model.battery.on_battery`): dim 5/2, lock 10/5 (`[lock] idle`, new `idle_battery`), off 15/7,
+  sleep 30/15 (`[power] dim, off, suspend` + `_battery`); `off_locked` (1 min, screens off once
+  locked: acts only if `lock::running()`). Resumed undoes dim and off. Sleep is skipped while a
+  player plays (its watch is dropped and remade, so it asks again after the same time).
+- **Dim**: `Command::Dim(Some(share))` → the brightness service remembers the raw level, fades
+  down in 12 × 60 ms (never up; a command mid-fade stops it), `Dim(None)` puts it back at once;
+  `SetBrightness`/`Step` while dimmed forget the saved level. `Brightness.dimmed` (+ 2 reads of
+  settling after) keeps the OSD away; `Brightness.output` = the backlight's connector from sysfs
+  (`power::backlight_output`: …/card1-eDP-1/amdgpu_bl1 → eDP-1). The backlight is used only when
+  that connector is one of the shell's outputs (a nested shell must not dim the real screen).
+  Every other output gets a `Veil` (`app/power.rs`): Overlay layer `asterism-veil`, empty input
+  region, a 1-px black buffer (`desk::present_fill`) faded to `veil_alpha(dim_level)` (30 % →
+  0.6) over 720 ms by a 40 ms timer; dropped on resume.
+- **Screens off**: `Command::Monitors(bool)` → niri `PowerOffMonitors`/`PowerOnMonitors` (niri
+  wakes them itself on input), Hyprland `dpms off|on` (Lua form `hl.dsp.dpms({ action = … })`
+  is a guess, with the usual fallback); on again on resume (`App::screens_off`).
+- **Lid and button** (`login.rs`): while `power::takes_lid`/`takes_button` (any choice but
+  "system"), the shell holds logind's `handle-lid-switch` / `handle-power-key` with a "block"
+  inhibitor (`Command::TakePowerKeys`, sent from tick when it changes); if the shell dies the
+  fd closes and logind takes them back. The lid is read from UPower's `LidIsClosed`
+  (PropertiesChanged on /org/freedesktop/UPower) and logind's `Docked` → `Update::Lid`;
+  `power::lid_act` picks `lid` (battery) / `lid_plugged` ("same" = as battery) / `lid_docked`,
+  "system" meaning logind's own word for that case (`Update::SystemPower` read at start:
+  HandleLidSwitch, …ExternalPower, …Docked, HandlePowerKey, CanHibernate). The button reaches
+  the shell only through a compositor bind to `asterism msg power button` (`Request::PowerButton`);
+  "menu" opens the session menu (over the lock: screens off instead). Sleep etc. go through
+  logind's Suspend/Hibernate/PowerOff(false); lock-before-sleep still runs on PrepareForSleep.
+- **Settings → Power** (page 7, was "Lock"; icon `power`): Plugged in / On battery (only with a
+  battery) steppers, Screens (dimmed to, off once locked), The lid (three choices; "System
+  (sleep)" names logind's), The power button (says it needs the bind), Lock (before sleep,
+  fingerprint, Lock now). Steppers in minutes now say "Never" at 0 (wallpaper interval and
+  live_idle too). Hibernate is offered only when logind can (the user's machine: "na").
+- On the user's machine (checked): logind lets the user take both keys (`systemd-inhibit`
+  test); HandleLidSwitch suspend, …Docked ignore, HandlePowerKey poweroff; the backlight is
+  amdgpu_bl1 on eDP-1. Their config has no `[power]`, so the defaults reach them (lid and button
+  stay logind's until changed). Their backlight read 0 of 65535 at the time (set by them).
+
+Verified: 125 tests; Settings snapshots (top and scrolled); nested niri with a test config
+(dim 1, off 2, sleep 0, lock 0): watches armed, `idle: Dim` → `asterism-veil` mapped (a
+nested screenshot shows the screen darkened, bar included) and no backlight command (winit
+isn't backlit), `idle: Off` → niri took PowerOffMonitors; a live edit to `dim = 0` dropped the
+Dim watch and the veil; `button = "menu"` → the handle-power-key inhibitor appeared in
+`systemd-inhibit --list`, `msg power button` opened the session menu, and back to "system" it
+was released. **Not verified (needs the user)**: the backlight fade and coming back on the
+real screen (and no OSD for it), the veil on the HDMI monitor, waking from screens off,
+sleeping after 30/15 min, closing the lid with a choice of their own, the power key with the
+bind, the battery set switching on unplug. Installed and restarted on the user's machine the
+same day; they chose not to add the power-key bind to niri.
 
 ### The logo, and Settings in the dock (2026-11-24, the user: "generate the optimal logo for this
 project and also show logo in dock when setting is opened")
@@ -1798,6 +1869,12 @@ Not yet seen by the user live: everything in the new look — ask for their impr
   machine); it reads with tesseract's default language.
 
 ## Next progress (immediate)
+
+0. The user to try the power round: Settings → Power (set short times to see the dim, the
+   screens off, and moving the pointer bringing them back), unplug to switch sets, a lid choice
+   of their own, and (if they want the button) the niri bind
+   `XF86PowerOff allow-when-locked=true { spawn "asterism" "msg" "power" "button"; }` (not
+   added to their config).
 
 0. The user to try the 2026-11-24 rounds by hand: the picker (type to search, the All /
    Pictures / Moving chips, the options along the foot, More settings), the folder button and

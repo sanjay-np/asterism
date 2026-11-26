@@ -212,6 +212,11 @@ impl Hyprland {
                 )
                 .await
             }
+            // Hyprland leaves them off until told: the shell turns them on at the next input
+            Command::Monitors(on) => {
+                let word = if on { "on" } else { "off" };
+                self.dispatch(&format!("hl.dsp.dpms({{ action = \"{word}\" }})"), &format!("dpms {word}")).await
+            }
             _ => {}
         }
     }

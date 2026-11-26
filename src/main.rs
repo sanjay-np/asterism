@@ -31,6 +31,7 @@ mod transition;
 mod timers;
 mod palette;
 mod pet;
+mod power;
 mod privacy;
 mod ui;
 mod wallpapers;

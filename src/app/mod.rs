@@ -97,6 +97,7 @@ mod night;
 mod overview;
 mod peek;
 mod pet;
+mod power;
 mod shell;
 mod timer;
 mod wallpaper;
@@ -477,7 +478,14 @@ pub struct App {
     /// Blur behind surfaces (ext-background-effect), and whether the compositor says it can.
     blur_effects: Option<wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
     blur_capable: bool,
-    idle_watch: Option<(smithay_client_toolkit::reexports::protocols::ext::idle_notify::v1::client::ext_idle_notification_v1::ExtIdleNotificationV1, u32)>,
+    /// The steps taken while you're away, each with its wait (ms) and its watch (`app/idle.rs`).
+    idle_watches: Vec<(crate::power::Step, u32, smithay_client_toolkit::reexports::protocols::ext::idle_notify::v1::client::ext_idle_notification_v1::ExtIdleNotificationV1)>,
+    /// Dimmed (and the veils over screens with no backlight), the screens turned off by us, and
+    /// which of the lid and the power button logind was last told the shell holds.
+    dimmed: bool,
+    veils: Vec<power::Veil>,
+    screens_off: bool,
+    power_keys: Option<(bool, bool)>,
     /// Night light: the compositor's gamma controls, one per output; a hand on the switch, and
     /// what the schedule said last.
     gamma_manager: Option<smithay_client_toolkit::reexports::protocols_wlr::gamma_control::v1::client::zwlr_gamma_control_manager_v1::ZwlrGammaControlManagerV1>,
@@ -671,6 +679,7 @@ impl App {
             Update::WallpaperPalette(image, palette) => return self.wallpaper_palette(image, palette),
             Update::Notify(note) => return self.send(Command::Notify(note)),
             Update::LockNow => return self.start_lock(),
+            Update::Lid { closed, docked } => return self.lid(closed, docked),
             Update::WifiJoined(ssid, ok, why) => return self.wifi_joined(ssid, ok, why),
             Update::Pairing(pairing) => return self.pairing(pairing),
             Update::FolderChosen(dir) => return self.wallpaper_folder_chosen(dir),
@@ -795,6 +804,7 @@ impl App {
         self.save_day(false);
         self.apply_night_light();
         self.watch_idle();
+        self.sync_power_keys();
         if self.model.recording.is_some() {
             for bar in &mut self.bars {
                 bar.surf.dirty = true;
@@ -2388,6 +2398,7 @@ impl LayerShellHandler for App {
         self.props.retain(|p| &p.layer != layer);
         self.panels.retain(|p| !p.is_layer(layer));
         self.backdrops.retain(|b| &b.layer != layer);
+        self.veils.retain(|v| &v.layer != layer);
         self.edges.retain(|e| &e.layer != layer);
         for desk in &mut self.desks {
             desk.parts.retain(|p| &p.layer != layer);
@@ -2412,6 +2423,10 @@ impl LayerShellHandler for App {
         }
         if let Some(index) = self.pets.iter().position(|p| &p.layer == layer) {
             return self.pet_configured(index);
+        }
+        if let Some(index) = self.veils.iter().position(|v| &v.layer == layer) {
+            let (w, h) = configure.new_size;
+            return self.veil_configured(index, w, h);
         }
         if self.peek.as_ref().is_some_and(|p| &p.layer == layer) {
             return self.peek_configured();
@@ -2772,7 +2787,11 @@ pub fn run(config_path: PathBuf) -> anyhow::Result<()> {
         idle_notifier: idle::bind_idle(&globals, &qh),
         blur_effects: blur::bind_blur(&globals, &qh),
         blur_capable: false,
-        idle_watch: None,
+        idle_watches: Vec::new(),
+        dimmed: false,
+        veils: Vec::new(),
+        screens_off: false,
+        power_keys: None,
         gamma_manager: night::bind_gamma(&globals, &qh),
         gammas: Vec::new(),
         gamma_refused: false,

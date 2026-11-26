@@ -160,7 +160,7 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
     while let Some(command) = commands.recv().await {
         use Command::*;
         match command {
-            FocusWorkspace(_) | NextLayout | SetLayout(_) | Quit | FocusWindow(_) | CloseWindow(_) | MoveWindow(..) | StopCast(_) => forward(&compositor, command),
+            FocusWorkspace(_) | NextLayout | SetLayout(_) | Quit | FocusWindow(_) | CloseWindow(_) | MoveWindow(..) | StopCast(_) | Monitors(_) => forward(&compositor, command),
             MediaPlayPause(_) | MediaNext(_) | MediaPrevious(_) | MediaSeek(..) | MediaChoose(_) | FetchArt(_) => {
                 forward(&media, command)
             }
@@ -175,7 +175,7 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
                 let _ = notifications.send(command);
             }
             AuthRespond(..) | AuthCancel(_) => forward(&polkit, command),
-            SetBrightness(_) | StepBrightness(_) => {
+            SetBrightness(_) | StepBrightness(_) | Dim(_) => {
                 let _ = brightness.send(command);
             }
             ToggleAwake => {
@@ -207,7 +207,7 @@ async fn run(out: Out, mut commands: UnboundedReceiver<Command>, kind: Composito
                     });
                 }
             }
-            LockBeforeSleep(_) => forward(&login, command),
+            LockBeforeSleep(_) | Suspend | Hibernate | PowerOff | TakePowerKeys { .. } => forward(&login, command),
             FetchLyrics { .. } => {
                 let _ = lyrics.send(command);
             }

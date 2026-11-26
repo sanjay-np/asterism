@@ -30,7 +30,7 @@ with tiny-skia, and links no GTK, Qt or QML.
 - [The desktop](#the-desktop): wallpapers, widgets, desktop menu, app colours, night light
 - [Pets](#pets) · [Notifications and on-screen cards](#notifications-and-on-screen-cards)
 - [Settings](#settings) · [Dashboard](#dashboard) · [Clipboard and shortcuts](#clipboard-and-shortcuts) · [Timers and weather](#timers-and-weather)
-- [Security and devices](#security-and-devices) · [Screenshots, recording and text capture](#screenshots-recording-and-text-capture)
+- [Security and devices](#security-and-devices) · [Power](#power) · [Screenshots, recording and text capture](#screenshots-recording-and-text-capture)
 - [Privacy](#privacy) · [Performance](#performance)
 - [Requirements](#requirements) · [Installation](#installation) · [Keybindings](#keybindings) · [Configuration](#configuration) · [Command reference](#command-reference)
 - [Troubleshooting and known limits](#troubleshooting-and-known-limits) · [Development](#development) · [Credits and licence](#credits-and-licence)
@@ -285,7 +285,7 @@ for volume, brightness and keyboard-layout changes from any source.
 ## Settings
 
 The control centre's Settings tile, the gear in the bar, or `asterism msg settings`. An ordinary
-window with pages for Look, Bar, Wallpaper, Desktop, Dock, Pets, Night light, Lock,
+window with pages for Look, Bar, Wallpaper, Desktop, Dock, Pets, Night light, Power,
 Notifications, Weather and Timers. Type anywhere to search every page. Each change is written to
 `config.toml` at once, keeping your comments.
 
@@ -325,14 +325,25 @@ temperature in the bar, and the details and five days ahead in its menu.
 
 <p align="center"><img src="screenshots/readme/dialogs.png" alt="The polkit password card, the Wi-Fi password card and a Bluetooth pairing confirmation"></p>
 
-- **Lock screen:** on Mod+Alt+L, when logind asks, before sleep, and after `[lock] idle`
-  minutes. It runs as its own process, checks your password with the system's `unix_chkpwd`, and
+- **Lock screen:** on Mod+Alt+L, when logind asks, before sleep, and after a while away
+  (Settings → Power). It runs as its own process, checks your password with the system's `unix_chkpwd`, and
   takes a fingerprint through fprintd. Locked out? See [Troubleshooting](#troubleshooting-and-known-limits).
 - **Polkit:** when an app needs administrator rights, the password is asked on a card and
   checked by polkit's own helper.
 - **Wi-Fi:** a secured network asks for its password on a card; saved VPNs get a switch.
 - **Bluetooth:** the menu scans for nearby devices; pairing questions come up on a card, and
   paired devices show their battery.
+
+## Power
+
+Settings → Power says what happens while you're away, with its own times plugged in and on
+battery: the screens dim (a laptop's backlight goes down; a monitor with no backlight gets a
+dark veil), then lock, turn off, and the machine sleeps. Any input brings the screens back; a
+video playing or Stay awake holds it all off, and sleep waits while music plays. Once locked,
+the screens go off after a minute. The lid (on battery, plugged in, with another screen) and the
+power button can be left to the system or given their own action: sleep, lock, the session
+menu, shut down or nothing. For the button, bind its key to `asterism msg power button`
+(niri: `XF86PowerOff allow-when-locked=true { spawn "asterism" "msg" "power" "button"; }`).
 
 ## Screenshots, recording and text capture
 
@@ -466,7 +477,8 @@ seconds, with no restart.
 | `[privacy]` | What the privacy pill shows: `microphone`, `camera`, `screen` |
 | `[colors]` | Accent, role overrides, icon and widget tinting, app colour files |
 | `[launcher]` · `[weather]` · `[timers]` | Terminal and search engine; place and units; focus lengths |
-| `[lock]` · `[night_light]` | Idle minutes, before sleep, fingerprint; schedule and temperature |
+| `[lock]` · `[power]` | Idle minutes, before sleep, fingerprint; dim, screens off, sleep, the lid and the power button |
+| `[night_light]` | Schedule and temperature |
 | `[widgets]` · `[day]` · `[pet]` | Desktop widgets and their look; the to-do folder; the pets |
 | `[dock]` | Pinned apps, edge, hiding, size and look |
 | `[blur]` | Frosted glass behind the dock, launcher, overview, wallpaper picker, control centre and notifications |
@@ -515,6 +527,7 @@ pinned = ["firefox", "kitty", "org.gnome.Nautilus"]   # desktop file ids, in ord
 | `bar arrange [on\|off]` | Arrange mode for the bar |
 | `night-light [on\|off]` · `awake` | Night light · keep the screen awake |
 | `lock` | Lock the screen |
+| `power button` | What the power button does (`[power] button`) |
 | `screenshot [region\|screen\|window]` · `screen-text` · `record [audio]` | Capture · copy text from a region · start or stop recording |
 | `timer MINUTES` · `timer pause\|cancel` · `focus` · `stopwatch [lap\|reset]` | Timers |
 | `pet feed\|play\|yarn\|bed\|nobed` · `pet add [ANIMAL[:COAT]]` · `pet [N] next\|away` | Pets and their things |

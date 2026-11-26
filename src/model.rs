@@ -422,6 +422,22 @@ pub struct Brightness {
     pub available: bool,
     /// 0 to 1
     pub value: f32,
+    /// Lowered while you're away (no OSD for that, nor for coming back).
+    pub dimmed: bool,
+    /// The screen it lights (a connector name, "eDP-1"), when sysfs says.
+    pub output: String,
+}
+
+/// What logind does with the lid and the power button when the shell leaves them to it
+/// (its HandleLidSwitch… words), and whether it can hibernate.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SystemPower {
+    pub lid: String,
+    /// Empty: as `lid`.
+    pub lid_plugged: String,
+    pub lid_docked: String,
+    pub button: String,
+    pub hibernate: bool,
 }
 
 // ---------------------------------------------------------------- authentication
@@ -564,6 +580,8 @@ pub enum Request {
     Dock(Option<bool>),
     /// Arrange mode on the bar: on, off, or the other way.
     ArrangeBar(Option<bool>),
+    /// The power button was pressed (bound to `asterism msg power button`).
+    PowerButton,
 }
 
 /// Something done to a timer, from its menu or from `asterism msg`.
@@ -618,6 +636,7 @@ pub struct Model {
     pub tray: Vec<TrayItem>,
     pub notifications: Notifications,
     pub brightness: Brightness,
+    pub system_power: SystemPower,
     /// Polkit asking for a password.
     pub auth: Option<AuthRequest>,
     /// A tray item's menu, as last fetched.
@@ -676,6 +695,9 @@ pub enum Update {
     Audio(Audio),
     Media(Media),
     Battery(Battery),
+    /// The lid closed (true) or opened, while the shell holds it; with another screen or not.
+    Lid { closed: bool, docked: bool },
+    SystemPower(SystemPower),
     Network(Network),
     Bluetooth(Bluetooth),
     Tray(Vec<TrayItem>),
@@ -738,9 +760,10 @@ impl Model {
             }
             Update::Notifications(notifications) => self.notifications = notifications,
             Update::Brightness(brightness) => self.brightness = brightness,
+            Update::SystemPower(system) => self.system_power = system,
             Update::Auth(auth) => self.auth = auth,
             // Handled by the app before the model sees them
-            Update::Toast(_) | Update::Request(_) | Update::WallpaperPalette(..) | Update::Notify(_) | Update::LockNow | Update::WifiJoined(..) | Update::Pairing(_) => {}
+            Update::Toast(_) | Update::Request(_) | Update::WallpaperPalette(..) | Update::Notify(_) | Update::LockNow | Update::Lid { .. } | Update::WifiJoined(..) | Update::Pairing(_) => {}
             Update::Recording(recording) => self.recording = recording,
             Update::Processes(list) => self.processes = list,
             Update::Lyrics(key, lines) => {
@@ -817,6 +840,16 @@ pub enum Command {
     RecordStop,
     /// Hold sleep back to lock first, or don't.
     LockBeforeSleep(bool),
+    /// Lower the backlight to this share of what it is (fading), or (None) put it back.
+    Dim(Option<f32>),
+    /// The screens on or off (DPMS), through the compositor.
+    Monitors(bool),
+    /// Through logind.
+    Suspend,
+    Hibernate,
+    PowerOff,
+    /// Hold the lid and the power button from logind (the shell does what they do), or let go.
+    TakePowerKeys { lid: bool, button: bool },
     /// Look at what's running (every couple of seconds), or stop looking.
     WatchProcesses(bool),
     /// Listen to what the speakers play, for the visualizer, or stop.

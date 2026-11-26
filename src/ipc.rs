@@ -31,6 +31,7 @@ asterism msg COMMAND
     shortcuts [open|close]         Toggle the keyboard shortcuts sheet
     clipboard [open|close]         Toggle the clipboard history
     lock                           Lock the screen
+    power button                   What the power button does ([power] button; bind XF86PowerOff to it)
     dashboard [open|close]         Toggle the dashboard (graphs, disks, processes)
     settings [open|close]          Toggle the settings app
     day [open|close]               Toggle the day panel (calendar, timers, to-do, notes)
@@ -88,6 +89,7 @@ pub fn parse(words: &[&str]) -> Result<Request, String> {
         ["media", what @ ("play-pause" | "next" | "previous")] => Request::Media(what.to_string()),
         ["awake"] => Request::Awake,
         ["lock"] => Request::Lock,
+        ["power", "button"] => Request::PowerButton,
         ["overview"] => Request::Overview(None),
         ["overview", "open"] => Request::Overview(Some(true)),
         ["overview", "close"] => Request::Overview(Some(false)),
@@ -235,6 +237,7 @@ mod tests {
         assert_eq!(parse(&["screen-text"]), Ok(Request::ScreenText));
         assert_eq!(parse(&["day", "open"]), Ok(Request::Day(Some(true))));
         assert_eq!(parse(&["dock"]), Ok(Request::Dock(None)));
+        assert_eq!(parse(&["power", "button"]), Ok(Request::PowerButton));
         assert_eq!(parse(&["bar", "arrange"]), Ok(Request::ArrangeBar(None)));
         assert_eq!(parse(&["bar", "arrange", "off"]), Ok(Request::ArrangeBar(Some(false))));
         assert!(parse(&["bar", "shuffle"]).is_err());

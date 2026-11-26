@@ -134,7 +134,7 @@ fn group_of(key: &str) -> &str {
 
 /// A surface filled with one colour by a single pixel the compositor stretches (the viewporter),
 /// instead of a whole screen of them.
-fn present_fill(surf: &mut Surf, color: crate::theme::Rgba, pool: &mut SlotPool) -> bool {
+pub(super) fn present_fill(surf: &mut Surf, color: crate::theme::Rgba, pool: &mut SlotPool) -> bool {
     let (Some(wl), Some(viewport)) = (surf.wl.clone(), surf.viewport.as_ref()) else { return false };
     let Ok((buffer, bytes)) = pool.create_buffer(1, 1, 4, wl_shm::Format::Argb8888) else { return false };
     let a = color.a.clamp(0.0, 1.0);
